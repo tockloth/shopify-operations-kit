@@ -1,0 +1,38 @@
+project_id = "operations-kit-local"
+
+[api]
+enabled = true
+port = 54331
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54332
+shadow_port = 54330
+major_version = 15
+
+[studio]
+enabled = true
+port = 54333
+api_url = "http://127.0.0.1:54331"
+
+[auth]
+enabled = false
+
+[storage]
+enabled = false
+
+[inbucket]
+enabled = true
+port = 54334
+smtp_port = 54335
+pop3_port = 54336
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = true
+port = 54337
+backend = "postgres"
