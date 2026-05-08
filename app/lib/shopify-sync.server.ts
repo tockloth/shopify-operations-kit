@@ -52,6 +52,62 @@ const ORDER_SYNC_QUERY = `#graphql
             emailAddress
           }
         }
+        shippingAddress {
+          name
+          address1
+          address2
+          city
+          provinceCode
+          zip
+          countryCodeV2
+          phone
+        }
+        lineItems(first: 100) {
+          nodes {
+            id
+            title
+            sku
+            quantity
+            variant {
+              id
+              legacyResourceId
+              title
+              sku
+              inventoryItem {
+                id
+                legacyResourceId
+              }
+              product {
+                id
+                legacyResourceId
+                title
+                handle
+                status
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const ORDER_SYNC_WITH_CUSTOMER_QUERY = `#graphql
+  query OperationsKitOrdersWithCustomer($first: Int!) {
+    orders(first: $first, sortKey: CREATED_AT, reverse: true) {
+      nodes {
+        id
+        legacyResourceId
+        name
+        processedAt
+        displayFinancialStatus
+        displayFulfillmentStatus
+        customer {
+          displayName
+          defaultEmailAddress {
+            emailAddress
+          }
+        }
         lineItems(first: 100) {
           nodes {
             id
@@ -122,6 +178,43 @@ const ORDER_SYNC_WITHOUT_CUSTOMER_QUERY = `#graphql
   }
 `;
 
+const CUSTOMER_SYNC_QUERY = `#graphql
+  query OperationsKitCustomers($first: Int!) {
+    customers(first: $first, sortKey: UPDATED_AT, reverse: true) {
+      nodes {
+        id
+        legacyResourceId
+        displayName
+        firstName
+        lastName
+        defaultEmailAddress {
+          emailAddress
+        }
+        numberOfOrders
+        amountSpent {
+          amount
+          currencyCode
+        }
+        createdAt
+        updatedAt
+      }
+    }
+  }
+`;
+
+const CUSTOMER_SYNC_WITHOUT_PROTECTED_DATA_QUERY = `#graphql
+  query OperationsKitCustomersWithoutProtectedData($first: Int!) {
+    customers(first: $first, sortKey: UPDATED_AT, reverse: true) {
+      nodes {
+        id
+        legacyResourceId
+        createdAt
+        updatedAt
+      }
+    }
+  }
+`;
+
 async function graphqlJson<T>(
   admin: ShopifyAdmin,
   query: string,
@@ -134,6 +227,19 @@ async function graphqlJson<T>(
   }
   if (!payload.data) throw new Error("Shopify GraphQL returned no data.");
   return payload.data;
+}
+
+function isProtectedCustomerDataError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return (
+    message.includes("protected-customer-data") ||
+    message.includes("protected customer data") ||
+    message.includes("not approved to use") ||
+    message.includes("not approved to access") ||
+    message.includes("access denied for customer field") ||
+    message.includes("access denied for customers field") ||
+    message.includes("read_customers")
+  );
 }
 
 async function upsertShopifyVariantItem(
@@ -350,6 +456,16 @@ export async function syncShopifyOrders(
               emailAddress: string | null;
             } | null;
           } | null;
+          shippingAddress: {
+            name: string | null;
+            address1: string | null;
+            address2: string | null;
+            city: string | null;
+            provinceCode: string | null;
+            zip: string | null;
+            countryCodeV2: string | null;
+            phone: string | null;
+          } | null;
           lineItems: {
             nodes: Array<{
               id: string;
@@ -380,21 +496,30 @@ export async function syncShopifyOrders(
     };
 
     let customerDataAvailable = true;
+    let shippingAddressAvailable = true;
     let data: OrderSyncData;
     try {
       data = await graphqlJson<OrderSyncData>(admin, ORDER_SYNC_QUERY, { first: 25 });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!message.includes("Access denied for customer field")) {
-        throw error;
-      }
+      if (!isProtectedCustomerDataError(error)) throw error;
 
-      customerDataAvailable = false;
-      data = await graphqlJson<OrderSyncData>(
-        admin,
-        ORDER_SYNC_WITHOUT_CUSTOMER_QUERY,
-        { first: 25 },
-      );
+      shippingAddressAvailable = false;
+      try {
+        data = await graphqlJson<OrderSyncData>(
+          admin,
+          ORDER_SYNC_WITH_CUSTOMER_QUERY,
+          { first: 25 },
+        );
+      } catch (customerError) {
+        if (!isProtectedCustomerDataError(customerError)) throw customerError;
+
+        customerDataAvailable = false;
+        data = await graphqlJson<OrderSyncData>(
+          admin,
+          ORDER_SYNC_WITHOUT_CUSTOMER_QUERY,
+          { first: 25 },
+        );
+      }
     }
 
     let lines = 0;
@@ -405,10 +530,10 @@ export async function syncShopifyOrders(
             tenant_id, shopify_order_gid, shopify_order_legacy_id,
             order_name, status, customer_name, customer_email,
             customer_name_encrypted, customer_email_encrypted, customer_lookup_hash,
-            customer_data_retention_until,
+            customer_data_retention_until, shipping_address_encrypted,
             financial_status, fulfillment_status, processed_at
           )
-          values ($1, $2, $3, $4, 'open', null, null, $5, $6, $7, $8, $9, $10, $11)
+          values ($1, $2, $3, $4, 'open', null, null, $5, $6, $7, $8, $9, $10, $11, $12)
           on conflict (tenant_id, order_name)
           do update set
             shopify_order_gid = excluded.shopify_order_gid,
@@ -420,6 +545,7 @@ export async function syncShopifyOrders(
             customer_lookup_hash = excluded.customer_lookup_hash,
             customer_data_redacted_at = null,
             customer_data_retention_until = excluded.customer_data_retention_until,
+            shipping_address_encrypted = excluded.shipping_address_encrypted,
             financial_status = excluded.financial_status,
             fulfillment_status = excluded.fulfillment_status,
             processed_at = excluded.processed_at,
@@ -442,6 +568,9 @@ export async function syncShopifyOrders(
               )
             : null,
           customerDataRetentionUntil(order.processedAt, retentionDays),
+          shippingAddressAvailable && order.shippingAddress
+            ? encryptCustomerData(JSON.stringify(order.shippingAddress))
+            : null,
           order.displayFinancialStatus,
           order.displayFulfillmentStatus,
           order.processedAt,
@@ -503,6 +632,113 @@ export async function syncShopifyOrders(
       }
     }
 
-    return { orders: data.orders.nodes.length, lines, customerDataAvailable };
+    return {
+      orders: data.orders.nodes.length,
+      lines,
+      customerDataAvailable,
+      shippingAddressAvailable,
+    };
+  });
+}
+
+export async function syncShopifyCustomers(
+  db: QueryExecutor,
+  tenantId: string,
+  admin: ShopifyAdmin,
+) {
+  return withKitTransaction(db, async (tx) => {
+    type CustomerNode = {
+      id: string;
+      legacyResourceId: string | null;
+      displayName?: string | null;
+      firstName?: string | null;
+      lastName?: string | null;
+      defaultEmailAddress?: {
+        emailAddress: string | null;
+      } | null;
+      numberOfOrders?: number | null;
+      amountSpent?: {
+        amount: string;
+        currencyCode: string;
+      } | null;
+      createdAt: string | null;
+      updatedAt: string | null;
+    };
+
+    let customerDataAvailable = true;
+    let data: { customers: { nodes: CustomerNode[] } };
+
+    try {
+      data = await graphqlJson<{ customers: { nodes: CustomerNode[] } }>(
+        admin,
+        CUSTOMER_SYNC_QUERY,
+        { first: 50 },
+      );
+    } catch (error) {
+      if (!isProtectedCustomerDataError(error)) throw error;
+      customerDataAvailable = false;
+      data = await graphqlJson<{ customers: { nodes: CustomerNode[] } }>(
+        admin,
+        CUSTOMER_SYNC_WITHOUT_PROTECTED_DATA_QUERY,
+        { first: 50 },
+      );
+    }
+
+    for (const customer of data.customers.nodes) {
+      const email = customer.defaultEmailAddress?.emailAddress ?? null;
+      await tx.query(
+        `
+          insert into operation_customers (
+            tenant_id, shopify_customer_gid, shopify_customer_legacy_id,
+            display_name, email, display_name_encrypted, email_encrypted,
+            first_name_encrypted, last_name_encrypted, customer_lookup_hash,
+            number_of_orders, amount_spent, amount_spent_currency,
+            shopify_created_at, shopify_updated_at, synced_at
+          )
+          values (
+            $1, $2, $3,
+            null, null, $4, $5,
+            $6, $7, $8,
+            $9, $10, $11,
+            $12, $13, now()
+          )
+          on conflict (tenant_id, shopify_customer_gid)
+          do update set
+            shopify_customer_legacy_id = excluded.shopify_customer_legacy_id,
+            display_name = null,
+            email = null,
+            display_name_encrypted = excluded.display_name_encrypted,
+            email_encrypted = excluded.email_encrypted,
+            first_name_encrypted = excluded.first_name_encrypted,
+            last_name_encrypted = excluded.last_name_encrypted,
+            customer_lookup_hash = excluded.customer_lookup_hash,
+            number_of_orders = excluded.number_of_orders,
+            amount_spent = excluded.amount_spent,
+            amount_spent_currency = excluded.amount_spent_currency,
+            shopify_created_at = excluded.shopify_created_at,
+            shopify_updated_at = excluded.shopify_updated_at,
+            customer_data_redacted_at = null,
+            synced_at = now(),
+            updated_at = now()
+        `,
+        [
+          tenantId,
+          customer.id,
+          customer.legacyResourceId,
+          encryptCustomerData(customer.displayName),
+          encryptCustomerData(email),
+          encryptCustomerData(customer.firstName),
+          encryptCustomerData(customer.lastName),
+          hashCustomerLookup(email, customer.displayName),
+          customer.numberOfOrders ?? 0,
+          customer.amountSpent?.amount ?? null,
+          customer.amountSpent?.currencyCode ?? null,
+          customer.createdAt,
+          customer.updatedAt,
+        ],
+      );
+    }
+
+    return { customers: data.customers.nodes.length, customerDataAvailable };
   });
 }

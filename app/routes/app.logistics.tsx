@@ -38,7 +38,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       String(form.get("operationsOrderId") || "") || undefined,
     );
     return {
-      message: `${result.shippingOrderIds.length} shipping order(s) created or refreshed.`,
+      message: `${result.shippingOrderIds.length} shipping order(s) created or refreshed.${
+        result.blockedOrders.length
+          ? ` ${result.blockedOrders.length} order(s) were blocked because customer name, email or shipping address is missing.`
+          : ""
+      }`,
     };
   }
 
@@ -62,6 +66,15 @@ export default function Logistics() {
     return <SetupBanner message={data.setupError ?? "Database setup is incomplete."} />;
   }
   const shipping = data.shipping ?? { orders: [], lines: [] };
+  const formatAddress = (address?: any) =>
+    address
+      ? [
+          address.address1,
+          address.city,
+          address.zip,
+          address.countryCodeV2,
+        ].filter(Boolean).join(", ")
+      : "No address";
 
   return (
     <s-page heading="Logistics">
@@ -80,10 +93,11 @@ export default function Logistics() {
 
       <s-section heading="Ready for logistics">
         <DataTable
-          headings={["Order", "Customer", "Products", "Lines", "Status", "Action"]}
+          headings={["Order", "Customer", "Ship to", "Products", "Lines", "Status", "Action"]}
           rows={(data.shippableOrders ?? []).map((order: any) => [
             <strong>{order.order_name}</strong>,
             order.customer_name ?? "No customer",
+            formatAddress(order.shipping_address),
             order.skus ?? "",
             order.line_count,
             <MoneylessBadge>{order.status}</MoneylessBadge>,
@@ -98,11 +112,12 @@ export default function Logistics() {
 
       <s-section heading="Shipping orders">
         <DataTable
-          headings={["Shipment", "Order", "Customer", "Status", "Lines", "Actions"]}
+          headings={["Shipment", "Order", "Customer", "Ship to", "Status", "Lines", "Actions"]}
           rows={(shipping.orders ?? []).map((order: any) => [
             <strong>{order.shipment_number}</strong>,
             order.order_name,
             order.customer_name ?? "No customer",
+            formatAddress(order.shipping_address),
             <MoneylessBadge
               tone={order.status === "shipped" ? "success" : order.status === "packed" ? "info" : "warning"}
             >

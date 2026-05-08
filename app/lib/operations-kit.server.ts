@@ -34,6 +34,8 @@ export interface ItemRow {
   supplier_lead_time_days?: number;
   qc_required_after_purchase?: boolean;
   qc_required_after_production?: boolean;
+  product_source?: string;
+  shop_product_flag?: string;
 }
 
 export interface DashboardSummary {
@@ -61,16 +63,42 @@ type CustomerEncryptedRow = {
   customer_email?: string | null;
   customer_name_encrypted?: string | null;
   customer_email_encrypted?: string | null;
+  shipping_address_encrypted?: string | null;
+  [key: string]: unknown;
+};
+
+type OperationCustomerEncryptedRow = {
+  display_name?: string | null;
+  email?: string | null;
+  display_name_encrypted?: string | null;
+  email_encrypted?: string | null;
+  first_name_encrypted?: string | null;
+  last_name_encrypted?: string | null;
   [key: string]: unknown;
 };
 
 function decryptOrderRow<T extends CustomerEncryptedRow>(
   row: T,
 ) {
+  const shippingAddress = decryptCustomerData(row.shipping_address_encrypted);
+
   return {
     ...row,
     customer_name: decryptCustomerData(row.customer_name_encrypted) ?? row.customer_name ?? null,
     customer_email: decryptCustomerData(row.customer_email_encrypted) ?? row.customer_email ?? null,
+    shipping_address: shippingAddress ? JSON.parse(shippingAddress) : null,
+  };
+}
+
+function decryptOperationCustomerRow<T extends OperationCustomerEncryptedRow>(
+  row: T,
+) {
+  return {
+    ...row,
+    display_name: decryptCustomerData(row.display_name_encrypted) ?? row.display_name ?? null,
+    email: decryptCustomerData(row.email_encrypted) ?? row.email ?? null,
+    first_name: decryptCustomerData(row.first_name_encrypted),
+    last_name: decryptCustomerData(row.last_name_encrypted),
   };
 }
 
@@ -1767,7 +1795,13 @@ export async function loadDashboard(db: QueryExecutor, tenantId: string) {
   };
 }
 
-export async function loadItems(db: QueryExecutor, tenantId: string) {
+export async function loadItems(
+  db: QueryExecutor,
+  tenantId: string,
+  filters?: { query?: string; source?: string },
+) {
+  const query = filters?.query?.trim() ?? "";
+  const source = filters?.source ?? "all";
   return (
     await db.query<ItemRow>(
       `
@@ -1780,13 +1814,35 @@ export async function loadItems(db: QueryExecutor, tenantId: string) {
           where tenant_id = $1
           group by item_id
         )
-        select items.*, coalesce(balances.available_quantity, 0) as available_quantity, coalesce(balances.reserved_quantity, 0) as reserved_quantity
+        select items.*,
+          coalesce(balances.available_quantity, 0) as available_quantity,
+          coalesce(balances.reserved_quantity, 0) as reserved_quantity,
+          case
+            when items.shopify_product_gid is not null then 'shopify'
+            else 'operations'
+          end as product_source,
+          case
+            when items.shopify_product_gid is not null and items.is_sellable then 'shop'
+            when items.shopify_product_gid is not null then 'shopify_synced'
+            else 'not_in_shop'
+          end as shop_product_flag
         from items
         left join balances on balances.item_id = items.id
         where items.tenant_id = $1
+          and (
+            $2 = ''
+            or lower(items.sku) like '%' || lower($2) || '%'
+            or lower(items.title) like '%' || lower($2) || '%'
+          )
+          and (
+            $3 = 'all'
+            or ($3 = 'shop' and items.shopify_product_gid is not null)
+            or ($3 = 'operations' and items.shopify_product_gid is null)
+            or ($3 = 'components' and items.item_type in ('component', 'raw_material'))
+          )
         order by items.sku
       `,
-      [tenantId],
+      [tenantId, query, source],
     )
   ).rows;
 }
@@ -2109,6 +2165,23 @@ export async function loadOperationsOrderLinesList(db: QueryExecutor, tenantId: 
       [tenantId],
     )
   ).rows;
+}
+
+export async function loadOperationsCustomersList(db: QueryExecutor, tenantId: string) {
+  const rows = (
+    await db.query(
+      `
+        select operation_customers.*
+        from operation_customers
+        where operation_customers.tenant_id = $1
+        order by operation_customers.shopify_updated_at desc nulls last,
+          operation_customers.synced_at desc
+      `,
+      [tenantId],
+    )
+  ).rows;
+
+  return rows.map((row) => decryptOperationCustomerRow(row as OperationCustomerEncryptedRow));
 }
 
 export async function loadOperationsOrderLineDetail(
@@ -2723,9 +2796,13 @@ export async function createShippingOrdersFromOpenOperationsOrders(
     const orders = await tx.query<{
       id: string;
       order_name: string;
+      customer_name_encrypted: string | null;
+      customer_email_encrypted: string | null;
+      shipping_address_encrypted: string | null;
     }>(
       `
-        select *
+        select id, order_name, customer_name_encrypted, customer_email_encrypted,
+          shipping_address_encrypted
         from operations_orders
         where tenant_id = $1 and status in ('open', 'planned', 'in_progress')
           and ($2::uuid is null or id = $2::uuid)
@@ -2735,7 +2812,17 @@ export async function createShippingOrdersFromOpenOperationsOrders(
     );
 
     const created: string[] = [];
+    const blockedOrders: string[] = [];
     for (const order of orders.rows) {
+      if (
+        !order.customer_name_encrypted ||
+        !order.customer_email_encrypted ||
+        !order.shipping_address_encrypted
+      ) {
+        blockedOrders.push(order.order_name);
+        continue;
+      }
+
       const shipmentNumber = `SO-${order.order_name.replace(/[^a-zA-Z0-9]/g, "") || order.id.slice(0, 8)}`;
       const shipment = await tx.query<{ id: string }>(
         `
@@ -2813,12 +2900,16 @@ export async function createShippingOrdersFromOpenOperationsOrders(
       tx,
       tenantId,
       "Shipping work created",
-      `${created.length} shipping order(s) are ready for logistics.`,
+      `${created.length} shipping order(s) are ready for logistics.${
+        blockedOrders.length
+          ? ` ${blockedOrders.length} order(s) were blocked because customer name, email or shipping address is missing.`
+          : ""
+      }`,
       "shipping_order_create",
-      { shippingOrderIds: created },
+      { shippingOrderIds: created, blockedOrders },
     );
 
-    return { shippingOrderIds: created };
+    return { shippingOrderIds: created, blockedOrders };
   });
 }
 
@@ -2957,6 +3048,7 @@ export async function loadShippingOrders(db: QueryExecutor, tenantId: string) {
       select shipping_orders.*, operations_orders.order_name,
         operations_orders.customer_name_encrypted,
         operations_orders.customer_email_encrypted,
+        operations_orders.shipping_address_encrypted,
         count(shipping_order_lines.id)::int as line_count
       from shipping_orders
       join operations_orders on operations_orders.id = shipping_orders.operations_order_id
@@ -2964,7 +3056,8 @@ export async function loadShippingOrders(db: QueryExecutor, tenantId: string) {
       where shipping_orders.tenant_id = $1
       group by shipping_orders.id, operations_orders.order_name,
         operations_orders.customer_name_encrypted,
-        operations_orders.customer_email_encrypted
+        operations_orders.customer_email_encrypted,
+        operations_orders.shipping_address_encrypted
       order by shipping_orders.created_at desc
     `,
     [tenantId],

@@ -55,6 +55,14 @@
   color: #616a75;
 }
 
+.kit-filterbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px) auto auto;
+  gap: 10px;
+  align-items: end;
+  margin: 12px 0;
+}
+
 .kit-flow {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -116,6 +124,10 @@
 }
 
 @media (max-width: 900px) {
+  .kit-filterbar {
+    grid-template-columns: 1fr;
+  }
+
   .kit-workbench {
     grid-template-columns: 1fr;
   }

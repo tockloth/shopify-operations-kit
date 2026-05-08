@@ -22,6 +22,7 @@ export default function App() {
         <s-link href="/app">Dashboard</s-link>
         <s-link href="/app/orders">Orders</s-link>
         <s-link href="/app/items">Products</s-link>
+        <s-link href="/app/customers">Customers</s-link>
         <s-link href="/app/boms">BOM / MRP</s-link>
         <s-link href="/app/procurement">Procurement</s-link>
         <s-link href="/app/receiving">Receiving / QC</s-link>

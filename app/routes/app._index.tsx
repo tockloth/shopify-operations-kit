@@ -94,8 +94,8 @@ export default function Dashboard() {
               Bring Shopify products, variants, inventory references and orders
               into Operations Kit before planning work.
             </s-paragraph>
-            <s-link href="/app/items">Sync products</s-link>
-            <s-link href="/app/orders">Sync orders</s-link>
+            <s-link href="/app/items">Products</s-link>
+            <s-link href="/app/orders">Orders</s-link>
           </NextAction>
 
           <NextAction title="2. Classify items">

@@ -5,11 +5,8 @@ import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
 import {
   consolidateOpenOrdersByCustomer,
-  createOperationsOrderEntry,
   createShippingOrdersFromOpenOperationsOrders,
-  loadOperationsOrderLinesList,
   loadOperationsOrdersList,
-  loadSellableItemsForOrderEntry,
   redactOperationsOrderCustomerData,
   runOperationsMrp,
 } from "../lib/operations-kit.server";
@@ -23,12 +20,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     configured: true,
     shopDomain: context.shopDomain,
-    sellableItems: await loadSellableItemsForOrderEntry(
-      context.pool,
-      context.ctx.tenantId,
-    ),
     orders: await loadOperationsOrdersList(context.pool, context.ctx.tenantId),
-    orderLines: await loadOperationsOrderLinesList(context.pool, context.ctx.tenantId),
   };
 };
 
@@ -50,23 +42,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     };
   }
 
-  if (intent === "createOperationsOrder") {
-    const result = await createOperationsOrderEntry(
-      context.pool,
-      context.ctx.tenantId,
-      {
-        orderName: String(form.get("orderName") || ""),
-        customerName: String(form.get("customerName") || ""),
-        customerEmail: String(form.get("customerEmail") || ""),
-        itemId: String(form.get("itemId") || ""),
-        quantity: Number(form.get("quantity") || 1),
-      },
-    );
-    return {
-      message: `${result.orderName} entered. It can now be planned through BOM / MRP.`,
-    };
-  }
-
   if (intent === "runOperationsMrp") {
     const result = await runOperationsMrp(context.pool, context.ctx.tenantId);
     return {
@@ -80,7 +55,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       context.ctx.tenantId,
     );
     return {
-      message: `${result.shippingOrderIds.length} logistics order(s) created from open operations orders.`,
+      message: `${result.shippingOrderIds.length} logistics order(s) created from open operations orders.${
+        result.blockedOrders.length
+          ? ` ${result.blockedOrders.length} order(s) were blocked because customer name, email or shipping address is missing for shipping.`
+          : ""
+      }`,
     };
   }
 
@@ -95,12 +74,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   try {
     const result = await syncShopifyOrders(context.pool, context.ctx.tenantId, admin);
+    const protectedDataMessage = !result.customerDataAvailable
+      ? " Customer name, email and shipping address were skipped because the current Shopify app installation does not include the required protected customer data access."
+      : !result.shippingAddressAvailable
+        ? " Customer name and email were synced. Shipping address was skipped because Address is not approved in Protected Customer Data."
+        : "";
+
     return {
-      message: `${result.orders} Shopify order(s) and ${result.lines} line item(s) synced into Operations Kit.${
-        result.customerDataAvailable
-          ? ""
-          : " Customer name and email were skipped because the current Shopify dev session does not include read_customers."
-      }`,
+      message: `${result.orders} Shopify order(s) and ${result.lines} line item(s) synced into Operations Kit.${protectedDataMessage}`,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -154,6 +135,7 @@ export default function Orders() {
             </div>
           </div>
           <div className="kit-toolbar-actions">
+            <s-link href="/app/orders/new">Create manual order</s-link>
             <Form method="post">
               <input type="hidden" name="intent" value="sync" />
               <s-button variant="primary" type="submit">Sync Shopify orders</s-button>
@@ -230,70 +212,6 @@ export default function Orders() {
           }))}
         />
       </s-section>
-
-      <s-section heading="Order lines">
-        <DataTable
-          headings={["Line item", "Order", "Quantity", "Item role", "Make / buy", "Supply status"]}
-          rows={(data.orderLines ?? []).map((line: any) => ({
-            id: line.id,
-            href: `/app/order-lines/${line.id}`,
-            cells: [
-              <strong>{line.sku ?? line.item_sku ?? "No SKU"} · {line.title ?? line.item_title ?? "No title"}</strong>,
-              line.order_name,
-              `${Number(line.quantity).toLocaleString()} ${line.unit}`,
-              <MoneylessBadge>{line.item_type}</MoneylessBadge>,
-              [
-                line.is_producible ? `produce ${Number(line.default_production_quantity ?? 1).toLocaleString()}` : null,
-                line.is_purchasable ? `order ${Number(line.default_order_quantity ?? 1).toLocaleString()}` : null,
-                line.is_sellable ? "sellable" : null,
-              ].filter(Boolean).join(", ") || "not classified",
-              <MoneylessBadge>{line.supply_status}</MoneylessBadge>,
-            ],
-          }))}
-        />
-      </s-section>
-
-      <s-section heading="Manual operations order entry">
-        <s-box padding="base" borderWidth="base" borderRadius="base">
-          <Form method="post">
-            <input type="hidden" name="intent" value="createOperationsOrder" />
-            <s-stack direction="block" gap="base">
-              <s-text-field
-                label="Order number"
-                name="orderName"
-                placeholder="INTAKE-1001"
-              ></s-text-field>
-              <s-text-field
-                label="Customer"
-                name="customerName"
-                placeholder="Customer name"
-              ></s-text-field>
-              <s-email-field
-                label="Email"
-                name="customerEmail"
-                placeholder="customer@example.com"
-              ></s-email-field>
-              <s-select label="Product" name="itemId" required>
-                <s-option value="">Select sellable item</s-option>
-                {(data.sellableItems ?? []).map((item: any) => (
-                  <s-option key={item.id} value={item.id}>
-                    {item.sku} · {item.title}
-                  </s-option>
-                ))}
-              </s-select>
-              <s-number-field
-                label="Quantity"
-                name="quantity"
-                min={1}
-                step={1}
-                value="1"
-              ></s-number-field>
-            </s-stack>
-            <s-button variant="primary" type="submit">Create operations order</s-button>
-          </Form>
-        </s-box>
-      </s-section>
-
     </s-page>
   );
 }
