@@ -1588,6 +1588,62 @@ export async function postGoodsReceiptForAcknowledgedPurchaseOrders(
   });
 }
 
+export async function createGoodsReceiptForPurchaseOrder(
+  db: QueryExecutor,
+  tenantId: string,
+  purchaseOrderId: string,
+) {
+  const existing = await db.query<{
+    id: string;
+    receipt_number: string;
+    status: string;
+  }>(
+    `
+      select id, receipt_number, status
+      from goods_receipts
+      where tenant_id = $1
+        and purchase_order_id = $2
+        and status <> 'cancelled'
+      order by created_at desc
+      limit 1
+    `,
+    [tenantId, purchaseOrderId],
+  );
+  const existingReceipt = existing.rows[0];
+  if (existingReceipt) {
+    return {
+      receiptId: existingReceipt.id,
+      receiptNumber: existingReceipt.receipt_number,
+      created: false,
+    };
+  }
+
+  const result = await postGoodsReceiptForAcknowledgedPurchaseOrders(
+    db,
+    tenantId,
+    purchaseOrderId,
+  );
+  const receiptId = result.receiptIds[0] ?? null;
+  if (!receiptId) {
+    return { receiptId: null, receiptNumber: null, created: false };
+  }
+
+  const receipt = await db.query<{ receipt_number: string }>(
+    `
+      select receipt_number
+      from goods_receipts
+      where tenant_id = $1 and id = $2
+    `,
+    [tenantId, receiptId],
+  );
+
+  return {
+    receiptId,
+    receiptNumber: receipt.rows[0]?.receipt_number ?? null,
+    created: true,
+  };
+}
+
 export async function completeReceiptLineQc(
   db: QueryExecutor,
   tenantId: string,
@@ -3906,9 +3962,16 @@ export async function loadPurchaseOrderDetail(
     supplier_name: string;
     supplier_email: string | null;
     status: string;
+    receipt_status: string | null;
   }>(
     `
-      select purchase_orders.*, suppliers.name as supplier_name, suppliers.email as supplier_email
+      select purchase_orders.*, suppliers.name as supplier_name, suppliers.email as supplier_email,
+        (
+          select max(goods_receipts.status)
+          from goods_receipts
+          where goods_receipts.tenant_id = purchase_orders.tenant_id
+            and goods_receipts.purchase_order_id = purchase_orders.id
+        ) as receipt_status
       from purchase_orders
       join suppliers on suppliers.id = purchase_orders.supplier_id
       where purchase_orders.tenant_id = $1 and purchase_orders.id = $2
@@ -3934,9 +3997,26 @@ export async function loadPurchaseOrderDetail(
       where purchase_order_lines.tenant_id = $1 and purchase_order_lines.purchase_order_id = $2
       order by items.sku
     `,
+      [tenantId, purchaseOrderId],
+    );
+  const receipts = await db.query(
+    `
+      select goods_receipts.*,
+        count(goods_receipt_lines.id)::int as line_count
+      from goods_receipts
+      left join goods_receipt_lines on goods_receipt_lines.goods_receipt_id = goods_receipts.id
+      where goods_receipts.tenant_id = $1
+        and goods_receipts.purchase_order_id = $2
+      group by goods_receipts.id
+      order by goods_receipts.created_at desc
+    `,
     [tenantId, purchaseOrderId],
   );
-  return { order: order.rows[0] ?? null, lines: lines.rows };
+  return {
+    order: order.rows[0] ?? null,
+    lines: lines.rows,
+    receipts: receipts.rows,
+  };
 }
 
 export async function loadProductionOrders(

@@ -4,6 +4,7 @@ import { Form, Link, useActionData, useLoaderData } from "react-router";
 import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
 import {
+  createGoodsReceiptForPurchaseOrder,
   loadPurchaseOrderDetail,
   transitionPurchaseOrder,
 } from "../lib/operations-kit.server";
@@ -17,7 +18,7 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   if (!purchaseOrderId) {
     return {
       configured: true,
-      purchaseOrderDetail: { order: null, lines: [] },
+      purchaseOrderDetail: { order: null, lines: [], receipts: [] },
     };
   }
 
@@ -53,6 +54,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { message: "Purchase order status updated." };
   }
 
+  if (intent === "createGoodsReceipt") {
+    const purchaseOrderId = String(form.get("purchaseOrderId"));
+    const purchaseOrderNumber = String(form.get("purchaseOrderNumber"));
+    const result = await createGoodsReceiptForPurchaseOrder(
+      context.pool,
+      context.ctx.tenantId,
+      purchaseOrderId,
+    );
+    if (!result.receiptId) {
+      return {
+        message:
+          "No goods receipt was created. Confirm the purchase order is acknowledged before receiving.",
+      };
+    }
+
+    return {
+      message: result.created
+        ? `Goods receipt created for ${purchaseOrderNumber}. Continue with QC and putaway.`
+        : `Goods receipt already exists for ${purchaseOrderNumber}. Continue with QC and putaway.`,
+      receiptId: result.receiptId,
+    };
+  }
+
   return { message: "No action was performed." };
 };
 
@@ -81,6 +105,25 @@ function purchaseOrderStatusTone(status: string): BadgeTone {
   if (status === "ordered" || status === "delivered") return "info";
   if (status === "cancelled") return "critical";
   return "warning";
+}
+
+function receivingStatus(order: any, receipts: any[]) {
+  const openReceipt = receipts.find((receipt) => receipt.status !== "cancelled");
+  if (openReceipt) return openReceipt.status;
+  if (order.status === "acknowledged") return "ready to receive";
+  if (order.status === "sent") return "awaiting acknowledgement";
+  return "not ready";
+}
+
+function nextReceivingAction(order: any, receipts: any[]) {
+  const openReceipt = receipts.find((receipt) => receipt.status !== "cancelled");
+  if (openReceipt) {
+    if (openReceipt.status === "closed") return "Complete";
+    if (openReceipt.status === "putaway_pending") return "Putaway";
+    return "QC";
+  }
+  if (order.status === "acknowledged") return "Create goods receipt";
+  return "Wait for acknowledgement";
 }
 
 function formatDate(value: unknown) {
@@ -130,6 +173,7 @@ export default function PurchaseOrderDetail() {
 
   const detail = data.purchaseOrderDetail;
   const order = detail.order;
+  const receipts = (detail.receipts ?? []) as any[];
   if (!order) {
     return (
       <s-page heading="Purchase order">
@@ -144,6 +188,10 @@ export default function PurchaseOrderDetail() {
   }
 
   const businessStatus = purchaseOrderBusinessStatus(order);
+  const hasOpenReceipt = receipts.some(
+    (receipt: any) => receipt.status !== "cancelled",
+  );
+  const canCreateReceipt = order.status === "acknowledged" && !hasOpenReceipt;
 
   return (
     <s-page heading={`Purchase order ${order.display_number}`}>
@@ -152,7 +200,14 @@ export default function PurchaseOrderDetail() {
           <Link to="/app/procurement">Back to purchase orders</Link>
           {actionData?.message ? (
             <s-box padding="base" borderWidth="base" borderRadius="base">
-              <s-paragraph>{actionData.message}</s-paragraph>
+              <s-stack direction="block" gap="small">
+                <s-paragraph>{actionData.message}</s-paragraph>
+                {"receiptId" in actionData && actionData.receiptId ? (
+                  <s-link href={`/app/receiving/${actionData.receiptId}`}>
+                    Open Receipt detail
+                  </s-link>
+                ) : null}
+              </s-stack>
             </s-box>
           ) : null}
           <s-box padding="base" borderWidth="base" borderRadius="base">
@@ -205,6 +260,79 @@ export default function PurchaseOrderDetail() {
               </s-stack>
             </s-stack>
           </s-box>
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Receiving">
+        <s-stack direction="block" gap="base">
+          <DataTable
+            headings={[
+              "Purchase Order",
+              "Receiving status",
+              "Goods Receipt",
+              "Lines",
+              "Next action",
+            ]}
+            rows={[
+              [
+                <strong>{order.display_number}</strong>,
+                <MoneylessBadge>
+                  {receivingStatus(order, receipts)}
+                </MoneylessBadge>,
+                hasOpenReceipt
+                  ? receipts
+                      .filter((receipt: any) => receipt.status !== "cancelled")
+                      .map((receipt: any) => (
+                        <s-link
+                          key={receipt.id}
+                          href={`/app/receiving/${receipt.id}`}
+                        >
+                          {receipt.receipt_number}
+                        </s-link>
+                      ))
+                  : "No goods receipt yet",
+                hasOpenReceipt
+                  ? receipts
+                      .filter((receipt: any) => receipt.status !== "cancelled")
+                      .reduce(
+                        (total: number, receipt: any) =>
+                          total + Number(receipt.line_count ?? 0),
+                        0,
+                      )
+                  : detail.lines.length,
+                nextReceivingAction(order, receipts),
+              ],
+            ]}
+          />
+          {canCreateReceipt ? (
+            <Form method="post">
+              <input type="hidden" name="intent" value="createGoodsReceipt" />
+              <input type="hidden" name="purchaseOrderId" value={order.id} />
+              <input
+                type="hidden"
+                name="purchaseOrderNumber"
+                value={order.display_number}
+              />
+              <s-button variant="primary" type="submit">
+                Create goods receipt
+              </s-button>
+            </Form>
+          ) : hasOpenReceipt ? (
+            <s-stack direction="inline" gap="small">
+              {receipts
+                .filter((receipt: any) => receipt.status !== "cancelled")
+                .map((receipt: any) => (
+                  <s-link key={receipt.id} href={`/app/receiving/${receipt.id}`}>
+                    Open {receipt.receipt_number}
+                  </s-link>
+                ))}
+            </s-stack>
+          ) : (
+            <s-paragraph>
+              Receiving is available after the supplier acknowledges this
+              Purchase Order.
+            </s-paragraph>
+          )}
         </s-stack>
       </s-section>
 

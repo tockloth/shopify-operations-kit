@@ -64,7 +64,7 @@ export default function EditSettingsUser() {
           <div>
             <s-heading>Edit employee</s-heading>
             <div className="kit-list-summary">
-              Change the user's display name, admin flag and primary group.
+              Change the user&apos;s display name, admin flag and primary group.
             </div>
           </div>
           <s-link href="/app/settings/users">Back to users</s-link>

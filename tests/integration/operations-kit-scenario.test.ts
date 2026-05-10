@@ -163,13 +163,40 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
     expect(receiving.receipts.length).toBeGreaterThan(0);
     expect(receiving.lines.some((line: any) => line.qc_status === "passed")).toBe(true);
 
-    const acceptedLine = receiving.lines.find(
+    const acceptedLines = receiving.lines.filter(
       (line: any) => line.status === "accepted",
-    ) as any;
-    expect(acceptedLine?.id).toBeTruthy();
+    ) as any[];
+    expect(acceptedLines.length).toBeGreaterThan(0);
 
-    const putaway = await putawayReceiptLine(pool, tenantId, acceptedLine.id);
-    expect(putaway.putaway).toBeGreaterThan(0);
+    let finalPutaway: Awaited<ReturnType<typeof putawayReceiptLine>> | null =
+      null;
+    for (const acceptedLine of acceptedLines) {
+      finalPutaway = await putawayReceiptLine(
+        pool,
+        tenantId,
+        acceptedLine.id,
+      );
+      expect(finalPutaway.putaway).toBeGreaterThan(0);
+    }
+    expect(finalPutaway?.paymentId).toBeTruthy();
+
+    const repeatedPutaway = await putawayReceiptLine(
+      pool,
+      tenantId,
+      acceptedLines[acceptedLines.length - 1].id,
+    );
+    expect(repeatedPutaway.putaway).toBe(0);
+
+    const paymentCount = await pool.query<{ count: string }>(
+      `
+        select count(*)::text as count
+        from purchase_payments
+        where tenant_id = $1
+          and purchase_order_id = $2
+      `,
+      [tenantId, po.id],
+    );
+    expect(Number(paymentCount.rows[0]?.count ?? 0)).toBe(1);
 
     const afterPutaway = await loadReceipts(pool, tenantId);
     expect(
