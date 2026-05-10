@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, Link, useActionData, useLoaderData } from "react-router";
+import { Link, useActionData, useLoaderData } from "react-router";
 
 import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
@@ -48,6 +48,47 @@ function quantity(value: unknown) {
   return Number(value ?? 0).toLocaleString();
 }
 
+function formatDate(value: unknown) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
+
+function movementLabel(value: unknown) {
+  const movement = String(value || "");
+  const labels: Record<string, string> = {
+    stock_adjustment: "Inventory adjustment",
+    reservation: "Reservation",
+    reservation_release: "Reservation release",
+    purchase_receipt: "Purchase receipt",
+    qc_hold: "QC hold",
+    putaway: "Putaway",
+    quarantine: "Quarantine",
+    pick: "Pick",
+    pack: "Pack",
+    ship: "Ship",
+    consume: "Consume",
+    produce: "Produce",
+    count_adjustment: "Count adjustment",
+  };
+  return labels[movement] ?? movement.replaceAll("_", " ");
+}
+
+function sourceLabel(value: unknown) {
+  const source = String(value || "");
+  const labels: Record<string, string> = {
+    goods_receipt_line: "Receipt line",
+    qc_check: "QC check",
+    manual_adjustment: "Manual adjustment",
+    manual_inventory: "Manual adjustment",
+    scenario_seed: "Opening stock",
+    production_order: "Production order",
+    shipping_order_line: "Shipping work",
+  };
+  return labels[source] ?? source.replaceAll("_", " ");
+}
+
 export default function InventoryItemDetail() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
@@ -87,9 +128,8 @@ export default function InventoryItemDetail() {
             <s-button>Back to inventory</s-button>
           </Link>
           <s-paragraph>
-            This detail view shows the operational stock position for one
-            product. Customer orders reserve stock; purchase orders increase
-            ordered and planned stock until receipt and QC.
+            Operational stock position for this product, including demand,
+            incoming supply and ledger movements.
           </s-paragraph>
           {actionData?.message ? (
             <s-banner tone="success">{actionData.message}</s-banner>
@@ -98,138 +138,84 @@ export default function InventoryItemDetail() {
       </s-section>
 
       <s-section heading="Stock position">
-        <s-grid grid-template-columns="1fr 1fr 1fr 1fr 1fr" gap="base">
-          <s-box padding="base" borderWidth="base" borderRadius="base">
-            <s-stack direction="block" gap="small">
-              <s-heading>{quantity(balance.physical_quantity)}</s-heading>
-              <s-text>Physical</s-text>
-            </s-stack>
-          </s-box>
-          <s-box padding="base" borderWidth="base" borderRadius="base">
-            <s-stack direction="block" gap="small">
-              <s-heading>{quantity(balance.reserved_quantity)}</s-heading>
-              <s-text>Reserved</s-text>
-            </s-stack>
-          </s-box>
-          <s-box padding="base" borderWidth="base" borderRadius="base">
-            <s-stack direction="block" gap="small">
-              <s-heading>{quantity(balance.available_quantity)}</s-heading>
-              <s-text>Available</s-text>
-            </s-stack>
-          </s-box>
-          <s-box padding="base" borderWidth="base" borderRadius="base">
-            <s-stack direction="block" gap="small">
-              <s-heading>{quantity(balance.ordered_quantity)}</s-heading>
-              <s-text>Ordered</s-text>
-            </s-stack>
-          </s-box>
-          <s-box padding="base" borderWidth="base" borderRadius="base">
-            <s-stack direction="block" gap="small">
-              <s-heading>{quantity(balance.planned_quantity)}</s-heading>
-              <s-text>Planned</s-text>
-            </s-stack>
-          </s-box>
-        </s-grid>
-      </s-section>
-
-      <s-section heading="Post inventory movement">
-        <s-box padding="base" borderWidth="base" borderRadius="base">
-          <Form method="post">
-            <input type="hidden" name="intent" value="postInventoryMovement" />
-            <s-stack direction="block" gap="base">
-              <s-grid grid-template-columns="1fr 1fr 1fr" gap="base">
-                <s-select
-                  label="Movement"
-                  name="movementType"
-                  value="stock_adjustment"
-                >
-                  <s-option value="stock_adjustment">
-                    Inventory adjustment
-                  </s-option>
-                  <s-option value="purchase_receipt">
-                    Receipt from procurement
-                  </s-option>
-                  <s-option value="putaway">Putaway after QC</s-option>
-                  <s-option value="produce">Receipt from production</s-option>
-                  <s-option value="count_adjustment">Inventory count</s-option>
-                </s-select>
-                <s-number-field
-                  label="Quantity"
-                  name="quantity"
-                  min={0.0001}
-                  step={1}
-                  value="1"
-                ></s-number-field>
-                <s-select label="Location" name="locationCode" value="MAIN">
-                  <s-option value="MAIN">MAIN</s-option>
-                  <s-option value="QC-HOLD">QC-HOLD</s-option>
-                  <s-option value="QUARANTINE">QUARANTINE</s-option>
-                  <s-option value="LOGISTICS-STAGE">LOGISTICS-STAGE</s-option>
-                </s-select>
-              </s-grid>
-              <s-text-field
-                label="Reference"
-                name="reference"
-                placeholder="GRN-1001, PO-1001 or cycle count"
-              ></s-text-field>
-              <s-button variant="primary" type="submit">
-                Post movement
-              </s-button>
-            </s-stack>
-          </Form>
-        </s-box>
+        <DataTable
+          headings={["Physical", "Reserved", "Available", "Ordered", "Planned"]}
+          rows={[
+            [
+              quantity(balance.physical_quantity),
+              quantity(balance.reserved_quantity),
+              quantity(balance.available_quantity),
+              quantity(balance.ordered_quantity),
+              quantity(balance.planned_quantity),
+            ],
+          ]}
+        />
       </s-section>
 
       <s-section heading="Customer reservations">
-        <DataTable
-          headings={["Order", "Customer", "Quantity", "Status"]}
-          rows={(detail.demand ?? []).map((line: any) => ({
-            id: `demand-${line.order_id}`,
-            href: `/app/orders/${line.order_id}`,
-            cells: [
-              <strong>{line.order_name}</strong>,
-              line.customer_display_name ?? "No customer",
-              `${quantity(line.quantity)} ${line.unit}`,
-              <MoneylessBadge>{line.status}</MoneylessBadge>,
-            ],
-          }))}
-        />
+        {(detail.demand ?? []).length > 0 ? (
+          <DataTable
+            headings={["Order", "Customer", "Quantity", "Status"]}
+            rows={(detail.demand ?? []).map((line: any) => ({
+              id: `demand-${line.order_id}`,
+              href: `/app/orders/${line.order_id}`,
+              cells: [
+                <strong>{line.order_name}</strong>,
+                line.customer_display_name ?? "No customer",
+                `${quantity(line.quantity)} ${line.unit}`,
+                <MoneylessBadge>{line.status}</MoneylessBadge>,
+              ],
+            }))}
+          />
+        ) : (
+          <s-paragraph>No customer reservations.</s-paragraph>
+        )}
       </s-section>
 
       <s-section heading="Incoming purchase orders">
-        <DataTable
-          headings={[
-            "PO",
-            "Supplier",
-            "Quantity",
-            "Expected delivery",
-            "Status",
-          ]}
-          rows={(detail.incoming ?? []).map((line: any) => ({
-            id: `incoming-${line.purchase_order_id}`,
-            href: `/app/procurement?purchaseOrderId=${line.purchase_order_id}`,
-            cells: [
-              <strong>{line.display_number}</strong>,
-              line.supplier_name,
-              `${quantity(line.quantity)} ${line.unit}`,
-              line.expected_delivery_date ?? "",
-              <MoneylessBadge>{line.purchase_order_status}</MoneylessBadge>,
-            ],
-          }))}
-        />
+        {(detail.incoming ?? []).length > 0 ? (
+          <DataTable
+            headings={[
+              "PO",
+              "Supplier",
+              "Quantity",
+              "Expected delivery",
+              "Status",
+            ]}
+            rows={(detail.incoming ?? []).map((line: any) => ({
+              id: `incoming-${line.purchase_order_id}`,
+              href: `/app/procurement?purchaseOrderId=${line.purchase_order_id}`,
+              cells: [
+                <strong>{line.display_number}</strong>,
+                line.supplier_name,
+                `${quantity(line.quantity)} ${line.unit}`,
+                line.expected_delivery_date ?? "",
+                <MoneylessBadge>{line.purchase_order_status}</MoneylessBadge>,
+              ],
+            }))}
+          />
+        ) : (
+          <s-paragraph>No incoming purchase orders.</s-paragraph>
+        )}
       </s-section>
 
       <s-section heading="Ledger movements">
-        <DataTable
-          headings={["Date", "Movement", "Quantity", "Location", "Source"]}
-          rows={(detail.movements ?? []).map((movement: any) => [
-            new Date(movement.occurred_at).toLocaleString(),
-            <MoneylessBadge>{movement.movement_type}</MoneylessBadge>,
-            quantity(movement.quantity_delta),
-            movement.location_code ?? "",
-            movement.source_type,
-          ])}
-        />
+        {(detail.movements ?? []).length > 0 ? (
+          <DataTable
+            headings={["Date", "Movement", "Quantity", "Location", "Source"]}
+            rows={(detail.movements ?? []).map((movement: any) => [
+              formatDate(movement.occurred_at),
+              <MoneylessBadge>
+                {movementLabel(movement.movement_type)}
+              </MoneylessBadge>,
+              quantity(movement.quantity_delta),
+              movement.location_code ?? "Unassigned",
+              sourceLabel(movement.source_type),
+            ])}
+          />
+        ) : (
+          <s-paragraph>No ledger movements.</s-paragraph>
+        )}
       </s-section>
     </s-page>
   );

@@ -4906,11 +4906,62 @@ export async function loadInventoryLedger(db: QueryExecutor, tenantId: string) {
     `,
     [tenantId],
   );
-  const movements = await db.query(
+  const locationBalances = await db.query(
     `
-      select inventory_movements.*, items.sku, items.title
+      select
+        items.id as item_id,
+        items.sku,
+        items.title,
+        coalesce(inventory_movements.location_code, 'Unassigned') as location_code,
+        coalesce(sum(inventory_movements.quantity_delta), 0) as on_hand_quantity,
+        case
+          when coalesce(inventory_movements.location_code, 'MAIN') = 'MAIN'
+          then coalesce(sum(inventory_movements.quantity_delta - inventory_movements.reserved_delta), 0)
+          else 0
+        end as available_quantity,
+        case
+          when coalesce(inventory_movements.location_code, '') = 'QC-HOLD'
+          then coalesce(sum(inventory_movements.quantity_delta), 0)
+          else 0
+        end as qc_hold_quantity,
+        max(inventory_movements.occurred_at) as last_movement_at
       from inventory_movements
       join items on items.id = inventory_movements.item_id
+      where inventory_movements.tenant_id = $1
+      group by items.id, items.sku, items.title, inventory_movements.location_code
+      having coalesce(sum(inventory_movements.quantity_delta), 0) <> 0
+        or coalesce(sum(inventory_movements.reserved_delta), 0) <> 0
+      order by items.sku, coalesce(inventory_movements.location_code, 'Unassigned')
+    `,
+    [tenantId],
+  );
+  const movements = await db.query(
+    `
+      select inventory_movements.*, items.sku, items.title,
+        coalesce(source_receipts.id, qc_receipts.id) as source_receipt_id,
+        coalesce(source_receipts.receipt_number, qc_receipts.receipt_number) as source_receipt_number,
+        coalesce(source_purchase_orders.id, qc_purchase_orders.id) as source_purchase_order_id,
+        coalesce(source_purchase_orders.display_number, qc_purchase_orders.display_number) as source_purchase_order_number
+      from inventory_movements
+      join items on items.id = inventory_movements.item_id
+      left join goods_receipt_lines source_receipt_lines
+        on source_receipt_lines.tenant_id = inventory_movements.tenant_id
+        and inventory_movements.source_type = 'goods_receipt_line'
+        and inventory_movements.source_id = source_receipt_lines.id::text
+      left join goods_receipts source_receipts
+        on source_receipts.id = source_receipt_lines.goods_receipt_id
+      left join purchase_orders source_purchase_orders
+        on source_purchase_orders.id = source_receipts.purchase_order_id
+      left join qc_checks source_qc_checks
+        on source_qc_checks.tenant_id = inventory_movements.tenant_id
+        and inventory_movements.source_type = 'qc_check'
+        and inventory_movements.source_id = source_qc_checks.id::text
+      left join goods_receipt_lines qc_receipt_lines
+        on qc_receipt_lines.id = source_qc_checks.goods_receipt_line_id
+      left join goods_receipts qc_receipts
+        on qc_receipts.id = qc_receipt_lines.goods_receipt_id
+      left join purchase_orders qc_purchase_orders
+        on qc_purchase_orders.id = qc_receipts.purchase_order_id
       where inventory_movements.tenant_id = $1
       order by inventory_movements.occurred_at desc
       limit 50
@@ -4918,7 +4969,11 @@ export async function loadInventoryLedger(db: QueryExecutor, tenantId: string) {
     [tenantId],
   );
 
-  return { balances: balances.rows, movements: movements.rows };
+  return {
+    balances: balances.rows,
+    locationBalances: locationBalances.rows,
+    movements: movements.rows,
+  };
 }
 
 export async function loadInventoryItemDetail(
@@ -4950,7 +5005,8 @@ export async function loadInventoryItemDetail(
   const demand = await db.query(
     `
       select operations_orders.id as order_id, operations_orders.order_name,
-        operations_orders.customer_display_name, operations_order_lines.quantity,
+        coalesce(nullif(operations_orders.customer_name, ''), 'No customer') as customer_display_name,
+        operations_order_lines.quantity,
         operations_order_lines.unit, operations_order_lines.supply_status as status
       from operations_order_lines
       join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
