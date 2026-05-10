@@ -600,6 +600,184 @@ export async function seedOperationsKitScenario(
   });
 }
 
+export async function seedSampleOperatingScenario(
+  db: QueryExecutor,
+  tenantId: string,
+) {
+  return withKitTransaction(db, async (tx) => {
+    const baseline = await seedOperationsKitScenario(tx, tenantId);
+    const item = await tx.query<{ id: string }>(
+      "select id from items where tenant_id = $1 and sku = 'COMP-B'",
+      [tenantId],
+    );
+    const supplier = await tx.query<{ id: string }>(
+      "select id from suppliers where tenant_id = $1 and name = 'Supplier Beta'",
+      [tenantId],
+    );
+    const itemId = item.rows[0]?.id;
+    const supplierId = supplier.rows[0]?.id;
+    if (!itemId || !supplierId) {
+      throw new Error("Sample product or supplier master data is missing.");
+    }
+
+    const purchaseOrderNumber = "PO-SAMPLE-001";
+    const existingOrder = await tx.query<{ id: string }>(
+      `
+        select id
+        from purchase_orders
+        where tenant_id = $1 and display_number = $2
+        limit 1
+      `,
+      [tenantId, purchaseOrderNumber],
+    );
+
+    let purchaseOrderCreated = false;
+    const purchaseOrder =
+      existingOrder.rows[0] ??
+      (
+        await tx.query<{ id: string }>(
+          `
+            insert into purchase_orders (
+              tenant_id, supplier_id, display_number, status, notes,
+              sent_at, acknowledged_at
+            )
+            values (
+              $1, $2, $3, 'acknowledged',
+              'Sample Operations Kit purchase order for local testing.',
+              now(), now()
+            )
+            returning id
+          `,
+          [tenantId, supplierId, purchaseOrderNumber],
+        )
+      ).rows[0];
+    purchaseOrderCreated = existingOrder.rows.length === 0;
+
+    await tx.query(
+      `
+        update purchase_orders
+        set supplier_id = $3,
+            status = case
+              when status = 'cancelled' then status
+              else 'acknowledged'
+            end,
+            sent_at = coalesce(sent_at, now()),
+            acknowledged_at = coalesce(acknowledged_at, now()),
+            updated_at = now()
+        where tenant_id = $1 and id = $2
+      `,
+      [tenantId, purchaseOrder.id, supplierId],
+    );
+
+    const existingLine = await tx.query<{ id: string }>(
+      `
+        select id
+        from purchase_order_lines
+        where tenant_id = $1 and purchase_order_id = $2
+        limit 1
+      `,
+      [tenantId, purchaseOrder.id],
+    );
+
+    let purchaseOrderLineCreated = false;
+    if (existingLine.rows.length === 0) {
+      const mrpRun = await tx.query<{ id: string }>(
+        `
+          insert into mrp_runs (
+            tenant_id, status, scenario_mode, summary, committed_at
+          )
+          values (
+            $1, 'committed', 'shortage',
+            'Sample operating scenario for local Procurement and Receiving testing.',
+            now()
+          )
+          returning id
+        `,
+        [tenantId],
+      );
+      const mrpRunLine = await tx.query<{ id: string }>(
+        `
+          insert into mrp_run_lines (
+            tenant_id, mrp_run_id, item_id, source_item_id, line_type,
+            demand_quantity, available_quantity, shortage_quantity,
+            recommended_action, explanation
+          )
+          values (
+            $1, $2, $3, $3, 'component', 4, 0, 4, 'buy',
+            'Sample shortage used to create an acknowledged purchase order.'
+          )
+          returning id
+        `,
+        [tenantId, mrpRun.rows[0].id, itemId],
+      );
+      const purchaseNeed = await tx.query<{ id: string }>(
+        `
+          insert into purchase_needs (
+            tenant_id, item_id, mrp_run_id, mrp_run_line_id,
+            supplier_id, quantity, unit, status
+          )
+          values ($1, $2, $3, $4, $5, 4, 'pcs', 'converted_to_po')
+          returning id
+        `,
+        [
+          tenantId,
+          itemId,
+          mrpRun.rows[0].id,
+          mrpRunLine.rows[0].id,
+          supplierId,
+        ],
+      );
+
+      await tx.query(
+        `
+          insert into purchase_order_lines (
+            tenant_id, purchase_order_id, purchase_need_id, item_id,
+            requested_quantity, quantity, unit, status, lead_time_days,
+            expected_delivery_date, unit_price, currency_code
+          )
+          values ($1, $2, $3, $4, 4, 4, 'pcs', 'open', 7, current_date + 7, 0, 'EUR')
+        `,
+        [tenantId, purchaseOrder.id, purchaseNeed.rows[0].id, itemId],
+      );
+      purchaseOrderLineCreated = true;
+    }
+
+    const receipt = await tx.query<{ id: string; receipt_number: string }>(
+      `
+        select id, receipt_number
+        from goods_receipts
+        where tenant_id = $1 and purchase_order_id = $2
+        order by created_at desc
+        limit 1
+      `,
+      [tenantId, purchaseOrder.id],
+    );
+
+    await addCaseEvent(
+      tx,
+      tenantId,
+      "Sample operating scenario seeded",
+      `${purchaseOrderNumber} is ready for receiving tests.`,
+      purchaseOrder.id,
+      {
+        purchaseOrderNumber,
+        purchaseOrderCreated,
+        purchaseOrderLineCreated,
+      },
+    );
+
+    return {
+      ...baseline,
+      purchaseOrderId: purchaseOrder.id,
+      purchaseOrderNumber,
+      purchaseOrderCreated,
+      purchaseOrderLineCreated,
+      receiptId: receipt.rows[0]?.id ?? null,
+      receiptNumber: receipt.rows[0]?.receipt_number ?? null,
+    };
+  });
+}
+
 async function loadBomLinesForKit(db: QueryExecutor, tenantId: string) {
   const result = await db.query<{
     kit_id: string;
@@ -3860,6 +4038,27 @@ export async function loadPurchaseNeeds(db: QueryExecutor, tenantId: string) {
   ).rows;
 }
 
+export async function loadPurchaseNeedSupplierAssignment(
+  db: QueryExecutor,
+  tenantId: string,
+  purchaseNeedId: string,
+) {
+  const result = await db.query<{
+    id: string;
+    supplier_id: string | null;
+    status: string;
+  }>(
+    `
+      select id, supplier_id, status
+      from purchase_needs
+      where tenant_id = $1 and id = $2
+    `,
+    [tenantId, purchaseNeedId],
+  );
+
+  return result.rows[0] ?? null;
+}
+
 export async function assignPreferredSuppliersToNeeds(
   db: QueryExecutor,
   tenantId: string,
@@ -3925,6 +4124,50 @@ export async function loadPurchaseOrders(db: QueryExecutor, tenantId: string) {
       [tenantId],
     )
   ).rows;
+}
+
+export async function loadPurchasePayments(
+  db: QueryExecutor,
+  tenantId: string,
+) {
+  return (
+    await db.query(
+      `
+        select purchase_payments.*, suppliers.name as supplier_name,
+          purchase_orders.display_number as purchase_order_number
+        from purchase_payments
+        join purchase_orders on purchase_orders.id = purchase_payments.purchase_order_id
+        left join suppliers on suppliers.id = purchase_payments.supplier_id
+        where purchase_payments.tenant_id = $1
+        order by purchase_payments.created_at desc
+      `,
+      [tenantId],
+    )
+  ).rows;
+}
+
+export async function loadPurchaseOrderTenantDiagnostics(
+  db: QueryExecutor,
+  tenantId: string,
+) {
+  const counts = await db.query<{
+    current_tenant_purchase_orders: number;
+    total_purchase_orders: number;
+  }>(
+    `
+      select
+        (select count(*)::int from purchase_orders where tenant_id = $1) as current_tenant_purchase_orders,
+        (select count(*)::int from purchase_orders) as total_purchase_orders
+    `,
+    [tenantId],
+  );
+
+  return (
+    counts.rows[0] ?? {
+      current_tenant_purchase_orders: 0,
+      total_purchase_orders: 0,
+    }
+  );
 }
 
 export async function loadReceivablePurchaseOrders(
@@ -4524,6 +4767,7 @@ export async function loadReceiptDetail(
   const lines = await db.query(
     `
       select goods_receipt_lines.*, items.sku, items.title,
+        qc_checks.id as qc_check_id,
         qc_checks.status as qc_status, qc_checks.result as qc_result,
         qc_checks.notes as qc_notes, qc_checks.completed_at as qc_completed_at,
         warehouse_tasks.status as putaway_task_status
@@ -4540,8 +4784,54 @@ export async function loadReceiptDetail(
     `,
     [tenantId, receiptId],
   );
+  const inventoryMovements = await db.query(
+    `
+      select inventory_movements.*, items.sku, items.title,
+        coalesce(source_receipt_lines.id, qc_receipt_lines.id) as goods_receipt_line_id
+      from inventory_movements
+      join items on items.id = inventory_movements.item_id
+      left join goods_receipt_lines source_receipt_lines
+        on source_receipt_lines.tenant_id = inventory_movements.tenant_id
+        and inventory_movements.source_type = 'goods_receipt_line'
+        and inventory_movements.source_id = source_receipt_lines.id::text
+      left join qc_checks source_qc_checks
+        on source_qc_checks.tenant_id = inventory_movements.tenant_id
+        and inventory_movements.source_type = 'qc_check'
+        and inventory_movements.source_id = source_qc_checks.id::text
+      left join goods_receipt_lines qc_receipt_lines
+        on qc_receipt_lines.id = source_qc_checks.goods_receipt_line_id
+      where inventory_movements.tenant_id = $1
+        and (
+          source_receipt_lines.goods_receipt_id = $2
+          or qc_receipt_lines.goods_receipt_id = $2
+        )
+      order by inventory_movements.occurred_at desc
+    `,
+    [tenantId, receiptId],
+  );
+  const payment = await db.query(
+    `
+      select purchase_payments.*, suppliers.name as supplier_name
+      from purchase_payments
+      left join suppliers on suppliers.id = purchase_payments.supplier_id
+      where purchase_payments.tenant_id = $1
+        and purchase_payments.purchase_order_id = (
+          select purchase_order_id
+          from goods_receipts
+          where tenant_id = $1 and id = $2
+        )
+      order by purchase_payments.created_at desc
+      limit 1
+    `,
+    [tenantId, receiptId],
+  );
 
-  return { receipt: receipt.rows[0] ?? null, lines: lines.rows };
+  return {
+    receipt: receipt.rows[0] ?? null,
+    lines: lines.rows,
+    inventoryMovements: inventoryMovements.rows,
+    payment: payment.rows[0] ?? null,
+  };
 }
 
 export async function loadInventoryLedger(db: QueryExecutor, tenantId: string) {

@@ -49,8 +49,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       context.ctx.tenantId,
       String(form.get("goodsReceiptLineId")),
     );
+    if (result.putaway <= 0) {
+      return { message: "No putaway was performed for this receipt line." };
+    }
     return {
-      message: `${result.putaway} unit(s) put away into MAIN inventory.`,
+      message: `Putaway completed. Inventory was updated and the receipt status was refreshed.${
+        result.paymentId
+          ? " Payment entry is now open for this purchase order."
+          : ""
+      }`,
     };
   }
 
@@ -62,6 +69,35 @@ function formatDate(value: unknown) {
   const date = value instanceof Date ? value : new Date(String(value));
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString();
+}
+
+function formatDateTime(value: unknown) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
+
+function formatQuantity(value: unknown) {
+  return Number(value ?? 0).toLocaleString();
+}
+
+function receiptNextAction(receipt: any, lines: any[]) {
+  if (receipt.status === "closed") return "Complete / closed";
+  if (
+    lines.some(
+      (line) =>
+        line.qc_status === "open" ||
+        line.qc_status === "in_progress" ||
+        line.status === "qc_hold",
+    )
+  ) {
+    return "QC required";
+  }
+  if (lines.some((line) => line.status === "accepted")) {
+    return "Putaway pending";
+  }
+  return "Review";
 }
 
 function qcLabel(line: any) {
@@ -81,11 +117,10 @@ function putawayLabel(line: any) {
   return "Waiting for QC";
 }
 
-function lineActionLabel(line: any) {
-  if (line.qc_status === "open" || line.qc_status === "in_progress")
-    return "QC";
-  if (line.status === "accepted") return "Putaway";
-  return "No action";
+function sourceLabel(movement: any) {
+  if (movement.source_type === "goods_receipt_line") return "Receipt line";
+  if (movement.source_type === "qc_check") return "QC check";
+  return movement.source_type;
 }
 
 export default function ReceiptDetail() {
@@ -99,7 +134,12 @@ export default function ReceiptDetail() {
     );
   }
 
-  const detail = data.detail ?? { receipt: null, lines: [] };
+  const detail = data.detail ?? {
+    receipt: null,
+    lines: [],
+    inventoryMovements: [],
+    payment: null,
+  };
   const receipt = detail.receipt as any;
   if (!receipt) {
     return (
@@ -118,6 +158,8 @@ export default function ReceiptDetail() {
   const putawayLines = (detail.lines ?? []).filter(
     (line: any) => line.status === "accepted",
   );
+  const inventoryMovements = (detail.inventoryMovements ?? []) as any[];
+  const payment = detail.payment as any;
 
   return (
     <s-page heading={`Receipt ${receipt.receipt_number}`}>
@@ -132,7 +174,7 @@ export default function ReceiptDetail() {
         </s-stack>
       </s-section>
 
-      <s-section heading="Receipt header">
+      <s-section heading="Receipt summary">
         <DataTable
           headings={[
             "Receipt",
@@ -140,6 +182,7 @@ export default function ReceiptDetail() {
             "Supplier",
             "Status",
             "Received",
+            "Next action",
           ]}
           rows={[
             [
@@ -150,6 +193,7 @@ export default function ReceiptDetail() {
               receipt.supplier_name,
               <MoneylessBadge>{receipt.status}</MoneylessBadge>,
               formatDate(receipt.received_at ?? receipt.created_at),
+              receiptNextAction(receipt, detail.lines ?? []),
             ],
           ]}
         />
@@ -160,24 +204,78 @@ export default function ReceiptDetail() {
           headings={[
             "Item",
             "Received",
-            "Accepted / rejected",
+            "Accepted",
+            "Rejected",
             "QC",
             "Putaway",
             "Status",
-            "Next action",
           ]}
           rows={(detail.lines ?? []).map((line: any) => [
             <strong>
               {line.sku} {line.title}
             </strong>,
-            `${Number(line.received_quantity).toLocaleString()} ${line.unit}`,
-            `${Number(line.accepted_quantity).toLocaleString()} / ${Number(line.rejected_quantity).toLocaleString()}`,
+            `${formatQuantity(line.received_quantity)} ${line.unit}`,
+            `${formatQuantity(line.accepted_quantity)} ${line.unit}`,
+            `${formatQuantity(line.rejected_quantity)} ${line.unit}`,
             qcLabel(line),
             putawayLabel(line),
             <MoneylessBadge>{line.status}</MoneylessBadge>,
-            lineActionLabel(line),
           ])}
         />
+      </s-section>
+
+      <s-section heading="Inventory booking outcome">
+        {inventoryMovements.length > 0 ? (
+          <DataTable
+            headings={[
+              "Item",
+              "Quantity",
+              "Movement",
+              "Location",
+              "Booked",
+              "Source",
+            ]}
+            rows={inventoryMovements.map((movement: any) => [
+              <strong>
+                {movement.sku} {movement.title}
+              </strong>,
+              formatQuantity(movement.quantity_delta),
+              movement.movement_type,
+              movement.location_code ?? "No location",
+              formatDateTime(movement.occurred_at),
+              sourceLabel(movement),
+            ])}
+          />
+        ) : (
+          <s-box padding="base" borderWidth="base" borderRadius="base">
+            <s-paragraph>
+              Inventory is booked after accepted quantities are put away.
+            </s-paragraph>
+          </s-box>
+        )}
+      </s-section>
+
+      <s-section heading="Payment / payable outcome">
+        {payment ? (
+          <DataTable
+            headings={["Payment", "Supplier", "Status", "Amount", "Due date"]}
+            rows={[
+              [
+                <strong>{payment.payment_number}</strong>,
+                payment.supplier_name ?? receipt.supplier_name,
+                <MoneylessBadge>{payment.status}</MoneylessBadge>,
+                `${formatQuantity(payment.gross_amount ?? payment.net_amount)} ${payment.currency_code ?? "EUR"}`,
+                formatDate(payment.due_date) || "No due date",
+              ],
+            ]}
+          />
+        ) : (
+          <s-box padding="base" borderWidth="base" borderRadius="base">
+            <s-paragraph>
+              A payment entry is created after the receipt is fully put away.
+            </s-paragraph>
+          </s-box>
+        )}
       </s-section>
 
       {qcLines.length > 0 ? (
