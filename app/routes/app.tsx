@@ -19,18 +19,16 @@ export default function App() {
   return (
     <AppProvider embedded apiKey={apiKey}>
       <s-app-nav>
-        <s-link href="/app">Dashboard</s-link>
-        <s-link href="/app/orders">Orders</s-link>
+        <s-link href="/app/dashboard" {...({ rel: "home" } as any)}>
+          Dashboard
+        </s-link>
         <s-link href="/app/items">Products</s-link>
         <s-link href="/app/customers">Customers</s-link>
-        <s-link href="/app/boms">BOM / MRP</s-link>
-        <s-link href="/app/procurement">Procurement</s-link>
-        <s-link href="/app/receiving">Receiving / QC</s-link>
-        <s-link href="/app/production">Production</s-link>
-        <s-link href="/app/warehouse">Warehouse</s-link>
-        <s-link href="/app/logistics">Logistics</s-link>
+        <s-link href="/app/suppliers">Suppliers</s-link>
+        <s-link href="/app/orders">Orders</s-link>
         <s-link href="/app/inventory">Inventory</s-link>
-        <s-link href="/app/cases">Cases</s-link>
+        <s-link href="/app/procurement">Procurement</s-link>
+        <s-link href="/app/logistics">Logistics</s-link>
         <s-link href="/app/settings">Settings</s-link>
       </s-app-nav>
       <Outlet />

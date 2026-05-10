@@ -1,6 +1,9 @@
 import { authenticate } from "../shopify.server";
 import { getOperationsKitPool } from "./kit-db.server";
-import { ensureTenantForShop } from "./operations-kit.server";
+import {
+  ensureDefaultOperationAccess,
+  ensureTenantForShop,
+} from "./operations-kit.server";
 
 export async function requireOperationsKitContext(request: Request) {
   const { session } = await authenticate.admin(request);
@@ -19,6 +22,7 @@ export async function requireOperationsKitContext(request: Request) {
 
   try {
     const ctx = await ensureTenantForShop(pool, session.shop, session.scope ?? null);
+    await ensureDefaultOperationAccess(pool, ctx.tenantId);
     return {
       configured: true as const,
       shopDomain: session.shop,

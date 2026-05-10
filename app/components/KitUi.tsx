@@ -49,6 +49,11 @@ export function DataTable({
   headings: string[];
   rows: Array<React.ReactNode[] | { id?: string; href?: string; cells: React.ReactNode[] }>;
 }) {
+  const renderCell = (cell: React.ReactNode) => {
+    if (cell instanceof Date) return cell.toLocaleDateString();
+    return cell;
+  };
+
   if (rows.length === 0) {
     return (
       <s-box padding="base" borderWidth="base" borderRadius="base">
@@ -78,10 +83,10 @@ export function DataTable({
               <s-table-cell key={cellIndex}>
                 {cellIndex === 0 && href ? (
                   <s-link id={delegateId} href={href}>
-                    {cell}
+                    {renderCell(cell)}
                   </s-link>
                 ) : (
-                  cell
+                  renderCell(cell)
                 )}
               </s-table-cell>
             ))}

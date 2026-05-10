@@ -6,7 +6,9 @@ import {
   createProductionWorkForLatestNeed,
   createPurchaseOrdersFromReadyNeeds,
   completeProductionOrder,
+  ensureDefaultOperationAccess,
   ensureTenantForShop,
+  loadAccessControlSettings,
   loadDashboard,
   loadInventoryLedger,
   loadPurchaseNeeds,
@@ -16,8 +18,11 @@ import {
   loadWarehouseTasks,
   passQcAndCreatePutaway,
   postGoodsReceiptForAcknowledgedPurchaseOrders,
+  putawayReceiptLine,
   runScenarioMrp,
   seedOperationsKitScenario,
+  setOperationUserActive,
+  upsertOperationUser,
 } from "../../app/lib/operations-kit.server";
 
 const databaseUrl =
@@ -50,6 +55,43 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
     const summary = await loadDashboard(pool, tenantId);
     expect(summary.items).toBeGreaterThanOrEqual(5);
     expect(summary.activeBoms).toBeGreaterThanOrEqual(1);
+  });
+
+  it("seeds operation users and fixed role groups", async () => {
+    await ensureDefaultOperationAccess(pool, tenantId);
+    const seeded = await loadAccessControlSettings(pool, tenantId);
+
+    expect(
+      seeded.users.some((user: any) => user.email === "admin@tockloth.com"),
+    ).toBe(true);
+    expect(
+      seeded.groups.some((group: any) => group.key === "procurement"),
+    ).toBe(true);
+
+    const user = await upsertOperationUser(pool, tenantId, {
+      email: "buyer@tockloth.com",
+      displayName: "Buyer User",
+      groupKey: "procurement",
+    });
+    expect(user.userId).toBeTruthy();
+
+    const deactivated = await setOperationUserActive(
+      pool,
+      tenantId,
+      user.userId,
+      false,
+    );
+    expect(deactivated.updated).toBe(1);
+
+    const afterUpdate = await loadAccessControlSettings(pool, tenantId);
+    expect(
+      afterUpdate.users.some(
+        (row: any) =>
+          row.email === "buyer@tockloth.com" &&
+          row.groups === "Procurement" &&
+          row.is_active === false,
+      ),
+    ).toBe(true);
   });
 
   it("creates production work for available-stock scenario", async () => {
@@ -120,5 +162,25 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
     const receiving = await loadReceipts(pool, tenantId);
     expect(receiving.receipts.length).toBeGreaterThan(0);
     expect(receiving.lines.some((line: any) => line.qc_status === "passed")).toBe(true);
+
+    const acceptedLine = receiving.lines.find(
+      (line: any) => line.status === "accepted",
+    ) as any;
+    expect(acceptedLine?.id).toBeTruthy();
+
+    const putaway = await putawayReceiptLine(pool, tenantId, acceptedLine.id);
+    expect(putaway.putaway).toBeGreaterThan(0);
+
+    const afterPutaway = await loadReceipts(pool, tenantId);
+    expect(
+      afterPutaway.lines.some((line: any) => line.status === "putaway_done"),
+    ).toBe(true);
+
+    const inventory = await loadInventoryLedger(pool, tenantId);
+    expect(
+      inventory.movements.some(
+        (movement: any) => movement.movement_type === "putaway",
+      ),
+    ).toBe(true);
   });
 });

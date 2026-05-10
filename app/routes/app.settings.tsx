@@ -103,12 +103,27 @@ export default function Settings() {
           </Form>
         </s-box>
       </s-section>
+      <s-section heading="Access settings">
+        <s-box padding="base" borderWidth="base" borderRadius="base">
+          <s-stack direction="inline" gap="base" alignItems="center" justifyContent="space-between">
+            <s-stack direction="block" gap="small">
+              <s-heading>Users, groups and roles</s-heading>
+              <s-paragraph>
+                Manage employees, fixed operating groups and the first read,
+                write and execute permissions for the trading-goods workflow.
+              </s-paragraph>
+            </s-stack>
+            <s-link href="/app/settings/users">Open users</s-link>
+          </s-stack>
+        </s-box>
+      </s-section>
       <s-section heading="Current product scope">
         <s-paragraph>
           Implemented: Shopify app shell, tenant bootstrap, product sync,
           order intake, encrypted customer storage, customer-data redaction,
-          retention settings, item classification, BOM/MRP, procurement,
-          production, receiving/QC, inventory ledger, warehouse and logistics.
+          retention settings, product classification, supplier master data,
+          purchasing terms, order availability, inventory ledger, purchase
+          needs and draft purchase orders for trading goods.
         </s-paragraph>
       </s-section>
     </s-page>

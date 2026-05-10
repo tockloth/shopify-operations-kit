@@ -5,6 +5,7 @@
     "build": "react-router build",
     "dev": "shopify app dev",
     "dev:ledger": "OPERATIONS_KIT_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54332/postgres shopify app dev --store operations-ledger-dev.myshopify.com",
+    "dev:ledger:localhost": "OPERATIONS_KIT_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54332/postgres shopify app dev --config localhost --store operations-ledger-dev.myshopify.com --use-localhost",
     "dev:ledger:reset": "OPERATIONS_KIT_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54332/postgres shopify app dev --store operations-ledger-dev.myshopify.com --reset",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",

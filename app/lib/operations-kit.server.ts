@@ -77,15 +77,19 @@ type OperationCustomerEncryptedRow = {
   [key: string]: unknown;
 };
 
-function decryptOrderRow<T extends CustomerEncryptedRow>(
-  row: T,
-) {
+function decryptOrderRow<T extends CustomerEncryptedRow>(row: T) {
   const shippingAddress = decryptCustomerData(row.shipping_address_encrypted);
 
   return {
     ...row,
-    customer_name: decryptCustomerData(row.customer_name_encrypted) ?? row.customer_name ?? null,
-    customer_email: decryptCustomerData(row.customer_email_encrypted) ?? row.customer_email ?? null,
+    customer_name:
+      decryptCustomerData(row.customer_name_encrypted) ??
+      row.customer_name ??
+      null,
+    customer_email:
+      decryptCustomerData(row.customer_email_encrypted) ??
+      row.customer_email ??
+      null,
     shipping_address: shippingAddress ? JSON.parse(shippingAddress) : null,
   };
 }
@@ -95,7 +99,10 @@ function decryptOperationCustomerRow<T extends OperationCustomerEncryptedRow>(
 ) {
   return {
     ...row,
-    display_name: decryptCustomerData(row.display_name_encrypted) ?? row.display_name ?? null,
+    display_name:
+      decryptCustomerData(row.display_name_encrypted) ??
+      row.display_name ??
+      null,
     email: decryptCustomerData(row.email_encrypted) ?? row.email ?? null,
     first_name: decryptCustomerData(row.first_name_encrypted),
     last_name: decryptCustomerData(row.last_name_encrypted),
@@ -130,6 +137,138 @@ export async function ensureTenantForShop(
   );
 
   return { tenantId, shopDomain };
+}
+
+export async function ensureDefaultOperationAccess(
+  db: QueryExecutor,
+  tenantId: string,
+) {
+  const sharedPassword = "Operations123!";
+
+  await db.query(
+    `
+      insert into operation_groups (tenant_id, key, name, description, is_system)
+      values
+        ($1, 'admin', 'Admin', 'System administration, users, roles and UI configuration.', true),
+        ($1, 'procurement', 'Procurement', 'Purchase needs, purchase orders and supplier coordination.', true),
+        ($1, 'masterdata', 'Masterdata', 'Product, BOM, supplier and planning master data.', true),
+        ($1, 'inventory', 'Inventory', 'Inventory planning, stock movements, QC release and putaway.', true),
+        ($1, 'logistics', 'Logistics', 'Outbound packing, partial delivery and customer shipping.', true)
+      on conflict (tenant_id, key)
+      do update set
+        name = excluded.name,
+        description = excluded.description,
+        is_system = true,
+        updated_at = now()
+    `,
+    [tenantId],
+  );
+
+  await db.query(
+    `
+      insert into operation_roles (
+        tenant_id, key, name, resource, can_read, can_write, can_execute, can_admin, is_system
+      )
+      values
+        ($1, 'admin_all', 'Administrator', '*', true, true, true, true, true),
+        ($1, 'procurement_work', 'Procurement work', 'procurement', true, true, true, false, true),
+        ($1, 'masterdata_work', 'Masterdata work', 'masterdata', true, true, true, false, true),
+        ($1, 'inventory_work', 'Inventory work', 'inventory', true, true, true, false, true),
+        ($1, 'logistics_work', 'Logistics work', 'logistics', true, true, true, false, true),
+        ($1, 'operations_read', 'Operations read', 'operations', true, false, false, false, true)
+      on conflict (tenant_id, key)
+      do update set
+        name = excluded.name,
+        resource = excluded.resource,
+        can_read = excluded.can_read,
+        can_write = excluded.can_write,
+        can_execute = excluded.can_execute,
+        can_admin = excluded.can_admin,
+        is_system = true,
+        updated_at = now()
+    `,
+    [tenantId],
+  );
+
+  await db.query(
+    `
+      insert into operation_users (
+        tenant_id, email, display_name, password_hash, is_active, is_admin
+      )
+      values
+        ($1, 'admin@tockloth.com', 'Operations Admin', crypt($2, gen_salt('bf')), true, true),
+        ($1, 'procurement@tockloth.com', 'Procurement User', crypt($2, gen_salt('bf')), true, false),
+        ($1, 'masterdata@tockloth.com', 'Masterdata User', crypt($2, gen_salt('bf')), true, false),
+        ($1, 'inventory@tockloth.com', 'Inventory User', crypt($2, gen_salt('bf')), true, false),
+        ($1, 'logistics@tockloth.com', 'Logistics User', crypt($2, gen_salt('bf')), true, false)
+      on conflict (tenant_id, email)
+      do update set
+        display_name = excluded.display_name,
+        is_active = true,
+        is_admin = excluded.is_admin,
+        updated_at = now()
+    `,
+    [tenantId, sharedPassword],
+  );
+
+  await db.query(
+    `
+      with links(email, group_key) as (
+        values
+          ('admin@tockloth.com', 'admin'),
+          ('procurement@tockloth.com', 'procurement'),
+          ('masterdata@tockloth.com', 'masterdata'),
+          ('inventory@tockloth.com', 'inventory'),
+          ('logistics@tockloth.com', 'logistics')
+      )
+      insert into operation_user_groups (tenant_id, user_id, group_id)
+      select $1, operation_users.id, operation_groups.id
+      from links
+      join operation_users
+        on operation_users.tenant_id = $1
+        and operation_users.email = links.email
+      join operation_groups
+        on operation_groups.tenant_id = $1
+        and operation_groups.key = links.group_key
+      on conflict (tenant_id, user_id, group_id)
+      do nothing
+    `,
+    [tenantId],
+  );
+
+  await db.query(
+    `
+      with links(group_key, role_key) as (
+        values
+          ('admin', 'admin_all'),
+          ('procurement', 'procurement_work'),
+          ('procurement', 'operations_read'),
+          ('masterdata', 'masterdata_work'),
+          ('inventory', 'inventory_work'),
+          ('inventory', 'operations_read'),
+          ('logistics', 'logistics_work'),
+          ('logistics', 'operations_read')
+      )
+      insert into operation_group_roles (tenant_id, group_id, role_id)
+      select $1, operation_groups.id, operation_roles.id
+      from links
+      join operation_groups
+        on operation_groups.tenant_id = $1
+        and operation_groups.key = links.group_key
+      join operation_roles
+        on operation_roles.tenant_id = $1
+        and operation_roles.key = links.role_key
+      on conflict (tenant_id, group_id, role_id)
+      do nothing
+    `,
+    [tenantId],
+  );
+
+  return {
+    users: 5,
+    groups: 5,
+    password: sharedPassword,
+  };
 }
 
 async function upsertItem(
@@ -198,6 +337,57 @@ async function upsertSupplier(
   return result.rows[0].id;
 }
 
+async function loadPurchasePolicyForSupplier(
+  db: QueryExecutor,
+  tenantId: string,
+  itemId: string,
+  supplierId: string,
+) {
+  const policy = await db.query<{
+    default_order_quantity: string;
+    supplier_lead_time_days: number;
+    supplier_sku: string | null;
+    unit_price: string | null;
+    currency_code: string | null;
+    supplier_item_lead_time_days: number | null;
+    minimum_order_quantity: string | null;
+  }>(
+    `
+      select
+        items.default_order_quantity,
+        items.supplier_lead_time_days,
+        supplier_items.supplier_sku,
+        supplier_items.unit_price,
+        supplier_items.currency_code,
+        supplier_items.lead_time_days as supplier_item_lead_time_days,
+        supplier_items.minimum_order_quantity
+      from items
+      left join supplier_items
+        on supplier_items.tenant_id = items.tenant_id
+        and supplier_items.item_id = items.id
+        and supplier_items.supplier_id = $3
+      where items.tenant_id = $1 and items.id = $2
+    `,
+    [tenantId, itemId, supplierId],
+  );
+
+  const row = policy.rows[0];
+  const leadTimeDays =
+    row?.supplier_item_lead_time_days ?? row?.supplier_lead_time_days ?? 7;
+  const minimumOrderQuantity = Number(row?.minimum_order_quantity ?? 0);
+
+  return {
+    leadTimeDays,
+    supplierSku: row?.supplier_sku ?? null,
+    unitPrice: row?.unit_price ?? null,
+    currencyCode: row?.currency_code ?? "EUR",
+    orderQuantityFloor: Math.max(
+      Number(row?.default_order_quantity ?? 1),
+      minimumOrderQuantity,
+    ),
+  };
+}
+
 async function linkPreferredSupplier(
   db: QueryExecutor,
   tenantId: string,
@@ -213,7 +403,7 @@ async function linkPreferredSupplier(
       insert into supplier_items (tenant_id, supplier_id, item_id, is_preferred)
       values ($1, $2, $3, true)
       on conflict (tenant_id, supplier_id, item_id)
-      do update set is_preferred = true
+      do update set is_preferred = true, is_active = true, updated_at = now()
     `,
     [tenantId, supplierId, itemId],
   );
@@ -266,22 +456,57 @@ export async function seedOperationsKitScenario(
   tenantId: string,
 ) {
   return withKitTransaction(db, async (tx) => {
-    const kit = await upsertItem(tx, tenantId, "KIT-001", "Customer Test Kit", "assembly", {
-      sellable: true,
-      producible: true,
-    });
-    const compA = await upsertItem(tx, tenantId, "COMP-A", "Reagent A", "raw_material", {
-      purchasable: true,
-    });
-    const compB = await upsertItem(tx, tenantId, "COMP-B", "Buffer Bottle", "component", {
-      purchasable: true,
-    });
-    const box = await upsertItem(tx, tenantId, "PACK-BOX", "Packaging Box", "component", {
-      purchasable: true,
-    });
-    const manual = await upsertItem(tx, tenantId, "MANUAL", "User Manual", "component", {
-      purchasable: true,
-    });
+    const kit = await upsertItem(
+      tx,
+      tenantId,
+      "KIT-001",
+      "Customer Test Kit",
+      "assembly",
+      {
+        sellable: true,
+        producible: true,
+      },
+    );
+    const compA = await upsertItem(
+      tx,
+      tenantId,
+      "COMP-A",
+      "Reagent A",
+      "raw_material",
+      {
+        purchasable: true,
+      },
+    );
+    const compB = await upsertItem(
+      tx,
+      tenantId,
+      "COMP-B",
+      "Buffer Bottle",
+      "component",
+      {
+        purchasable: true,
+      },
+    );
+    const box = await upsertItem(
+      tx,
+      tenantId,
+      "PACK-BOX",
+      "Packaging Box",
+      "component",
+      {
+        purchasable: true,
+      },
+    );
+    const manual = await upsertItem(
+      tx,
+      tenantId,
+      "MANUAL",
+      "User Manual",
+      "component",
+      {
+        purchasable: true,
+      },
+    );
 
     const bom = await tx.query<{ id: string }>(
       `
@@ -469,52 +694,77 @@ async function loadBomLinesForItem(
 
 export async function runOperationsMrp(db: QueryExecutor, tenantId: string) {
   return withKitTransaction(db, async (tx) => {
-    const orderLines = await tx.query<{
-      order_id: string;
-      order_name: string;
-      line_id: string;
+    const itemRequirements = await tx.query<{
       item_id: string;
       sku: string;
       title: string;
-      quantity: string;
       is_purchasable: boolean;
       is_producible: boolean;
       min_inventory_quantity: string;
       default_order_quantity: string;
       default_production_quantity: string;
-      available_quantity: string;
+      customer_demand_quantity: string;
+      physical_quantity: string;
+      reserved_quantity: string;
+      ordered_quantity: string;
+      order_names: string | null;
     }>(
       `
-        with balances as (
+        with movement_balances as (
           select
             item_id,
-            coalesce(sum(quantity_delta - reserved_delta) filter (where location_code = 'MAIN'), 0) as available_quantity
+            coalesce(sum(quantity_delta) filter (where location_code = 'MAIN'), 0) as physical_quantity,
+            coalesce(sum(reserved_delta) filter (where location_code = 'MAIN'), 0) as movement_reserved_quantity
           from inventory_movements
           where tenant_id = $1
           group by item_id
+        ),
+        customer_demand as (
+          select
+            operations_order_lines.item_id,
+            coalesce(sum(operations_order_lines.quantity), 0) as customer_demand_quantity,
+            string_agg(distinct operations_orders.order_name, ', ') as order_names
+          from operations_order_lines
+          join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+          where operations_order_lines.tenant_id = $1
+            and operations_order_lines.supply_status <> 'cancelled'
+            and operations_orders.status in ('open', 'planned', 'in_progress')
+          group by operations_order_lines.item_id
+        ),
+        open_purchase_orders as (
+          select
+            purchase_order_lines.item_id,
+            coalesce(sum(purchase_order_lines.quantity), 0) as ordered_quantity
+          from purchase_order_lines
+          join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+          where purchase_order_lines.tenant_id = $1
+            and purchase_order_lines.status = 'open'
+            and purchase_orders.status in ('draft', 'pending_approval', 'approved', 'sent', 'acknowledged')
+          group by purchase_order_lines.item_id
         )
         select
-          operations_orders.id as order_id,
-          operations_orders.order_name,
-          operations_order_lines.id as line_id,
           items.id as item_id,
-          coalesce(operations_order_lines.sku, items.sku) as sku,
-          coalesce(operations_order_lines.title, items.title) as title,
-          operations_order_lines.quantity,
+          items.sku,
+          items.title,
           items.is_purchasable,
           items.is_producible,
           items.min_inventory_quantity,
           items.default_order_quantity,
           items.default_production_quantity,
-          coalesce(balances.available_quantity, 0) as available_quantity
-        from operations_orders
-        join operations_order_lines on operations_order_lines.operations_order_id = operations_orders.id
-        join items on items.id = operations_order_lines.item_id
-        left join balances on balances.item_id = items.id
-        where operations_orders.tenant_id = $1
-          and operations_orders.status = 'open'
-          and operations_order_lines.supply_status <> 'cancelled'
-        order by operations_orders.processed_at nulls last, operations_orders.created_at, operations_order_lines.created_at
+          customer_demand.customer_demand_quantity,
+          coalesce(movement_balances.physical_quantity, 0) as physical_quantity,
+          greatest(
+            customer_demand.customer_demand_quantity,
+            coalesce(movement_balances.movement_reserved_quantity, 0)
+          ) as reserved_quantity,
+          coalesce(open_purchase_orders.ordered_quantity, 0) as ordered_quantity,
+          customer_demand.order_names
+        from customer_demand
+        join items on items.id = customer_demand.item_id
+        left join movement_balances on movement_balances.item_id = items.id
+        left join open_purchase_orders on open_purchase_orders.item_id = items.id
+        where items.tenant_id = $1
+        order by items.sku
       `,
       [tenantId],
     );
@@ -527,7 +777,7 @@ export async function runOperationsMrp(db: QueryExecutor, tenantId: string) {
       `,
       [
         tenantId,
-        `Planned ${orderLines.rows.length} open order line(s) against available MAIN inventory, BOMs, minimum stock, and make/buy policies.`,
+        `Planned ${itemRequirements.rows.length} item requirement(s) against MAIN inventory, customer reservations, open purchase orders, minimum stock, BOMs, and make/buy policies.`,
       ],
     );
     const mrpRunId = mrp.rows[0].id;
@@ -578,65 +828,38 @@ export async function runOperationsMrp(db: QueryExecutor, tenantId: string) {
       }
     >();
 
-    for (const line of orderLines.rows) {
-      const demand = Number(line.quantity);
-      const minStock = Number(line.min_inventory_quantity ?? 0);
-      const available = Number(line.available_quantity);
-      const requirement = demand + minStock;
-      const shortage = Math.max(requirement - available, 0);
+    for (const requirementLine of itemRequirements.rows) {
+      const customerDemand = Number(requirementLine.customer_demand_quantity);
+      const minStock = Number(requirementLine.min_inventory_quantity ?? 0);
+      const physical = Number(requirementLine.physical_quantity ?? 0);
+      const incoming = Number(requirementLine.ordered_quantity ?? 0);
+      const lotSize = Math.max(
+        Number(requirementLine.default_order_quantity ?? 1),
+        1,
+      );
+      const requirement = customerDemand + minStock;
+      const availableForPlanning = physical + incoming;
+      const shortage = Math.max(requirement - availableForPlanning, 0);
+      const plannedPurchaseQuantity =
+        shortage > 0 ? Math.ceil(shortage / lotSize) * lotSize : 0;
 
       let action: "reserve" | "buy" | "make" | "review" = "review";
       if (shortage <= 0) action = "reserve";
-      else if (line.is_producible) action = "make";
-      else if (line.is_purchasable) action = "buy";
+      else action = "buy";
 
       await addMrpLine({
-        itemId: line.item_id,
-        sourceItemId: line.item_id,
+        itemId: requirementLine.item_id,
+        sourceItemId: requirementLine.item_id,
         lineType: "finished_good",
         demand: requirement,
-        available,
-        shortage,
+        available: availableForPlanning,
+        shortage: plannedPurchaseQuantity,
         action,
         explanation:
           shortage <= 0
-            ? `${line.order_name}: ${line.sku} can be reserved from MAIN stock.`
-            : action === "make"
-              ? `${line.order_name}: ${line.sku} requires ${shortage} unit(s) to be produced including minimum stock.`
-              : action === "buy"
-                ? `${line.order_name}: ${line.sku} requires ${shortage} unit(s) to be purchased including minimum stock.`
-                : `${line.order_name}: ${line.sku} has shortage ${shortage}, but no make/buy policy is configured.`,
+            ? `${requirementLine.sku}: customer demand ${customerDemand}, minimum ${minStock}, physical ${physical}, incoming ${incoming}; no procurement shortage.`
+            : `${requirementLine.sku}: demand ${customerDemand} plus minimum ${minStock} exceeds physical ${physical} and incoming ${incoming}; purchase ${plannedPurchaseQuantity} using lot size ${lotSize}.`,
       });
-
-      if (action === "make" && shortage > 0) {
-        const bomLines = await loadBomLinesForItem(tx, tenantId, line.item_id);
-        if (bomLines.length === 0) {
-          await addMrpLine({
-            itemId: line.item_id,
-            sourceItemId: line.item_id,
-            lineType: "component",
-            demand: shortage,
-            available: 0,
-            shortage,
-            action: "review",
-            explanation: `${line.sku} is producible, but no active BOM exists.`,
-          });
-        }
-
-        for (const component of bomLines) {
-          const current = componentDemand.get(component.component_id) ?? {
-            itemId: component.component_id,
-            sourceItemId: line.item_id,
-            sku: component.sku,
-            available: Number(component.available_quantity),
-            demand: 0,
-            isPurchasable: component.is_purchasable,
-            isProducible: component.is_producible,
-          };
-          current.demand += shortage * Number(component.quantity);
-          componentDemand.set(component.component_id, current);
-        }
-      }
     }
 
     for (const component of componentDemand.values()) {
@@ -669,12 +892,12 @@ export async function runOperationsMrp(db: QueryExecutor, tenantId: string) {
       tx,
       tenantId,
       "Operations MRP preview created",
-      `MRP run planned ${orderLines.rows.length} open order line(s).`,
+      `MRP run planned ${itemRequirements.rows.length} item requirement(s).`,
       mrpRunId,
-      { orderLines: orderLines.rows.length },
+      { itemRequirements: itemRequirements.rows.length },
     );
 
-    return { mrpRunId, orderLines: orderLines.rows.length };
+    return { mrpRunId, orderLines: itemRequirements.rows.length };
   });
 }
 
@@ -695,10 +918,38 @@ export async function runScenarioMrp(
       "delete from inventory_movements where tenant_id = $1 and source_type = 'scenario_seed'",
       [tenantId],
     );
-    await setInventory(tx, tenantId, bySku.get("COMP-A")!.id, "COMP-A", 4, mode);
-    await setInventory(tx, tenantId, bySku.get("COMP-B")!.id, "COMP-B", mode === "available" ? 4 : 0, mode);
-    await setInventory(tx, tenantId, bySku.get("PACK-BOX")!.id, "PACK-BOX", 4, mode);
-    await setInventory(tx, tenantId, bySku.get("MANUAL")!.id, "MANUAL", 4, mode);
+    await setInventory(
+      tx,
+      tenantId,
+      bySku.get("COMP-A")!.id,
+      "COMP-A",
+      4,
+      mode,
+    );
+    await setInventory(
+      tx,
+      tenantId,
+      bySku.get("COMP-B")!.id,
+      "COMP-B",
+      mode === "available" ? 4 : 0,
+      mode,
+    );
+    await setInventory(
+      tx,
+      tenantId,
+      bySku.get("PACK-BOX")!.id,
+      "PACK-BOX",
+      4,
+      mode,
+    );
+    await setInventory(
+      tx,
+      tenantId,
+      bySku.get("MANUAL")!.id,
+      "MANUAL",
+      4,
+      mode,
+    );
 
     const order = await tx.query<{ id: string }>(
       "select id from operations_orders where tenant_id = $1 and order_name = '#1001'",
@@ -769,7 +1020,9 @@ export async function runScenarioMrp(
     await addCaseEvent(
       tx,
       tenantId,
-      mode === "available" ? "Production scenario planned" : "Procurement scenario planned",
+      mode === "available"
+        ? "Production scenario planned"
+        : "Procurement scenario planned",
       mode === "available"
         ? "MRP preview found all components available for KIT-001."
         : "MRP preview found COMP-B shortage for KIT-001.",
@@ -781,7 +1034,11 @@ export async function runScenarioMrp(
   });
 }
 
-export async function commitMrpRun(db: QueryExecutor, tenantId: string, mrpRunId: string) {
+export async function commitMrpRun(
+  db: QueryExecutor,
+  tenantId: string,
+  mrpRunId: string,
+) {
   return withKitTransaction(db, async (tx) => {
     const lines = await tx.query<{
       id: string;
@@ -794,11 +1051,30 @@ export async function commitMrpRun(db: QueryExecutor, tenantId: string, mrpRunId
       [tenantId, mrpRunId],
     );
 
+    await tx.query(
+      `
+        delete from purchase_needs
+        where tenant_id = $1
+          and status in ('open', 'assigned', 'ready_for_po')
+          and mrp_run_id is not null
+          and not exists (
+            select 1
+            from purchase_order_lines
+            where purchase_order_lines.tenant_id = purchase_needs.tenant_id
+              and purchase_order_lines.purchase_need_id = purchase_needs.id
+          )
+      `,
+      [tenantId],
+    );
+
     let purchaseNeeds = 0;
     let productionNeeds = 0;
 
     for (const line of lines.rows) {
-      if (line.recommended_action === "buy" && Number(line.shortage_quantity) > 0) {
+      if (
+        line.recommended_action === "buy" &&
+        Number(line.shortage_quantity) > 0
+      ) {
         const preferred = await tx.query<{ supplier_id: string }>(
           "select supplier_id from supplier_items where tenant_id = $1 and item_id = $2 and is_preferred",
           [tenantId, line.item_id],
@@ -896,10 +1172,20 @@ export async function createProductionWorkForLatestNeed(
           updated_at = now()
         returning id
       `,
-      [tenantId, need.rows[0].id, need.rows[0].item_id, displayNumber, need.rows[0].quantity],
+      [
+        tenantId,
+        need.rows[0].id,
+        need.rows[0].item_id,
+        displayNumber,
+        need.rows[0].quantity,
+      ],
     );
 
-    const components = await loadBomLinesForItem(tx, tenantId, need.rows[0].item_id);
+    const components = await loadBomLinesForItem(
+      tx,
+      tenantId,
+      need.rows[0].item_id,
+    );
     let taskCount = 0;
     for (const component of components) {
       await tx.query(
@@ -911,7 +1197,12 @@ export async function createProductionWorkForLatestNeed(
           on conflict (tenant_id, production_order_id, item_id)
           do update set required_quantity = excluded.required_quantity
         `,
-        [tenantId, productionOrder.rows[0].id, component.component_id, component.quantity],
+        [
+          tenantId,
+          productionOrder.rows[0].id,
+          component.component_id,
+          component.quantity,
+        ],
       );
       await tx.query(
         `
@@ -947,7 +1238,10 @@ export async function createProductionWorkForLatestNeed(
       { displayNumber, taskCount },
     );
 
-    return { productionOrderId: productionOrder.rows[0].id, warehouseTasks: taskCount };
+    return {
+      productionOrderId: productionOrder.rows[0].id,
+      warehouseTasks: taskCount,
+    };
   });
 }
 
@@ -983,7 +1277,9 @@ export async function createPurchaseOrderFromNeed(
       supplierId = preferred.rows[0]?.supplier_id ?? null;
     }
     if (!supplierId) {
-      throw new Error("Assign a preferred supplier before creating a purchase order.");
+      throw new Error(
+        "Assign a preferred supplier before creating a purchase order.",
+      );
     }
 
     await tx.query(
@@ -991,17 +1287,15 @@ export async function createPurchaseOrderFromNeed(
       [tenantId, row.id, supplierId],
     );
 
-    const policy = await tx.query<{
-      default_order_quantity: string;
-      supplier_lead_time_days: number;
-    }>(
-      "select default_order_quantity, supplier_lead_time_days from items where tenant_id = $1 and id = $2",
-      [tenantId, row.item_id],
+    const policy = await loadPurchasePolicyForSupplier(
+      tx,
+      tenantId,
+      row.item_id,
+      supplierId,
     );
-    const leadTimeDays = policy.rows[0]?.supplier_lead_time_days ?? 7;
     const orderQuantity = Math.max(
       Number(row.quantity),
-      Number(policy.rows[0]?.default_order_quantity ?? 1),
+      policy.orderQuantityFloor,
     );
     const displayNumber = `PO-${supplierId.slice(0, 4).toUpperCase()}-${row.id.slice(0, 8).toUpperCase()}`;
 
@@ -1020,18 +1314,33 @@ export async function createPurchaseOrderFromNeed(
       `
         insert into purchase_order_lines (
           tenant_id, purchase_order_id, purchase_need_id, item_id,
-          requested_quantity, quantity, unit, status, lead_time_days, expected_delivery_date
+          requested_quantity, quantity, unit, status, lead_time_days,
+          expected_delivery_date, supplier_sku, unit_price, currency_code
         )
-        values ($1, $2, $3, $4, $5, $5, $6, 'open', $7, current_date + $7::int)
+        values ($1, $2, $3, $4, $5, $5, $6, 'open', $7, current_date + $7::int, $8, $9, $10)
         on conflict (tenant_id, purchase_need_id)
         do update set
           purchase_order_id = excluded.purchase_order_id,
           requested_quantity = excluded.requested_quantity,
           quantity = excluded.quantity,
           lead_time_days = excluded.lead_time_days,
-          expected_delivery_date = excluded.expected_delivery_date
+          expected_delivery_date = excluded.expected_delivery_date,
+          supplier_sku = excluded.supplier_sku,
+          unit_price = excluded.unit_price,
+          currency_code = excluded.currency_code
       `,
-      [tenantId, po.rows[0].id, row.id, row.item_id, orderQuantity, row.unit, leadTimeDays],
+      [
+        tenantId,
+        po.rows[0].id,
+        row.id,
+        row.item_id,
+        orderQuantity,
+        row.unit,
+        policy.leadTimeDays,
+        policy.supplierSku,
+        policy.unitPrice,
+        policy.currencyCode,
+      ],
     );
 
     await tx.query(
@@ -1095,31 +1404,33 @@ export async function createPurchaseOrdersFromReadyNeeds(
       created.push(po.rows[0].id);
 
       for (const need of needs) {
-        const policy = await tx.query<{
-          default_order_quantity: string;
-          supplier_lead_time_days: number;
-        }>(
-          "select default_order_quantity, supplier_lead_time_days from items where tenant_id = $1 and id = $2",
-          [tenantId, need.item_id],
+        const policy = await loadPurchasePolicyForSupplier(
+          tx,
+          tenantId,
+          need.item_id,
+          supplierId,
         );
-        const leadTimeDays = policy.rows[0]?.supplier_lead_time_days ?? 7;
         const orderQuantity = Math.max(
           Number(need.quantity),
-          Number(policy.rows[0]?.default_order_quantity ?? 1),
+          policy.orderQuantityFloor,
         );
         await tx.query(
           `
             insert into purchase_order_lines (
               tenant_id, purchase_order_id, purchase_need_id, item_id,
-              requested_quantity, quantity, unit, status, lead_time_days, expected_delivery_date
+              requested_quantity, quantity, unit, status, lead_time_days,
+              expected_delivery_date, supplier_sku, unit_price, currency_code
             )
-            values ($1, $2, $3, $4, $5, $5, $6, 'open', $7, current_date + $7::int)
+            values ($1, $2, $3, $4, $5, $5, $6, 'open', $7, current_date + $7::int, $8, $9, $10)
             on conflict (tenant_id, purchase_need_id)
             do update set
               requested_quantity = excluded.requested_quantity,
               quantity = excluded.quantity,
               lead_time_days = excluded.lead_time_days,
-              expected_delivery_date = excluded.expected_delivery_date
+              expected_delivery_date = excluded.expected_delivery_date,
+              supplier_sku = excluded.supplier_sku,
+              unit_price = excluded.unit_price,
+              currency_code = excluded.currency_code
           `,
           [
             tenantId,
@@ -1128,7 +1439,10 @@ export async function createPurchaseOrdersFromReadyNeeds(
             need.item_id,
             orderQuantity,
             need.unit,
-            leadTimeDays,
+            policy.leadTimeDays,
+            policy.supplierSku,
+            policy.unitPrice,
+            policy.currencyCode,
           ],
         );
         await tx.query(
@@ -1173,6 +1487,7 @@ export async function postGoodsReceiptForAcknowledgedPurchaseOrders(
 
     let receipts = 0;
     let qcChecks = 0;
+    const receiptIds: string[] = [];
 
     for (const order of orders.rows) {
       const receipt = await tx.query<{ id: string }>(
@@ -1185,6 +1500,9 @@ export async function postGoodsReceiptForAcknowledgedPurchaseOrders(
         `,
         [tenantId, order.id, `GR-${order.display_number}`],
       );
+      const receiptId = receipt.rows[0]?.id;
+      if (!receiptId) continue;
+      receiptIds.push(receiptId);
       receipts += 1;
 
       const lines = await tx.query<{
@@ -1213,7 +1531,14 @@ export async function postGoodsReceiptForAcknowledgedPurchaseOrders(
             do update set received_quantity = excluded.received_quantity, updated_at = now()
             returning id
           `,
-          [tenantId, receipt.rows[0].id, line.id, line.item_id, line.quantity, line.unit],
+          [
+            tenantId,
+            receiptId,
+            line.id,
+            line.item_id,
+            line.quantity,
+            line.unit,
+          ],
         );
 
         await tx.query(
@@ -1259,7 +1584,7 @@ export async function postGoodsReceiptForAcknowledgedPurchaseOrders(
       { receipts, qcChecks },
     );
 
-    return { receipts, qcChecks };
+    return { receipts, qcChecks, receiptIds };
   });
 }
 
@@ -1298,13 +1623,23 @@ export async function completeReceiptLineQc(
     const accepted = Math.max(input.acceptedQuantity, 0);
     const rejected = Math.max(input.rejectedQuantity, 0);
     if (accepted + rejected > received) {
-      throw new Error("Accepted plus rejected quantity cannot exceed received quantity.");
+      throw new Error(
+        "Accepted plus rejected quantity cannot exceed received quantity.",
+      );
     }
 
     const result =
-      rejected > 0 && accepted > 0 ? "failed" : rejected > 0 ? "failed" : "passed";
+      rejected > 0 && accepted > 0
+        ? "failed"
+        : rejected > 0
+          ? "failed"
+          : "passed";
     const lineStatus =
-      rejected > 0 && accepted > 0 ? "accepted" : rejected > 0 ? "rejected" : "accepted";
+      rejected > 0 && accepted > 0
+        ? "accepted"
+        : rejected > 0
+          ? "rejected"
+          : "accepted";
 
     await tx.query(
       `
@@ -1370,24 +1705,6 @@ export async function completeReceiptLineQc(
           `Put away ${accepted} x ${row.sku} after QC`,
         ],
       );
-      await tx.query(
-        `
-          insert into inventory_movements (
-            tenant_id, item_id, movement_type, quantity_delta, reserved_delta,
-            location_code, source_type, source_id, idempotency_key
-          )
-          values ($1, $2, 'putaway', $3, 0, 'MAIN', 'qc_check', $4, $5)
-          on conflict (tenant_id, idempotency_key)
-          do nothing
-        `,
-        [
-          tenantId,
-          row.item_id,
-          accepted,
-          row.id,
-          `putaway:${row.id}`,
-        ],
-      );
     }
 
     if (rejected > 0) {
@@ -1432,7 +1749,341 @@ export async function completeReceiptLineQc(
   });
 }
 
-export async function passQcAndCreatePutaway(db: QueryExecutor, tenantId: string) {
+export async function putawayReceiptLine(
+  db: QueryExecutor,
+  tenantId: string,
+  goodsReceiptLineId: string,
+) {
+  return withKitTransaction(db, async (tx) => {
+    const line = await tx.query<{
+      id: string;
+      goods_receipt_id: string;
+      item_id: string;
+      accepted_quantity: string;
+      status: string;
+      sku: string;
+    }>(
+      `
+        select goods_receipt_lines.id, goods_receipt_lines.goods_receipt_id,
+          goods_receipt_lines.item_id, goods_receipt_lines.accepted_quantity,
+          goods_receipt_lines.status, items.sku
+        from goods_receipt_lines
+        join items on items.id = goods_receipt_lines.item_id
+        where goods_receipt_lines.tenant_id = $1 and goods_receipt_lines.id = $2
+      `,
+      [tenantId, goodsReceiptLineId],
+    );
+    const row = line.rows[0];
+    if (!row) return { putaway: 0 };
+
+    const accepted = Number(row.accepted_quantity ?? 0);
+    if (accepted <= 0 || row.status !== "accepted") {
+      return { putaway: 0 };
+    }
+
+    await tx.query(
+      `
+        insert into inventory_movements (
+          tenant_id, item_id, movement_type, quantity_delta, reserved_delta,
+          location_code, source_type, source_id, idempotency_key
+        )
+        values ($1, $2, 'putaway', $3, 0, 'MAIN', 'goods_receipt_line', $4, $5)
+        on conflict (tenant_id, idempotency_key)
+        do nothing
+      `,
+      [
+        tenantId,
+        row.item_id,
+        accepted,
+        row.id,
+        `receipt-putaway:${row.id}`,
+      ],
+    );
+
+    await tx.query(
+      `
+        update goods_receipt_lines
+        set status = 'putaway_done', updated_at = now()
+        where tenant_id = $1 and id = $2
+      `,
+      [tenantId, row.id],
+    );
+
+    await tx.query(
+      `
+        update warehouse_tasks
+        set status = 'done', updated_at = now()
+        where tenant_id = $1
+          and task_type = 'putaway'
+          and source_type = 'goods_receipt_line'
+          and source_id = $2
+      `,
+      [tenantId, row.id],
+    );
+
+    const remaining = await tx.query<{ count: string }>(
+      `
+        select count(*)::text as count
+        from goods_receipt_lines
+        where tenant_id = $1
+          and goods_receipt_id = $2
+          and status not in ('putaway_done', 'rejected')
+      `,
+      [tenantId, row.goods_receipt_id],
+    );
+
+    const receiptClosed = Number(remaining.rows[0]?.count ?? 0) === 0;
+
+    await tx.query(
+      `
+        update goods_receipts
+        set status = case when $3::int = 0 then 'closed' else 'putaway_pending' end,
+            updated_at = now()
+        where tenant_id = $1 and id = $2
+      `,
+      [tenantId, row.goods_receipt_id, receiptClosed ? 0 : 1],
+    );
+
+    let paymentId: string | null = null;
+    if (receiptClosed) {
+      await tx.query(
+        `
+          update purchase_order_lines
+          set status = 'fulfilled_later'
+          where tenant_id = $1
+            and id in (
+              select purchase_order_line_id
+              from goods_receipt_lines
+              where tenant_id = $1 and goods_receipt_id = $2
+            )
+        `,
+        [tenantId, row.goods_receipt_id],
+      );
+      paymentId = await ensurePurchasePaymentForReceipt(
+        tx,
+        tenantId,
+        row.goods_receipt_id,
+      );
+    }
+
+    await addCaseEvent(
+      tx,
+      tenantId,
+      "Receipt line put away",
+      `${row.sku}: ${accepted} accepted unit(s) moved into MAIN inventory.`,
+      row.id,
+      { accepted },
+    );
+
+    return { putaway: accepted, receiptClosed, paymentId };
+  });
+}
+
+async function ensurePurchasePaymentForReceipt(
+  tx: QueryExecutor,
+  tenantId: string,
+  goodsReceiptId: string,
+) {
+  const paymentBase = await tx.query<{
+    purchase_order_id: string;
+    display_number: string;
+    supplier_id: string;
+    net_amount: string;
+    currency_code: string;
+    due_date: string | null;
+  }>(
+    `
+      select purchase_orders.id as purchase_order_id,
+        purchase_orders.display_number,
+        purchase_orders.supplier_id,
+        coalesce(sum(purchase_order_lines.quantity * coalesce(purchase_order_lines.unit_price, 0)), 0) as net_amount,
+        coalesce(max(purchase_order_lines.currency_code), 'EUR') as currency_code,
+        (coalesce(min(purchase_order_lines.expected_delivery_date), current_date) + interval '14 days')::date as due_date
+      from goods_receipts
+      join purchase_orders on purchase_orders.id = goods_receipts.purchase_order_id
+      join purchase_order_lines on purchase_order_lines.purchase_order_id = purchase_orders.id
+      where goods_receipts.tenant_id = $1 and goods_receipts.id = $2
+      group by purchase_orders.id, purchase_orders.display_number, purchase_orders.supplier_id
+    `,
+    [tenantId, goodsReceiptId],
+  );
+  const row = paymentBase.rows[0];
+  if (!row) return null;
+
+  const payment = await tx.query<{ id: string }>(
+    `
+      insert into purchase_payments (
+        tenant_id, purchase_order_id, supplier_id, payment_number, status,
+        due_date, currency_code, net_amount, tax_amount, shipping_amount, gross_amount
+      )
+      values ($1, $2, $3, $4, 'open', $5, $6, $7, 0, 0, $7)
+      on conflict (tenant_id, purchase_order_id)
+      do update set
+        due_date = excluded.due_date,
+        currency_code = excluded.currency_code,
+        net_amount = excluded.net_amount,
+        gross_amount = excluded.gross_amount,
+        updated_at = now()
+      returning id
+    `,
+    [
+      tenantId,
+      row.purchase_order_id,
+      row.supplier_id,
+      `PAY-${row.display_number}`,
+      row.due_date,
+      row.currency_code,
+      row.net_amount,
+    ],
+  );
+
+  return payment.rows[0]?.id ?? null;
+}
+
+export async function loadAccessControlSettings(
+  db: QueryExecutor,
+  tenantId: string,
+) {
+  const users = await db.query(
+    `
+      select operation_users.id, operation_users.email, operation_users.display_name,
+        operation_users.is_admin, operation_users.is_active,
+        string_agg(operation_groups.name, ', ' order by operation_groups.name) as groups,
+        string_agg(operation_groups.key, ',' order by operation_groups.key) as group_keys
+      from operation_users
+      left join operation_user_groups
+        on operation_user_groups.tenant_id = operation_users.tenant_id
+        and operation_user_groups.user_id = operation_users.id
+      left join operation_groups
+        on operation_groups.id = operation_user_groups.group_id
+      where operation_users.tenant_id = $1
+      group by operation_users.id
+      order by operation_users.is_admin desc, operation_users.email
+    `,
+    [tenantId],
+  );
+  const groups = await db.query(
+    `
+      select operation_groups.id, operation_groups.key, operation_groups.name,
+        operation_groups.description,
+        string_agg(
+          operation_roles.resource || ':'
+          || case when operation_roles.can_admin then 'admin' else '' end
+          || case when operation_roles.can_read then ' read' else '' end
+          || case when operation_roles.can_write then ' write' else '' end
+          || case when operation_roles.can_execute then ' execute' else '' end,
+          ', '
+          order by operation_roles.resource
+        ) as permissions
+      from operation_groups
+      left join operation_group_roles
+        on operation_group_roles.tenant_id = operation_groups.tenant_id
+        and operation_group_roles.group_id = operation_groups.id
+      left join operation_roles
+        on operation_roles.id = operation_group_roles.role_id
+      where operation_groups.tenant_id = $1
+      group by operation_groups.id
+      order by operation_groups.key
+    `,
+    [tenantId],
+  );
+
+  return { users: users.rows, groups: groups.rows };
+}
+
+export async function upsertOperationUser(
+  db: QueryExecutor,
+  tenantId: string,
+  input: {
+    email: string;
+    displayName: string;
+    groupKey: string;
+    isAdmin?: boolean;
+  },
+) {
+  const email = input.email.trim().toLowerCase();
+  const displayName = input.displayName.trim();
+  const groupKey = input.groupKey.trim();
+  const sharedPassword = "Operations123!";
+
+  if (!email || !displayName || !groupKey) {
+    throw new Error("Email, display name and group are required.");
+  }
+
+  return withKitTransaction(db, async (tx) => {
+    const user = await tx.query<{ id: string }>(
+      `
+        insert into operation_users (
+          tenant_id, email, display_name, password_hash, is_active, is_admin
+        )
+        values ($1, $2, $3, crypt($4, gen_salt('bf')), true, $5)
+        on conflict (tenant_id, email)
+        do update set
+          display_name = excluded.display_name,
+          is_active = true,
+          is_admin = excluded.is_admin,
+          updated_at = now()
+        returning id
+      `,
+      [tenantId, email, displayName, sharedPassword, input.isAdmin ?? false],
+    );
+
+    const group = await tx.query<{ id: string }>(
+      `
+        select id
+        from operation_groups
+        where tenant_id = $1 and key = $2
+      `,
+      [tenantId, groupKey],
+    );
+
+    if (!group.rows[0]) throw new Error("Select an existing group.");
+
+    await tx.query(
+      `
+        delete from operation_user_groups
+        where tenant_id = $1 and user_id = $2
+      `,
+      [tenantId, user.rows[0].id],
+    );
+
+    await tx.query(
+      `
+        insert into operation_user_groups (tenant_id, user_id, group_id)
+        values ($1, $2, $3)
+        on conflict (tenant_id, user_id, group_id)
+        do nothing
+      `,
+      [tenantId, user.rows[0].id, group.rows[0].id],
+    );
+
+    return { userId: user.rows[0].id, password: sharedPassword };
+  });
+}
+
+export async function setOperationUserActive(
+  db: QueryExecutor,
+  tenantId: string,
+  userId: string,
+  isActive: boolean,
+) {
+  const result = await db.query<{ id: string }>(
+    `
+      update operation_users
+      set is_active = $3, updated_at = now()
+      where tenant_id = $1 and id = $2
+      returning id
+    `,
+    [tenantId, userId, isActive],
+  );
+
+  return { updated: result.rows.length };
+}
+
+export async function passQcAndCreatePutaway(
+  db: QueryExecutor,
+  tenantId: string,
+) {
   return withKitTransaction(db, async (tx) => {
     const checks = await tx.query<{
       goods_receipt_line_id: string;
@@ -1486,7 +2137,8 @@ export async function completeProductionOrder(
       `,
       [tenantId, productionOrderId ?? null],
     );
-    if (!order.rows[0]) return { productionOrderId: null, componentsConsumed: 0 };
+    if (!order.rows[0])
+      return { productionOrderId: null, componentsConsumed: 0 };
 
     const productionOrder = order.rows[0];
     const components = await tx.query<{
@@ -1619,13 +2271,16 @@ export async function completeProductionQc(
       [tenantId, input.productionOrderId],
     );
     const productionOrder = order.rows[0];
-    if (!productionOrder) return { productionOrderId: null, accepted: 0, rejected: 0 };
+    if (!productionOrder)
+      return { productionOrderId: null, accepted: 0, rejected: 0 };
 
     const quantity = Number(productionOrder.quantity);
     const accepted = Math.max(input.acceptedQuantity, 0);
     const rejected = Math.max(input.rejectedQuantity, 0);
     if (accepted + rejected > quantity) {
-      throw new Error("Accepted plus rejected quantity cannot exceed produced quantity.");
+      throw new Error(
+        "Accepted plus rejected quantity cannot exceed produced quantity.",
+      );
     }
 
     await tx.query(
@@ -1704,7 +2359,11 @@ export async function completeProductionQc(
       [
         tenantId,
         productionOrder.id,
-        rejected > 0 && accepted > 0 ? "partial" : rejected > 0 ? "failed" : "passed",
+        rejected > 0 && accepted > 0
+          ? "partial"
+          : rejected > 0
+            ? "failed"
+            : "passed",
         accepted,
         rejected,
         input.releaseDestination,
@@ -1748,7 +2407,12 @@ export async function transitionPurchaseOrder(
   db: QueryExecutor,
   tenantId: string,
   purchaseOrderId: string,
-  transition: "pending_approval" | "approved" | "sent" | "acknowledged" | "cancelled",
+  transition:
+    | "pending_approval"
+    | "approved"
+    | "sent"
+    | "acknowledged"
+    | "cancelled",
 ) {
   const field =
     transition === "pending_approval"
@@ -1847,6 +2511,97 @@ export async function loadItems(
   ).rows;
 }
 
+export async function loadSuppliers(db: QueryExecutor, tenantId: string) {
+  return (
+    await db.query(
+      `
+        select
+          suppliers.*,
+          count(supplier_items.id)::int as product_count,
+          count(supplier_items.id) filter (where supplier_items.is_preferred)::int as preferred_count
+        from suppliers
+        left join supplier_items
+          on supplier_items.supplier_id = suppliers.id
+          and supplier_items.tenant_id = suppliers.tenant_id
+        where suppliers.tenant_id = $1
+        group by suppliers.id
+        order by suppliers.is_active desc, suppliers.name
+      `,
+      [tenantId],
+    )
+  ).rows;
+}
+
+export async function saveSupplierMaster(
+  db: QueryExecutor,
+  tenantId: string,
+  input: {
+    supplierId?: string | null;
+    name: string;
+    email?: string | null;
+    phone?: string | null;
+    website?: string | null;
+    notes?: string | null;
+    isActive: boolean;
+  },
+) {
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error("Supplier name is required.");
+  }
+
+  if (input.supplierId) {
+    await db.query(
+      `
+        update suppliers
+        set name = $3,
+            email = nullif($4, ''),
+            phone = nullif($5, ''),
+            website = nullif($6, ''),
+            notes = nullif($7, ''),
+            is_active = $8,
+            updated_at = now()
+        where tenant_id = $1 and id = $2
+      `,
+      [
+        tenantId,
+        input.supplierId,
+        name,
+        input.email?.trim() ?? "",
+        input.phone?.trim() ?? "",
+        input.website?.trim() ?? "",
+        input.notes?.trim() ?? "",
+        input.isActive,
+      ],
+    );
+    return;
+  }
+
+  await db.query(
+    `
+      insert into suppliers (tenant_id, name, email, phone, website, notes, is_active)
+      values ($1, $2, nullif($3, ''), nullif($4, ''), nullif($5, ''), nullif($6, ''), $7)
+      on conflict (tenant_id, name)
+      do update set
+        email = excluded.email,
+        phone = excluded.phone,
+        website = excluded.website,
+        notes = excluded.notes,
+        is_active = excluded.is_active,
+        updated_at = now()
+    `,
+    [
+      tenantId,
+      name,
+      input.email?.trim() ?? "",
+      input.phone?.trim() ?? "",
+      input.website?.trim() ?? "",
+      input.notes?.trim() ?? "",
+      input.isActive,
+    ],
+  );
+}
+
 export async function createOperationsItem(
   db: QueryExecutor,
   tenantId: string,
@@ -1863,17 +2618,25 @@ export async function createOperationsItem(
 ) {
   const sku = input.sku.trim();
   const title = input.title.trim();
-  const allowedItemTypes = new Set(["product", "assembly", "component", "raw_material"]);
+  const allowedItemTypes = new Set([
+    "product",
+    "assembly",
+    "component",
+    "raw_material",
+  ]);
   const replenishmentPolicy = input.replenishmentPolicy;
 
   if (!sku || !title) {
-    throw new Error("SKU and title are required to create an operations product.");
+    throw new Error(
+      "SKU and title are required to create an operations product.",
+    );
   }
   if (!allowedItemTypes.has(input.itemType)) {
     throw new Error("Unsupported product type.");
   }
 
-  const isSellable = input.itemType === "product" || input.itemType === "assembly";
+  const isSellable =
+    input.itemType === "product" || input.itemType === "assembly";
   const isPurchasable = replenishmentPolicy === "buy";
   const isProducible = replenishmentPolicy === "make";
 
@@ -1927,7 +2690,11 @@ export async function createOperationsItem(
   return { itemId: result.rows[0].id, sku, title };
 }
 
-export async function loadItemDetail(db: QueryExecutor, tenantId: string, itemId: string) {
+export async function loadItemDetail(
+  db: QueryExecutor,
+  tenantId: string,
+  itemId: string,
+) {
   const item = await db.query(
     `
       with balances as (
@@ -1964,7 +2731,15 @@ export async function loadItemDetail(db: QueryExecutor, tenantId: string, itemId
   );
   const suppliers = await db.query(
     `
-      select suppliers.*, supplier_items.is_preferred
+      select
+        suppliers.*,
+        supplier_items.is_preferred,
+        supplier_items.supplier_sku,
+        supplier_items.unit_price,
+        supplier_items.currency_code,
+        supplier_items.lead_time_days,
+        supplier_items.minimum_order_quantity,
+        supplier_items.is_active as supplier_item_is_active
       from supplier_items
       join suppliers on suppliers.id = supplier_items.supplier_id
       where supplier_items.tenant_id = $1 and supplier_items.item_id = $2
@@ -1981,11 +2756,21 @@ export async function loadItemDetail(db: QueryExecutor, tenantId: string, itemId
     `,
     [tenantId],
   );
+  const allSuppliers = await db.query(
+    `
+      select id, name, email, is_active
+      from suppliers
+      where tenant_id = $1
+      order by is_active desc, name
+    `,
+    [tenantId],
+  );
 
   return {
     item: item.rows[0] ?? null,
     bomLines: bom.rows,
     suppliers: suppliers.rows,
+    allSuppliers: allSuppliers.rows,
     availableComponents: components.rows,
   };
 }
@@ -2038,6 +2823,73 @@ export async function updateItemOperationsProperties(
       input.qcRequiredAfterProduction,
     ],
   );
+}
+
+export async function saveSupplierForItem(
+  db: QueryExecutor,
+  tenantId: string,
+  input: {
+    itemId: string;
+    supplierId: string;
+    isPreferred: boolean;
+    supplierSku?: string | null;
+    unitPrice?: number | null;
+    currencyCode?: string | null;
+    leadTimeDays?: number | null;
+    minimumOrderQuantity?: number | null;
+  },
+) {
+  if (!input.supplierId) {
+    throw new Error("Select a supplier before saving purchasing terms.");
+  }
+
+  return withKitTransaction(db, async (tx) => {
+    if (input.isPreferred) {
+      await tx.query(
+        "update supplier_items set is_preferred = false, updated_at = now() where tenant_id = $1 and item_id = $2",
+        [tenantId, input.itemId],
+      );
+    }
+
+    await tx.query(
+      `
+        insert into supplier_items (
+          tenant_id, supplier_id, item_id, is_preferred, supplier_sku,
+          unit_price, currency_code, lead_time_days, minimum_order_quantity,
+          is_active, updated_at
+        )
+        values ($1, $2, $3, $4, nullif($5, ''), $6, $7, $8, $9, true, now())
+        on conflict (tenant_id, supplier_id, item_id)
+        do update set
+          is_preferred = excluded.is_preferred,
+          supplier_sku = excluded.supplier_sku,
+          unit_price = excluded.unit_price,
+          currency_code = excluded.currency_code,
+          lead_time_days = excluded.lead_time_days,
+          minimum_order_quantity = excluded.minimum_order_quantity,
+          is_active = true,
+          updated_at = now()
+      `,
+      [
+        tenantId,
+        input.supplierId,
+        input.itemId,
+        input.isPreferred,
+        input.supplierSku?.trim() ?? "",
+        input.unitPrice == null || Number.isNaN(input.unitPrice)
+          ? null
+          : input.unitPrice,
+        input.currencyCode?.trim() || "EUR",
+        input.leadTimeDays == null || Number.isNaN(input.leadTimeDays)
+          ? null
+          : Math.max(input.leadTimeDays, 0),
+        input.minimumOrderQuantity == null ||
+        Number.isNaN(input.minimumOrderQuantity)
+          ? null
+          : Math.max(input.minimumOrderQuantity, 0),
+      ],
+    );
+  });
 }
 
 export async function addBomLineToItem(
@@ -2115,17 +2967,91 @@ export async function savePreferredSupplierForItem(
   });
 }
 
-export async function loadOperationsOrdersList(db: QueryExecutor, tenantId: string) {
+export async function loadOperationsOrdersList(
+  db: QueryExecutor,
+  tenantId: string,
+) {
   const rows = (
     await db.query(
       `
-        select operations_orders.*, count(operations_order_lines.id)::int as line_count,
-          string_agg(coalesce(operations_order_lines.sku, items.sku), ', ' order by coalesce(operations_order_lines.sku, items.sku)) as skus
+        with movement_balances as (
+          select
+            inventory_movements.item_id,
+            coalesce(sum(inventory_movements.quantity_delta) filter (where inventory_movements.location_code = 'MAIN'), 0) as physical_quantity
+          from inventory_movements
+          where inventory_movements.tenant_id = $1
+          group by inventory_movements.item_id
+        ),
+        customer_demand as (
+          select
+            operations_order_lines.item_id,
+            coalesce(sum(operations_order_lines.quantity), 0) as reserved_quantity
+          from operations_order_lines
+          join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+          where operations_order_lines.tenant_id = $1
+            and operations_order_lines.supply_status <> 'cancelled'
+            and operations_orders.status in ('open', 'planned', 'in_progress')
+          group by operations_order_lines.item_id
+        ),
+        open_purchase_orders as (
+          select
+            purchase_order_lines.item_id,
+            coalesce(sum(purchase_order_lines.quantity), 0) as ordered_quantity
+          from purchase_order_lines
+          join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+          where purchase_order_lines.tenant_id = $1
+            and purchase_order_lines.status = 'open'
+            and purchase_orders.status in ('draft', 'pending_approval', 'approved', 'sent', 'acknowledged')
+          group by purchase_order_lines.item_id
+        ),
+        item_availability as (
+          select
+            items.id as item_id,
+            coalesce(movement_balances.physical_quantity, 0) as physical_quantity,
+            coalesce(customer_demand.reserved_quantity, 0) as reserved_quantity,
+            coalesce(open_purchase_orders.ordered_quantity, 0) as ordered_quantity,
+            coalesce(movement_balances.physical_quantity, 0)
+              - coalesce(customer_demand.reserved_quantity, 0) as available_quantity,
+            coalesce(movement_balances.physical_quantity, 0)
+              - coalesce(customer_demand.reserved_quantity, 0)
+              + coalesce(open_purchase_orders.ordered_quantity, 0) as planned_quantity
+          from items
+          left join movement_balances on movement_balances.item_id = items.id
+          left join customer_demand on customer_demand.item_id = items.id
+          left join open_purchase_orders on open_purchase_orders.item_id = items.id
+          where items.tenant_id = $1
+        ),
+        order_summary as (
+          select
+            operations_order_lines.operations_order_id,
+            count(operations_order_lines.id)::int as line_count,
+            string_agg(coalesce(operations_order_lines.sku, items.sku), ', ' order by coalesce(operations_order_lines.sku, items.sku)) as skus,
+            coalesce(sum(greatest(0, operations_order_lines.quantity - coalesce(item_availability.available_quantity, 0))), 0) as shortage_quantity,
+            coalesce(sum(greatest(0, operations_order_lines.quantity - coalesce(item_availability.planned_quantity, 0))), 0) as planned_shortage_quantity
+          from operations_order_lines
+          left join items on items.id = operations_order_lines.item_id
+          left join item_availability on item_availability.item_id = operations_order_lines.item_id
+          where operations_order_lines.tenant_id = $1
+          group by operations_order_lines.operations_order_id
+        )
+        select operations_orders.*,
+          coalesce(order_summary.line_count, 0)::int as line_count,
+          order_summary.skus,
+          case
+            when coalesce(order_summary.line_count, 0) = 0 then 'unchecked'
+            when coalesce(order_summary.shortage_quantity, 0) <= 0 then 'available'
+            when coalesce(order_summary.planned_shortage_quantity, 0) <= 0 then 'incoming'
+            else 'short'
+          end as stock_state,
+          case
+            when coalesce(order_summary.line_count, 0) = 0 then 'No lines'
+            when coalesce(order_summary.shortage_quantity, 0) <= 0 then 'Available'
+            when coalesce(order_summary.planned_shortage_quantity, 0) <= 0 then 'Incoming covers'
+            else concat('Short ', trim(to_char(order_summary.planned_shortage_quantity, 'FM999999990.####')))
+          end as stock_label
         from operations_orders
-        left join operations_order_lines on operations_order_lines.operations_order_id = operations_orders.id
-        left join items on items.id = operations_order_lines.item_id
+        left join order_summary on order_summary.operations_order_id = operations_orders.id
         where operations_orders.tenant_id = $1
-        group by operations_orders.id
         order by operations_orders.processed_at desc nulls last, operations_orders.created_at desc
       `,
       [tenantId],
@@ -2134,7 +3060,10 @@ export async function loadOperationsOrdersList(db: QueryExecutor, tenantId: stri
   return rows.map((row) => decryptOrderRow(row as CustomerEncryptedRow));
 }
 
-export async function loadOperationsOrderLinesList(db: QueryExecutor, tenantId: string) {
+export async function loadOperationsOrderLinesList(
+  db: QueryExecutor,
+  tenantId: string,
+) {
   return (
     await db.query(
       `
@@ -2167,7 +3096,10 @@ export async function loadOperationsOrderLinesList(db: QueryExecutor, tenantId: 
   ).rows;
 }
 
-export async function loadOperationsCustomersList(db: QueryExecutor, tenantId: string) {
+export async function loadOperationsCustomersList(
+  db: QueryExecutor,
+  tenantId: string,
+) {
   const rows = (
     await db.query(
       `
@@ -2181,7 +3113,9 @@ export async function loadOperationsCustomersList(db: QueryExecutor, tenantId: s
     )
   ).rows;
 
-  return rows.map((row) => decryptOperationCustomerRow(row as OperationCustomerEncryptedRow));
+  return rows.map((row) =>
+    decryptOperationCustomerRow(row as OperationCustomerEncryptedRow),
+  );
 }
 
 export async function loadOperationsOrderLineDetail(
@@ -2195,11 +3129,23 @@ export async function loadOperationsOrderLineDetail(
         select
           item_id,
           coalesce(sum(quantity_delta - reserved_delta) filter (where location_code = 'MAIN'), 0) as available_quantity,
+          coalesce(sum(reserved_delta) filter (where location_code = 'MAIN'), 0) as reserved_quantity,
           coalesce(sum(quantity_delta) filter (where location_code = 'QC-HOLD'), 0) as qc_hold_quantity,
           coalesce(sum(quantity_delta) filter (where location_code = 'QUARANTINE'), 0) as quarantine_quantity
         from inventory_movements
         where tenant_id = $1
         group by item_id
+      ),
+      open_demand as (
+        select
+          operations_order_lines.item_id,
+          coalesce(sum(operations_order_lines.quantity), 0) as open_order_quantity
+        from operations_order_lines
+        join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+        where operations_order_lines.tenant_id = $1
+          and operations_orders.status in ('open', 'planned', 'in_progress')
+          and operations_order_lines.supply_status <> 'cancelled'
+        group by operations_order_lines.item_id
       )
       select
         operations_order_lines.*,
@@ -2220,19 +3166,178 @@ export async function loadOperationsOrderLineDetail(
         items.supplier_lead_time_days,
         items.qc_required_after_purchase,
         items.qc_required_after_production,
+        preferred.supplier_id as preferred_supplier_id,
+        suppliers.name as preferred_supplier_name,
         coalesce(balances.available_quantity, 0) as available_quantity,
+        coalesce(balances.reserved_quantity, 0) as reserved_quantity,
         coalesce(balances.qc_hold_quantity, 0) as qc_hold_quantity,
-        coalesce(balances.quarantine_quantity, 0) as quarantine_quantity
+        coalesce(balances.quarantine_quantity, 0) as quarantine_quantity,
+        coalesce(open_demand.open_order_quantity, 0) as open_order_quantity
       from operations_order_lines
       join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
       join items on items.id = operations_order_lines.item_id
       left join balances on balances.item_id = items.id
+      left join open_demand on open_demand.item_id = items.id
+      left join supplier_items preferred
+        on preferred.item_id = items.id
+        and preferred.tenant_id = items.tenant_id
+        and preferred.is_preferred
+      left join suppliers on suppliers.id = preferred.supplier_id
       where operations_order_lines.tenant_id = $1 and operations_order_lines.id = $2
     `,
     [tenantId, lineId],
   );
 
   return { line: line.rows[0] ?? null };
+}
+
+export async function createPurchaseNeedForOrderLine(
+  db: QueryExecutor,
+  tenantId: string,
+  orderLineId: string,
+  requestedQuantity: number,
+) {
+  return withKitTransaction(db, async (tx) => {
+    const lineResult = await tx.query<{
+      id: string;
+      item_id: string;
+      quantity: string;
+      unit: string;
+      order_name: string;
+      sku: string | null;
+      item_sku: string;
+      is_purchasable: boolean;
+      min_inventory_quantity: string;
+      default_order_quantity: string;
+      available_quantity: string;
+      preferred_supplier_id: string | null;
+    }>(
+      `
+        with balances as (
+          select
+            item_id,
+            coalesce(sum(quantity_delta - reserved_delta) filter (where location_code = 'MAIN'), 0) as available_quantity
+          from inventory_movements
+          where tenant_id = $1
+          group by item_id
+        )
+        select
+          operations_order_lines.id,
+          operations_order_lines.item_id,
+          operations_order_lines.quantity,
+          operations_order_lines.unit,
+          operations_orders.order_name,
+          operations_order_lines.sku,
+          items.sku as item_sku,
+          items.is_purchasable,
+          items.min_inventory_quantity,
+          items.default_order_quantity,
+          coalesce(balances.available_quantity, 0) as available_quantity,
+          preferred.supplier_id as preferred_supplier_id
+        from operations_order_lines
+        join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+        join items on items.id = operations_order_lines.item_id
+        left join balances on balances.item_id = items.id
+        left join supplier_items preferred
+          on preferred.item_id = items.id
+          and preferred.tenant_id = items.tenant_id
+          and preferred.is_preferred
+        where operations_order_lines.tenant_id = $1
+          and operations_order_lines.id = $2
+      `,
+      [tenantId, orderLineId],
+    );
+    const line = lineResult.rows[0];
+    if (!line) throw new Error("Order line not found.");
+    if (!line.is_purchasable) {
+      throw new Error(
+        "Classify the product as purchased before creating a purchase need.",
+      );
+    }
+
+    const shortage = Math.max(
+      Number(line.quantity) +
+        Number(line.min_inventory_quantity ?? 0) -
+        Number(line.available_quantity ?? 0),
+      0,
+    );
+    const quantity = Math.max(
+      Number(requestedQuantity) || 0,
+      shortage,
+      Number(line.default_order_quantity ?? 1),
+      1,
+    );
+
+    const run = await tx.query<{ id: string }>(
+      `
+        insert into mrp_runs (tenant_id, status, scenario_mode, summary, committed_at)
+        values ($1, 'committed', 'operations', $2, now())
+        returning id
+      `,
+      [
+        tenantId,
+        `Direct purchase need from ${line.order_name} / ${line.sku ?? line.item_sku}.`,
+      ],
+    );
+
+    const runLine = await tx.query<{ id: string }>(
+      `
+        insert into mrp_run_lines (
+          tenant_id, mrp_run_id, item_id, line_type, demand_quantity,
+          available_quantity, shortage_quantity, recommended_action, explanation
+        )
+        values ($1, $2, $3, 'finished_good', $4, $5, $6, 'buy', $7)
+        returning id
+      `,
+      [
+        tenantId,
+        run.rows[0].id,
+        line.item_id,
+        Number(line.quantity),
+        Number(line.available_quantity ?? 0),
+        shortage,
+        `Direct procurement from order ${line.order_name}; quantity can be overridden by Procurement.`,
+      ],
+    );
+
+    const need = await tx.query<{ id: string }>(
+      `
+        insert into purchase_needs (
+          tenant_id, item_id, mrp_run_id, mrp_run_line_id, supplier_id,
+          quantity, unit, status
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8)
+        returning id
+      `,
+      [
+        tenantId,
+        line.item_id,
+        run.rows[0].id,
+        runLine.rows[0].id,
+        line.preferred_supplier_id,
+        quantity,
+        line.unit,
+        line.preferred_supplier_id ? "assigned" : "open",
+      ],
+    );
+
+    await addCaseEvent(
+      tx,
+      tenantId,
+      "Purchase need created from order line",
+      `${line.order_name}: ${quantity.toLocaleString()} ${line.unit} of ${
+        line.sku ?? line.item_sku
+      } requested for procurement.`,
+      "purchase_need_create",
+      { purchaseNeedId: need.rows[0].id, orderLineId },
+    );
+
+    return {
+      purchaseNeedId: need.rows[0].id,
+      quantity,
+      supplierAssigned: Boolean(line.preferred_supplier_id),
+    };
+  });
 }
 
 export async function loadSellableItemsForOrderEntry(
@@ -2268,7 +3373,11 @@ export async function createOperationsOrderEntry(
     const privacy = await loadPrivacySettings(tx, tenantId);
     const quantity = Math.max(input.quantity, 1);
     const orderName =
-      input.orderName.trim() || `INTAKE-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}`;
+      input.orderName.trim() ||
+      `INTAKE-${new Date()
+        .toISOString()
+        .replace(/[-:.TZ]/g, "")
+        .slice(0, 14)}`;
 
     const item = await tx.query<{ sku: string; title: string }>(
       "select sku, title from items where tenant_id = $1 and id = $2 and is_sellable",
@@ -2482,18 +3591,49 @@ export async function loadOperationsOrderDetail(
   );
   const lines = await db.query(
     `
+      with balances as (
+        select
+          item_id,
+          coalesce(sum(quantity_delta - reserved_delta) filter (where location_code = 'MAIN'), 0) as available_quantity,
+          coalesce(sum(reserved_delta) filter (where location_code = 'MAIN'), 0) as reserved_quantity,
+          coalesce(sum(quantity_delta) filter (where location_code = 'QC-HOLD'), 0) as qc_hold_quantity,
+          coalesce(sum(quantity_delta) filter (where location_code = 'QUARANTINE'), 0) as quarantine_quantity
+        from inventory_movements
+        where tenant_id = $1
+        group by item_id
+      ),
+      open_demand as (
+        select
+          operations_order_lines.item_id,
+          coalesce(sum(operations_order_lines.quantity), 0) as open_order_quantity
+        from operations_order_lines
+        join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+        where operations_order_lines.tenant_id = $1
+          and operations_orders.status in ('open', 'planned', 'in_progress')
+          and operations_order_lines.supply_status <> 'cancelled'
+        group by operations_order_lines.item_id
+      )
       select operations_order_lines.*, items.sku as item_sku, items.title as item_title,
         items.item_type, items.is_sellable, items.is_purchasable, items.is_producible,
-        items.min_inventory_quantity, items.default_order_quantity, items.default_production_quantity
+        items.min_inventory_quantity, items.default_order_quantity, items.default_production_quantity,
+        coalesce(balances.available_quantity, 0) as available_quantity,
+        coalesce(balances.reserved_quantity, 0) as reserved_quantity,
+        coalesce(balances.qc_hold_quantity, 0) as qc_hold_quantity,
+        coalesce(balances.quarantine_quantity, 0) as quarantine_quantity,
+        coalesce(open_demand.open_order_quantity, 0) as open_order_quantity
       from operations_order_lines
       join items on items.id = operations_order_lines.item_id
+      left join balances on balances.item_id = items.id
+      left join open_demand on open_demand.item_id = items.id
       where operations_order_lines.tenant_id = $1 and operations_order_lines.operations_order_id = $2
       order by coalesce(operations_order_lines.sku, items.sku)
     `,
     [tenantId, orderId],
   );
   return {
-    order: order.rows[0] ? decryptOrderRow(order.rows[0] as CustomerEncryptedRow) : null,
+    order: order.rows[0]
+      ? decryptOrderRow(order.rows[0] as CustomerEncryptedRow)
+      : null,
     lines: lines.rows,
   };
 }
@@ -2557,7 +3697,10 @@ export async function updatePrivacySettings(
   );
 }
 
-export async function redactExpiredCustomerData(db: QueryExecutor, tenantId: string) {
+export async function redactExpiredCustomerData(
+  db: QueryExecutor,
+  tenantId: string,
+) {
   const result = await db.query<{ id: string }>(
     `
       update operations_orders
@@ -2615,7 +3758,11 @@ export async function loadMrpRuns(db: QueryExecutor, tenantId: string) {
   ).rows;
 }
 
-export async function loadMrpRunDetail(db: QueryExecutor, tenantId: string, mrpRunId: string) {
+export async function loadMrpRunDetail(
+  db: QueryExecutor,
+  tenantId: string,
+  mrpRunId: string,
+) {
   const run = await db.query(
     "select * from mrp_runs where tenant_id = $1 and id = $2",
     [tenantId, mrpRunId],
@@ -2638,6 +3785,7 @@ export async function loadPurchaseNeeds(db: QueryExecutor, tenantId: string) {
     await db.query(
       `
         select purchase_needs.*, items.sku, items.title, suppliers.name as supplier_name,
+          preferred.id as preferred_supplier_id,
           preferred.name as preferred_supplier_name,
           purchase_order_lines.purchase_order_id,
           purchase_orders.display_number as purchase_order_number
@@ -2656,7 +3804,10 @@ export async function loadPurchaseNeeds(db: QueryExecutor, tenantId: string) {
   ).rows;
 }
 
-export async function assignPreferredSuppliersToNeeds(db: QueryExecutor, tenantId: string) {
+export async function assignPreferredSuppliersToNeeds(
+  db: QueryExecutor,
+  tenantId: string,
+) {
   await db.query(
     `
       update purchase_needs
@@ -2672,14 +3823,45 @@ export async function assignPreferredSuppliersToNeeds(db: QueryExecutor, tenantI
   );
 }
 
+export async function assignSupplierToPurchaseNeed(
+  db: QueryExecutor,
+  tenantId: string,
+  purchaseNeedId: string,
+  supplierId: string,
+) {
+  if (!supplierId) {
+    throw new Error("Select a supplier before assigning a purchase need.");
+  }
+
+  await db.query(
+    `
+      update purchase_needs
+      set supplier_id = $3,
+          status = case
+            when status in ('open', 'assigned') then 'assigned'
+            else status
+          end,
+          updated_at = now()
+      where tenant_id = $1 and id = $2 and status <> 'converted_to_po'
+    `,
+    [tenantId, purchaseNeedId, supplierId],
+  );
+}
+
 export async function loadPurchaseOrders(db: QueryExecutor, tenantId: string) {
   return (
     await db.query(
       `
-        select purchase_orders.*, suppliers.name as supplier_name, count(purchase_order_lines.id)::int as line_count
+        select purchase_orders.*, suppliers.name as supplier_name,
+          count(purchase_order_lines.id)::int as line_count,
+          min(purchase_order_lines.expected_delivery_date) as next_expected_delivery_date,
+          coalesce(sum(purchase_order_lines.quantity * coalesce(purchase_order_lines.unit_price, 0)), 0) as net_amount,
+          coalesce(max(purchase_order_lines.currency_code), 'EUR') as currency_code,
+          max(goods_receipts.status) as receipt_status
         from purchase_orders
         join suppliers on suppliers.id = purchase_orders.supplier_id
         left join purchase_order_lines on purchase_order_lines.purchase_order_id = purchase_orders.id
+        left join goods_receipts on goods_receipts.purchase_order_id = purchase_orders.id
         where purchase_orders.tenant_id = $1
         group by purchase_orders.id, suppliers.name
         order by purchase_orders.created_at desc
@@ -2689,7 +3871,10 @@ export async function loadPurchaseOrders(db: QueryExecutor, tenantId: string) {
   ).rows;
 }
 
-export async function loadReceivablePurchaseOrders(db: QueryExecutor, tenantId: string) {
+export async function loadReceivablePurchaseOrders(
+  db: QueryExecutor,
+  tenantId: string,
+) {
   return (
     await db.query(
       `
@@ -2736,6 +3921,10 @@ export async function loadPurchaseOrderDetail(
     title: string;
     quantity: string;
     unit: string;
+    unit_price: string | null;
+    currency_code: string | null;
+    expected_delivery_date: string | null;
+    lead_time_days: number | null;
     status: string;
   }>(
     `
@@ -2750,7 +3939,10 @@ export async function loadPurchaseOrderDetail(
   return { order: order.rows[0] ?? null, lines: lines.rows };
 }
 
-export async function loadProductionOrders(db: QueryExecutor, tenantId: string) {
+export async function loadProductionOrders(
+  db: QueryExecutor,
+  tenantId: string,
+) {
   return (
     await db.query(
       `
@@ -2869,7 +4061,14 @@ export async function createShippingOrdersFromOpenOperationsOrders(
             on conflict (tenant_id, shipping_order_id, operations_order_line_id)
             do update set ordered_quantity = excluded.ordered_quantity, unit = excluded.unit, updated_at = now()
           `,
-          [tenantId, shipment.rows[0].id, line.id, line.item_id, line.quantity, line.unit],
+          [
+            tenantId,
+            shipment.rows[0].id,
+            line.id,
+            line.item_id,
+            line.quantity,
+            line.unit,
+          ],
         );
         await tx.query(
           `
@@ -2913,7 +4112,10 @@ export async function createShippingOrdersFromOpenOperationsOrders(
   });
 }
 
-export async function loadShippableOperationsOrders(db: QueryExecutor, tenantId: string) {
+export async function loadShippableOperationsOrders(
+  db: QueryExecutor,
+  tenantId: string,
+) {
   const rows = (
     await db.query(
       `
@@ -3075,7 +4277,9 @@ export async function loadShippingOrders(db: QueryExecutor, tenantId: string) {
   );
 
   return {
-    orders: orders.rows.map((row) => decryptOrderRow(row as CustomerEncryptedRow)),
+    orders: orders.rows.map((row) =>
+      decryptOrderRow(row as CustomerEncryptedRow),
+    ),
     lines: lines.rows,
   };
 }
@@ -3095,7 +4299,10 @@ export async function loadWarehouseTasks(db: QueryExecutor, tenantId: string) {
   ).rows;
 }
 
-export async function loadOperationsOrders(db: QueryExecutor, tenantId: string) {
+export async function loadOperationsOrders(
+  db: QueryExecutor,
+  tenantId: string,
+) {
   return (
     await db.query(
       `
@@ -3220,17 +4427,71 @@ export async function loadReceipts(db: QueryExecutor, tenantId: string) {
 export async function loadInventoryLedger(db: QueryExecutor, tenantId: string) {
   const balances = await db.query(
     `
-      select items.sku, items.title,
-        coalesce(sum(inventory_movements.quantity_delta), 0) as physical_quantity,
-        coalesce(sum(inventory_movements.reserved_delta) filter (where inventory_movements.location_code = 'MAIN'), 0) as reserved_quantity,
-        coalesce(sum(inventory_movements.quantity_delta - inventory_movements.reserved_delta) filter (where inventory_movements.location_code = 'MAIN'), 0) as available_quantity,
-        coalesce(sum(inventory_movements.quantity_delta) filter (where inventory_movements.location_code = 'QC-HOLD'), 0) as qc_hold_quantity,
-        coalesce(sum(inventory_movements.quantity_delta) filter (where inventory_movements.location_code = 'QUARANTINE'), 0) as quarantine_quantity,
-        coalesce(sum(inventory_movements.quantity_delta) filter (where inventory_movements.location_code = 'LOGISTICS-STAGE'), 0) as logistics_stage_quantity
+      with movement_balances as (
+        select
+          inventory_movements.item_id,
+          coalesce(sum(inventory_movements.quantity_delta) filter (where inventory_movements.location_code = 'MAIN'), 0) as physical_quantity,
+          coalesce(sum(inventory_movements.reserved_delta) filter (where inventory_movements.location_code = 'MAIN'), 0) as movement_reserved_quantity,
+          coalesce(sum(inventory_movements.quantity_delta) filter (where inventory_movements.location_code = 'QC-HOLD'), 0) as qc_hold_quantity,
+          coalesce(sum(inventory_movements.quantity_delta) filter (where inventory_movements.location_code = 'QUARANTINE'), 0) as quarantine_quantity,
+          coalesce(sum(inventory_movements.quantity_delta) filter (where inventory_movements.location_code = 'LOGISTICS-STAGE'), 0) as logistics_stage_quantity
+        from inventory_movements
+        where inventory_movements.tenant_id = $1
+        group by inventory_movements.item_id
+      ),
+      customer_demand as (
+        select
+          operations_order_lines.item_id,
+          coalesce(sum(operations_order_lines.quantity), 0) as reserved_quantity
+        from operations_order_lines
+        join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+        where operations_order_lines.tenant_id = $1
+          and operations_order_lines.supply_status <> 'cancelled'
+          and operations_orders.status in ('open', 'planned', 'in_progress')
+        group by operations_order_lines.item_id
+      ),
+      open_purchase_orders as (
+        select
+          purchase_order_lines.item_id,
+          coalesce(sum(purchase_order_lines.quantity), 0) as ordered_quantity,
+          min(purchase_order_lines.expected_delivery_date) as next_expected_delivery_date
+        from purchase_order_lines
+        join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+        where purchase_order_lines.tenant_id = $1
+          and purchase_order_lines.status = 'open'
+          and purchase_orders.status in ('draft', 'pending_approval', 'approved', 'sent', 'acknowledged')
+        group by purchase_order_lines.item_id
+      )
+      select items.id, items.sku, items.title,
+        items.min_inventory_quantity,
+        items.default_order_quantity,
+        items.supplier_lead_time_days,
+        coalesce(movement_balances.physical_quantity, 0) as physical_quantity,
+        greatest(
+          coalesce(customer_demand.reserved_quantity, 0),
+          coalesce(movement_balances.movement_reserved_quantity, 0)
+        ) as reserved_quantity,
+        coalesce(movement_balances.physical_quantity, 0)
+          - greatest(
+              coalesce(customer_demand.reserved_quantity, 0),
+              coalesce(movement_balances.movement_reserved_quantity, 0)
+            ) as available_quantity,
+        coalesce(open_purchase_orders.ordered_quantity, 0) as ordered_quantity,
+        coalesce(movement_balances.physical_quantity, 0)
+          - greatest(
+              coalesce(customer_demand.reserved_quantity, 0),
+              coalesce(movement_balances.movement_reserved_quantity, 0)
+            )
+          + coalesce(open_purchase_orders.ordered_quantity, 0) as planned_quantity,
+        open_purchase_orders.next_expected_delivery_date,
+        coalesce(movement_balances.qc_hold_quantity, 0) as qc_hold_quantity,
+        coalesce(movement_balances.quarantine_quantity, 0) as quarantine_quantity,
+        coalesce(movement_balances.logistics_stage_quantity, 0) as logistics_stage_quantity
       from items
-      left join inventory_movements on inventory_movements.item_id = items.id
+      left join movement_balances on movement_balances.item_id = items.id
+      left join customer_demand on customer_demand.item_id = items.id
+      left join open_purchase_orders on open_purchase_orders.item_id = items.id
       where items.tenant_id = $1
-      group by items.id
       order by items.sku
     `,
     [tenantId],
@@ -3248,6 +4509,75 @@ export async function loadInventoryLedger(db: QueryExecutor, tenantId: string) {
   );
 
   return { balances: balances.rows, movements: movements.rows };
+}
+
+export async function loadInventoryItemDetail(
+  db: QueryExecutor,
+  tenantId: string,
+  itemId: string,
+) {
+  const inventory = await loadInventoryLedger(db, tenantId);
+  const balance = inventory.balances.find((row: any) => row.id === itemId);
+  const item = await db.query(
+    `
+      select items.*
+      from items
+      where items.tenant_id = $1 and items.id = $2
+    `,
+    [tenantId, itemId],
+  );
+  const movements = await db.query(
+    `
+      select inventory_movements.*, items.sku, items.title
+      from inventory_movements
+      join items on items.id = inventory_movements.item_id
+      where inventory_movements.tenant_id = $1 and inventory_movements.item_id = $2
+      order by inventory_movements.occurred_at desc
+      limit 50
+    `,
+    [tenantId, itemId],
+  );
+  const demand = await db.query(
+    `
+      select operations_orders.id as order_id, operations_orders.order_name,
+        operations_orders.customer_display_name, operations_order_lines.quantity,
+        operations_order_lines.unit, operations_order_lines.supply_status as status
+      from operations_order_lines
+      join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+      where operations_order_lines.tenant_id = $1
+        and operations_order_lines.item_id = $2
+        and operations_order_lines.supply_status <> 'cancelled'
+        and operations_orders.status in ('open', 'planned', 'in_progress')
+      order by operations_orders.created_at
+    `,
+    [tenantId, itemId],
+  );
+  const incoming = await db.query(
+    `
+      select purchase_orders.id as purchase_order_id, purchase_orders.display_number,
+        purchase_orders.status as purchase_order_status,
+        suppliers.name as supplier_name,
+        purchase_order_lines.quantity, purchase_order_lines.unit,
+        purchase_order_lines.expected_delivery_date
+      from purchase_order_lines
+      join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+      join suppliers on suppliers.id = purchase_orders.supplier_id
+      where purchase_order_lines.tenant_id = $1
+        and purchase_order_lines.item_id = $2
+        and purchase_order_lines.status = 'open'
+        and purchase_orders.status in ('draft', 'pending_approval', 'approved', 'sent', 'acknowledged')
+      order by purchase_order_lines.expected_delivery_date nulls last, purchase_orders.created_at
+    `,
+    [tenantId, itemId],
+  );
+
+  return {
+    item: item.rows[0] ?? null,
+    balance: balance ?? null,
+    demand: demand.rows,
+    incoming: incoming.rows,
+    movements: movements.rows,
+  };
 }
 
 export async function postInventoryMovement(
@@ -3268,7 +4598,12 @@ export async function postInventoryMovement(
     "produce",
     "count_adjustment",
   ]);
-  const allowedLocations = new Set(["MAIN", "QC-HOLD", "QUARANTINE", "LOGISTICS-STAGE"]);
+  const allowedLocations = new Set([
+    "MAIN",
+    "QC-HOLD",
+    "QUARANTINE",
+    "LOGISTICS-STAGE",
+  ]);
   const movementType = input.movementType;
   const locationCode = input.locationCode || "MAIN";
   const quantity = Number(input.quantity);
@@ -3283,7 +4618,8 @@ export async function postInventoryMovement(
     throw new Error("Select a product and enter a positive quantity.");
   }
 
-  const reference = input.reference.trim() || `${movementType}:${new Date().toISOString()}`;
+  const reference =
+    input.reference.trim() || `${movementType}:${new Date().toISOString()}`;
   const idempotencyKey = `manual:${movementType}:${input.itemId}:${Date.now()}`;
 
   await db.query(

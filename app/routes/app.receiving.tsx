@@ -8,6 +8,7 @@ import {
   loadReceivablePurchaseOrders,
   loadReceipts,
   postGoodsReceiptForAcknowledgedPurchaseOrders,
+  putawayReceiptLine,
 } from "../lib/operations-kit.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -54,6 +55,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     };
   }
 
+  if (intent === "putawayReceiptLine") {
+    const result = await putawayReceiptLine(
+      context.pool,
+      context.ctx.tenantId,
+      String(form.get("goodsReceiptLineId")),
+    );
+    return {
+      message: `${result.putaway} unit(s) put away into MAIN inventory.`,
+    };
+  }
+
   return { message: "No action was performed." };
 };
 
@@ -70,8 +82,8 @@ export default function Receiving() {
       <s-section>
         <s-paragraph>
           Receiving turns acknowledged purchase orders into goods receipts. QC
-          keeps material on hold until accepted. Accepted quantity is put away;
-          rejected quantity is moved to quarantine.
+          keeps material on hold until accepted. Accepted quantity creates a
+          putaway task; rejected quantity is moved to quarantine.
         </s-paragraph>
         {actionData?.message ? (
           <s-box padding="base" borderWidth="base" borderRadius="base">
@@ -142,6 +154,12 @@ export default function Receiving() {
                   />
                   <s-button type="submit">Complete QC</s-button>
                 </s-stack>
+              </Form>
+            ) : line.status === "accepted" ? (
+              <Form method="post">
+                <input type="hidden" name="intent" value="putawayReceiptLine" />
+                <input type="hidden" name="goodsReceiptLineId" value={line.id} />
+                <s-button variant="primary" type="submit">Put away</s-button>
               </Form>
             ) : (
               "Completed"

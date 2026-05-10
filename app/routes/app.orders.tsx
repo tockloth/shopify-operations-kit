@@ -45,7 +45,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent === "runOperationsMrp") {
     const result = await runOperationsMrp(context.pool, context.ctx.tenantId);
     return {
-      message: `Planning run created for ${result.orderLines} open order line(s). Open BOM / MRP to review and commit production and procurement needs.`,
+      message: `Planning run created for ${result.orderLines} open order line(s). Open Procurement to review and create purchase orders for trading goods.`,
     };
   }
 
@@ -168,6 +168,7 @@ export default function Orders() {
             "Fulfillment",
             "Items",
             "Products",
+            "Availability",
             "Operations",
             "Shopify",
             "Privacy",
@@ -187,6 +188,17 @@ export default function Orders() {
               </MoneylessBadge>,
               `${Number(order.line_count ?? 0).toLocaleString()} ${Number(order.line_count ?? 0) === 1 ? "item" : "items"}`,
               order.skus ?? "No lines",
+              <MoneylessBadge
+                tone={
+                  order.stock_state === "available"
+                    ? "success"
+                    : order.stock_state === "incoming"
+                      ? "info"
+                      : "warning"
+                }
+              >
+                {order.stock_label ?? "unchecked"}
+              </MoneylessBadge>,
               <MoneylessBadge>{order.status}</MoneylessBadge>,
               shopifyOrderUrl(data.shopDomain ?? "", order.shopify_order_legacy_id) ? (
                 <a

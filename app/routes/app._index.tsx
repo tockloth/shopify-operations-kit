@@ -43,8 +43,8 @@ export default function Dashboard() {
         <s-stack direction="block" gap="base">
           <s-paragraph>
             Shopify bleibt fuehrend fuer Produkte, Varianten, Orders und Inventory.
-            Operations Kit plant daraus interne Arbeit: BOM, MRP, Einkauf,
-            Produktion, Warehouse-Aufgaben und operative Nachweise.
+            Operations Kit konzentriert sich jetzt auf Handelsware: Stammdaten,
+            Kundenauftraege, Bestand, Beschaffung und Versandvorbereitung.
           </s-paragraph>
         </s-stack>
       </s-section>
@@ -52,11 +52,10 @@ export default function Dashboard() {
       <s-section heading="Operational summary">
         <div className="kit-grid">
           <KpiCard label="Items" value={summary.items} href="/app/items" />
-          <KpiCard label="Active BOMs" value={summary.activeBoms} href="/app/boms" />
           <KpiCard
-            label="Latest MRP"
+            label="Latest planning run"
             value={summary.latestMrpRun?.status ?? "not run"}
-            href="/app/boms"
+            href="/app/procurement"
           />
           <KpiCard
             label="Open purchase needs"
@@ -64,26 +63,10 @@ export default function Dashboard() {
             href="/app/procurement"
           />
           <KpiCard
-            label="Open production needs"
-            value={summary.productionNeedsOpen}
-            href="/app/production"
-          />
-          <KpiCard
             label="Draft POs"
             value={summary.draftPurchaseOrders}
             href="/app/procurement"
           />
-          <KpiCard
-            label="Open pick tasks"
-            value={summary.openWarehouseTasks}
-            href="/app/warehouse"
-          />
-          <KpiCard
-            label="Receipts / QC"
-            value={`${summary.openReceipts}/${summary.openQcChecks}`}
-            href="/app/receiving"
-          />
-          <KpiCard label="Open cases" value={summary.openCases} href="/app/cases" />
         </div>
       </s-section>
 
@@ -100,29 +83,26 @@ export default function Dashboard() {
 
           <NextAction title="2. Classify items">
             <s-paragraph>
-              Mark variants as sellable products, produced assemblies or
-              purchased components. Maintain BOM, supplier, minimum stock,
-              default quantities and QC policy.
+              Mark variants as sellable and purchased. Maintain supplier,
+              minimum stock, lot size, lead time and receipt QC policy.
             </s-paragraph>
             <s-link href="/app/items">Open products</s-link>
           </NextAction>
 
           <NextAction title="3. Plan and approve">
             <s-paragraph>
-              Run MRP for open Shopify orders, commit needs, create purchase
-              orders with Procurement Manager approval, or production work with
-              production QC.
+              Plan purchasing needs for open Shopify orders and minimum stock,
+              assign suppliers, create purchase orders and approve them.
             </s-paragraph>
-            <s-link href="/app/boms">Run MRP</s-link>
             <s-link href="/app/procurement">Open procurement</s-link>
           </NextAction>
 
-          <NextAction title="4. Receive, produce, ship">
+          <NextAction title="4. Receive and ship">
             <s-paragraph>
-              Complete receiving QC, put away accepted stock, quarantine
-              rejected stock, execute production, and pack customer shipments.
+              Receive ordered goods, approve receipt QC later, keep inventory
+              visible and prepare customer shipments.
             </s-paragraph>
-            <s-link href="/app/receiving">Open receiving</s-link>
+            <s-link href="/app/inventory">Open inventory</s-link>
             <s-link href="/app/logistics">Open logistics</s-link>
           </NextAction>
         </div>
@@ -131,17 +111,12 @@ export default function Dashboard() {
       <s-section heading="Planning-to-work flow">
         <div className="kit-flow">
           {[
-            ["Items/BOM", "/app/items"],
-            ["Operations order", "/app/orders"],
-            ["MRP preview", "/app/boms"],
-            ["Needs", "/app/procurement"],
+            ["Products", "/app/items"],
+            ["Customer orders", "/app/orders"],
+            ["Inventory", "/app/inventory"],
+            ["Purchase needs", "/app/procurement"],
             ["Purchase order", "/app/procurement"],
-            ["Receiving/QC", "/app/receiving"],
-            ["Production order", "/app/production"],
-            ["Pick tasks", "/app/warehouse"],
             ["Shipping", "/app/logistics"],
-            ["Inventory ledger", "/app/inventory"],
-            ["Case evidence", "/app/cases"],
           ].map(([label, href]) => (
             <Link key={label} to={href}>
               <s-box padding="small" borderWidth="base" borderRadius="base">
@@ -161,12 +136,12 @@ export default function Dashboard() {
             </s-paragraph>
             <s-link href="/app/procurement">Open Procurement</s-link>
           </NextAction>
-          <NextAction title="Production and logistics">
+          <NextAction title="Inventory and logistics">
             <s-paragraph>
-              Production completes work and QC, then releases accepted quantity
-              either to inventory or directly toward logistics.
+              Inventory receives and reserves stock. Logistics prepares full or
+              partial deliveries for customer orders.
             </s-paragraph>
-            <s-link href="/app/production">Open Production</s-link>
+            <s-link href="/app/inventory">Open Inventory</s-link>
           </NextAction>
         </div>
       </s-section>
