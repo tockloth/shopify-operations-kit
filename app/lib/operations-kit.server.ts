@@ -3362,6 +3362,7 @@ export async function loadOperationsOrderLineDetail(
       with balances as (
         select
           item_id,
+          coalesce(sum(quantity_delta) filter (where location_code = 'MAIN'), 0) as physical_quantity,
           coalesce(sum(quantity_delta - reserved_delta) filter (where location_code = 'MAIN'), 0) as available_quantity,
           coalesce(sum(reserved_delta) filter (where location_code = 'MAIN'), 0) as reserved_quantity,
           coalesce(sum(quantity_delta) filter (where location_code = 'QC-HOLD'), 0) as qc_hold_quantity,
@@ -3380,16 +3381,45 @@ export async function loadOperationsOrderLineDetail(
           and operations_orders.status in ('open', 'planned', 'in_progress')
           and operations_order_lines.supply_status <> 'cancelled'
         group by operations_order_lines.item_id
+      ),
+      open_purchase_orders as (
+        select
+          purchase_order_lines.item_id,
+          coalesce(sum(purchase_order_lines.quantity), 0) as ordered_quantity
+        from purchase_order_lines
+        join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+        where purchase_order_lines.tenant_id = $1
+          and purchase_order_lines.status = 'open'
+          and purchase_orders.status in ('draft', 'pending_approval', 'approved', 'sent', 'acknowledged')
+        group by purchase_order_lines.item_id
+      ),
+      active_boms as (
+        select parent_item_id as item_id, count(*)::int as active_bom_count
+        from boms
+        where tenant_id = $1 and is_active
+        group by parent_item_id
       )
       select
         operations_order_lines.*,
         operations_orders.order_name,
         operations_orders.status as order_status,
+        operations_orders.customer_name,
+        operations_orders.customer_email,
+        operations_orders.customer_name_encrypted,
+        operations_orders.customer_email_encrypted,
         operations_orders.financial_status,
         operations_orders.fulfillment_status,
         operations_orders.processed_at,
+        operations_orders.shopify_order_gid,
+        operations_orders.shopify_order_legacy_id,
         items.sku as item_sku,
         items.title as item_title,
+        items.shopify_product_gid,
+        items.shopify_variant_gid,
+        items.shopify_product_legacy_id,
+        items.shopify_variant_legacy_id,
+        items.product_handle,
+        items.variant_title,
         items.item_type,
         items.is_sellable,
         items.is_purchasable,
@@ -3402,16 +3432,22 @@ export async function loadOperationsOrderLineDetail(
         items.qc_required_after_production,
         preferred.supplier_id as preferred_supplier_id,
         suppliers.name as preferred_supplier_name,
+        coalesce(balances.physical_quantity, 0) as physical_quantity,
         coalesce(balances.available_quantity, 0) as available_quantity,
         coalesce(balances.reserved_quantity, 0) as reserved_quantity,
         coalesce(balances.qc_hold_quantity, 0) as qc_hold_quantity,
         coalesce(balances.quarantine_quantity, 0) as quarantine_quantity,
-        coalesce(open_demand.open_order_quantity, 0) as open_order_quantity
+        coalesce(open_demand.open_order_quantity, 0) as open_order_quantity,
+        coalesce(open_purchase_orders.ordered_quantity, 0) as ordered_quantity,
+        coalesce(balances.available_quantity, 0) + coalesce(open_purchase_orders.ordered_quantity, 0) as planned_quantity,
+        coalesce(active_boms.active_bom_count, 0) as active_bom_count
       from operations_order_lines
       join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
       join items on items.id = operations_order_lines.item_id
       left join balances on balances.item_id = items.id
       left join open_demand on open_demand.item_id = items.id
+      left join open_purchase_orders on open_purchase_orders.item_id = items.id
+      left join active_boms on active_boms.item_id = items.id
       left join supplier_items preferred
         on preferred.item_id = items.id
         and preferred.tenant_id = items.tenant_id
@@ -3422,7 +3458,113 @@ export async function loadOperationsOrderLineDetail(
     [tenantId, lineId],
   );
 
-  return { line: line.rows[0] ?? null };
+  const lineRow = line.rows[0]
+    ? decryptOrderRow(line.rows[0] as CustomerEncryptedRow)
+    : null;
+
+  if (!lineRow) return { line: null };
+
+  const itemId = String(lineRow.item_id);
+  const procurement = await db.query(
+    `
+      select purchase_needs.id,
+        purchase_needs.status as purchase_need_status,
+        purchase_needs.quantity,
+        purchase_needs.unit,
+        suppliers.name as supplier_name,
+        purchase_orders.id as purchase_order_id,
+        purchase_orders.display_number as purchase_order_number,
+        purchase_orders.status as purchase_order_status,
+        goods_receipts.id as receipt_id,
+        goods_receipts.receipt_number,
+        goods_receipts.status as receipt_status
+      from purchase_needs
+      left join suppliers on suppliers.id = purchase_needs.supplier_id
+      left join purchase_order_lines on purchase_order_lines.purchase_need_id = purchase_needs.id
+      left join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+      left join goods_receipts on goods_receipts.purchase_order_id = purchase_orders.id
+      where purchase_needs.tenant_id = $1 and purchase_needs.item_id = $2
+      order by purchase_needs.created_at desc
+      limit 5
+    `,
+    [tenantId, itemId],
+  );
+
+  const receipts = await db.query(
+    `
+      select goods_receipts.id as receipt_id,
+        goods_receipts.receipt_number,
+        goods_receipts.status as receipt_status,
+        goods_receipts.received_at,
+        goods_receipt_lines.status as receipt_line_status,
+        goods_receipt_lines.received_quantity,
+        goods_receipt_lines.accepted_quantity,
+        goods_receipt_lines.rejected_quantity,
+        purchase_orders.id as purchase_order_id,
+        purchase_orders.display_number as purchase_order_number
+      from goods_receipt_lines
+      join goods_receipts on goods_receipts.id = goods_receipt_lines.goods_receipt_id
+      join purchase_order_lines on purchase_order_lines.id = goods_receipt_lines.purchase_order_line_id
+      join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+      where goods_receipt_lines.tenant_id = $1 and goods_receipt_lines.item_id = $2
+      order by goods_receipts.received_at desc
+      limit 5
+    `,
+    [tenantId, itemId],
+  );
+
+  const inventoryMovements = await db.query(
+    `
+      select inventory_movements.*
+      from inventory_movements
+      where inventory_movements.tenant_id = $1 and inventory_movements.item_id = $2
+      order by inventory_movements.occurred_at desc
+      limit 10
+    `,
+    [tenantId, itemId],
+  );
+
+  const production = await db.query(
+    `
+      select production_needs.id,
+        production_needs.status as production_need_status,
+        production_needs.quantity,
+        production_needs.unit,
+        production_orders.id as production_order_id,
+        production_orders.display_number as production_order_number,
+        production_orders.status as production_order_status
+      from production_needs
+      left join production_orders on production_orders.production_need_id = production_needs.id
+      where production_needs.tenant_id = $1 and production_needs.item_id = $2
+      order by production_needs.created_at desc
+      limit 5
+    `,
+    [tenantId, itemId],
+  );
+
+  const logistics = await db.query(
+    `
+      select shipping_order_lines.*,
+        shipping_orders.shipment_number,
+        shipping_orders.status as shipping_order_status
+      from shipping_order_lines
+      join shipping_orders on shipping_orders.id = shipping_order_lines.shipping_order_id
+      where shipping_order_lines.tenant_id = $1
+        and shipping_order_lines.operations_order_line_id = $2
+      order by shipping_order_lines.created_at desc
+      limit 5
+    `,
+    [tenantId, lineId],
+  );
+
+  return {
+    line: lineRow,
+    procurement: procurement.rows,
+    receipts: receipts.rows,
+    inventoryMovements: inventoryMovements.rows,
+    production: production.rows,
+    logistics: logistics.rows,
+  };
 }
 
 export async function createPurchaseNeedForOrderLine(
