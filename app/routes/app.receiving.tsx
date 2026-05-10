@@ -4,11 +4,9 @@ import { Form, useActionData, useLoaderData } from "react-router";
 import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
 import {
-  completeReceiptLineQc,
   loadReceivablePurchaseOrders,
   loadReceipts,
   postGoodsReceiptForAcknowledgedPurchaseOrders,
-  putawayReceiptLine,
 } from "../lib/operations-kit.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -43,31 +41,32 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     };
   }
 
-  if (intent === "completeLineQc") {
-    const result = await completeReceiptLineQc(context.pool, context.ctx.tenantId, {
-      goodsReceiptLineId: String(form.get("goodsReceiptLineId")),
-      acceptedQuantity: Number(form.get("acceptedQuantity") || 0),
-      rejectedQuantity: Number(form.get("rejectedQuantity") || 0),
-      notes: String(form.get("notes") || ""),
-    });
-    return {
-      message: `QC completed: ${result.accepted} accepted, ${result.rejected} quarantined.`,
-    };
-  }
-
-  if (intent === "putawayReceiptLine") {
-    const result = await putawayReceiptLine(
-      context.pool,
-      context.ctx.tenantId,
-      String(form.get("goodsReceiptLineId")),
-    );
-    return {
-      message: `${result.putaway} unit(s) put away into MAIN inventory.`,
-    };
-  }
-
   return { message: "No action was performed." };
 };
+
+function formatDate(value: unknown) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString();
+}
+
+function nextReceiptAction(receipt: any, lines: any[]) {
+  if (receipt.status === "closed") return "Complete";
+  if (
+    lines.some(
+      (line) =>
+        line.qc_status === "open" ||
+        line.qc_status === "in_progress" ||
+        line.status === "qc_hold",
+    )
+  ) {
+    return "QC";
+  }
+  if (lines.some((line) => line.status === "accepted")) return "Putaway";
+  if (receipt.status === "cancelled") return "Cancelled";
+  return "Review";
+}
 
 export default function Receiving() {
   const data = useLoaderData<typeof loader>();
@@ -76,14 +75,21 @@ export default function Receiving() {
     return <SetupBanner message={data.setupError ?? "Database setup is incomplete."} />;
   }
   const receiving = data.receiving ?? { receipts: [], lines: [] };
+  const linesByReceipt = new Map<string, any[]>();
+  for (const line of (receiving.lines ?? []) as any[]) {
+    const receiptLines = linesByReceipt.get(line.goods_receipt_id) ?? [];
+    receiptLines.push(line);
+    linesByReceipt.set(line.goods_receipt_id, receiptLines);
+  }
+  const readyPurchaseOrders = data.receivablePurchaseOrders ?? [];
+  const firstReadyPurchaseOrder = readyPurchaseOrders[0] as any;
 
   return (
-    <s-page heading="Receiving and QC">
+    <s-page heading="Receiving">
       <s-section>
         <s-paragraph>
-          Receiving turns acknowledged purchase orders into goods receipts. QC
-          keeps material on hold until accepted. Accepted quantity creates a
-          putaway task; rejected quantity is moved to quarantine.
+          Track posted receipts and open each receipt to complete QC and
+          putaway work.
         </s-paragraph>
         {actionData?.message ? (
           <s-box padding="base" borderWidth="base" borderRadius="base">
@@ -93,77 +99,76 @@ export default function Receiving() {
       </s-section>
 
       <s-section heading="Ready to receive">
-        <DataTable
-          headings={["PO", "Supplier", "Lines", "Status", "Action"]}
-          rows={(data.receivablePurchaseOrders ?? []).map((po: any) => [
-            <strong>{po.display_number}</strong>,
-            po.supplier_name,
-            po.line_count,
-            <MoneylessBadge>{po.status}</MoneylessBadge>,
+        {readyPurchaseOrders.length > 0 ? (
+          <s-stack direction="block" gap="base">
+            <DataTable
+              headings={["Purchase Order", "Supplier", "Lines", "Status"]}
+              rows={readyPurchaseOrders.map((po: any) => ({
+                id: po.id,
+                href: `/app/procurement/${po.id}`,
+                cells: [
+                  <strong>{po.display_number}</strong>,
+                  po.supplier_name,
+                  po.line_count,
+                  <MoneylessBadge>{po.status}</MoneylessBadge>,
+                ],
+              }))}
+            />
             <Form method="post">
               <input type="hidden" name="intent" value="receive" />
-              <input type="hidden" name="purchaseOrderId" value={po.id} />
-              <s-button variant="primary" type="submit">Post receipt</s-button>
-            </Form>,
-          ])}
-        />
+              <s-stack direction="inline" gap="small">
+                <s-select
+                  label="Purchase Order"
+                  name="purchaseOrderId"
+                  value={firstReadyPurchaseOrder?.id ?? ""}
+                >
+                  {readyPurchaseOrders.map((po: any) => (
+                    <s-option key={po.id} value={po.id}>
+                      {po.display_number} · {po.supplier_name}
+                    </s-option>
+                  ))}
+                </s-select>
+                <s-button variant="primary" type="submit">
+                  Post receipt
+                </s-button>
+              </s-stack>
+            </Form>
+          </s-stack>
+        ) : (
+          <s-box padding="base" borderWidth="base" borderRadius="base">
+            <s-paragraph>No purchase orders are ready to receive.</s-paragraph>
+          </s-box>
+        )}
       </s-section>
 
       <s-section heading="Goods receipts">
         <DataTable
-          headings={["Receipt", "Purchase order", "Supplier", "Status", "Lines"]}
+          headings={[
+            "Receipt",
+            "Purchase Order",
+            "Supplier",
+            "Status",
+            "Received",
+            "Lines",
+            "Next action",
+            "Detail",
+          ]}
           rows={(receiving.receipts ?? []).map((receipt: any) => [
             <strong>{receipt.receipt_number}</strong>,
-            receipt.purchase_order_number,
+            <s-link href={`/app/procurement/${receipt.purchase_order_id}`}>
+              {receipt.purchase_order_number}
+            </s-link>,
             receipt.supplier_name,
             <MoneylessBadge>{receipt.status}</MoneylessBadge>,
+            formatDate(receipt.received_at ?? receipt.created_at),
             receipt.line_count,
-          ])}
-        />
-      </s-section>
-
-      <s-section heading="Receipt lines and QC">
-        <DataTable
-          headings={["Item", "Received", "Accepted / rejected", "Line status", "QC", "Action"]}
-          rows={(receiving.lines ?? []).map((line: any) => [
-            <strong>{line.sku} {line.title}</strong>,
-            `${Number(line.received_quantity).toLocaleString()} ${line.unit}`,
-            `${Number(line.accepted_quantity).toLocaleString()} / ${Number(line.rejected_quantity).toLocaleString()}`,
-            <MoneylessBadge>{line.status}</MoneylessBadge>,
-            `${line.qc_status ?? "not required"} · ${line.qc_result ?? "pending"}`,
-            line.qc_status === "open" || line.qc_status === "in_progress" ? (
-              <Form method="post">
-                <input type="hidden" name="intent" value="completeLineQc" />
-                <input type="hidden" name="goodsReceiptLineId" value={line.id} />
-                <s-stack direction="inline" gap="small">
-                  <input
-                    aria-label="Accepted quantity"
-                    name="acceptedQuantity"
-                    type="number"
-                    min="0"
-                    step="1"
-                    defaultValue={line.received_quantity}
-                  />
-                  <input
-                    aria-label="Rejected quantity"
-                    name="rejectedQuantity"
-                    type="number"
-                    min="0"
-                    step="1"
-                    defaultValue="0"
-                  />
-                  <s-button type="submit">Complete QC</s-button>
-                </s-stack>
-              </Form>
-            ) : line.status === "accepted" ? (
-              <Form method="post">
-                <input type="hidden" name="intent" value="putawayReceiptLine" />
-                <input type="hidden" name="goodsReceiptLineId" value={line.id} />
-                <s-button variant="primary" type="submit">Put away</s-button>
-              </Form>
-            ) : (
-              "Completed"
+            nextReceiptAction(
+              receipt,
+              linesByReceipt.get(receipt.id) ?? [],
             ),
+            <s-link href={`/app/receiving/${receipt.id}`}>
+              Open receipt
+            </s-link>,
           ])}
         />
       </s-section>

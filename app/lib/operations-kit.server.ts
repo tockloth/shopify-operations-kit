@@ -4424,6 +4424,46 @@ export async function loadReceipts(db: QueryExecutor, tenantId: string) {
   return { receipts: receipts.rows, lines: lines.rows };
 }
 
+export async function loadReceiptDetail(
+  db: QueryExecutor,
+  tenantId: string,
+  receiptId: string,
+) {
+  const receipt = await db.query(
+    `
+      select goods_receipts.*, purchase_orders.id as purchase_order_id,
+        purchase_orders.display_number as purchase_order_number,
+        suppliers.name as supplier_name
+      from goods_receipts
+      join purchase_orders on purchase_orders.id = goods_receipts.purchase_order_id
+      join suppliers on suppliers.id = purchase_orders.supplier_id
+      where goods_receipts.tenant_id = $1 and goods_receipts.id = $2
+    `,
+    [tenantId, receiptId],
+  );
+  const lines = await db.query(
+    `
+      select goods_receipt_lines.*, items.sku, items.title,
+        qc_checks.status as qc_status, qc_checks.result as qc_result,
+        qc_checks.notes as qc_notes, qc_checks.completed_at as qc_completed_at,
+        warehouse_tasks.status as putaway_task_status
+      from goods_receipt_lines
+      join items on items.id = goods_receipt_lines.item_id
+      left join qc_checks on qc_checks.goods_receipt_line_id = goods_receipt_lines.id
+      left join warehouse_tasks on warehouse_tasks.tenant_id = goods_receipt_lines.tenant_id
+        and warehouse_tasks.task_type = 'putaway'
+        and warehouse_tasks.source_type = 'goods_receipt_line'
+        and warehouse_tasks.source_id = goods_receipt_lines.id
+      where goods_receipt_lines.tenant_id = $1
+        and goods_receipt_lines.goods_receipt_id = $2
+      order by items.sku
+    `,
+    [tenantId, receiptId],
+  );
+
+  return { receipt: receipt.rows[0] ?? null, lines: lines.rows };
+}
+
 export async function loadInventoryLedger(db: QueryExecutor, tenantId: string) {
   const balances = await db.query(
     `
