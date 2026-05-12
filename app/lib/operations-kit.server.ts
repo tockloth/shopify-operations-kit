@@ -2934,13 +2934,21 @@ export async function loadItemDetail(
       with balances as (
         select
           item_id,
+          coalesce(sum(quantity_delta) filter (where location_code = 'MAIN'), 0) as physical_quantity,
           coalesce(sum(quantity_delta - reserved_delta) filter (where location_code = 'MAIN'), 0) as available_quantity,
-          coalesce(sum(reserved_delta) filter (where location_code = 'MAIN'), 0) as reserved_quantity
+          coalesce(sum(reserved_delta) filter (where location_code = 'MAIN'), 0) as reserved_quantity,
+          coalesce(sum(quantity_delta) filter (where location_code = 'QC-HOLD'), 0) as qc_hold_quantity,
+          coalesce(sum(quantity_delta) filter (where location_code = 'QUARANTINE'), 0) as quarantine_quantity
         from inventory_movements
         where tenant_id = $1
         group by item_id
       )
-      select items.*, coalesce(balances.available_quantity, 0) as available_quantity, coalesce(balances.reserved_quantity, 0) as reserved_quantity
+      select items.*,
+        coalesce(balances.physical_quantity, 0) as physical_quantity,
+        coalesce(balances.available_quantity, 0) as available_quantity,
+        coalesce(balances.reserved_quantity, 0) as reserved_quantity,
+        coalesce(balances.qc_hold_quantity, 0) as qc_hold_quantity,
+        coalesce(balances.quarantine_quantity, 0) as quarantine_quantity
       from items
       left join balances on balances.item_id = items.id
       where items.tenant_id = $1 and items.id = $2
@@ -2999,6 +3007,66 @@ export async function loadItemDetail(
     `,
     [tenantId],
   );
+  const orderLines = await db.query(
+    `
+      select
+        operations_order_lines.id,
+        operations_order_lines.quantity,
+        operations_order_lines.unit,
+        operations_order_lines.supply_status,
+        operations_orders.id as operations_order_id,
+        operations_orders.order_name,
+        operations_orders.status as order_status,
+        operations_orders.fulfillment_status
+      from operations_order_lines
+      join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+      where operations_order_lines.tenant_id = $1
+        and operations_order_lines.item_id = $2
+        and operations_order_lines.supply_status <> 'cancelled'
+        and operations_orders.status in ('open', 'planned', 'in_progress')
+      order by operations_orders.processed_at desc nulls last,
+        operations_orders.created_at desc
+      limit 8
+    `,
+    [tenantId, itemId],
+  );
+  const purchaseWork = await db.query(
+    `
+      select purchase_needs.id,
+        purchase_needs.status as purchase_need_status,
+        purchase_needs.quantity,
+        purchase_needs.unit,
+        suppliers.name as supplier_name,
+        purchase_orders.id as purchase_order_id,
+        purchase_orders.display_number as purchase_order_number,
+        purchase_orders.status as purchase_order_status
+      from purchase_needs
+      left join suppliers on suppliers.id = purchase_needs.supplier_id
+      left join purchase_order_lines on purchase_order_lines.purchase_need_id = purchase_needs.id
+      left join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+      where purchase_needs.tenant_id = $1 and purchase_needs.item_id = $2
+      order by purchase_needs.created_at desc
+      limit 8
+    `,
+    [tenantId, itemId],
+  );
+  const productionWork = await db.query(
+    `
+      select production_needs.id,
+        production_needs.status as production_need_status,
+        production_needs.quantity,
+        production_needs.unit,
+        production_orders.id as production_order_id,
+        production_orders.display_number as production_order_number,
+        production_orders.status as production_order_status
+      from production_needs
+      left join production_orders on production_orders.production_need_id = production_needs.id
+      where production_needs.tenant_id = $1 and production_needs.item_id = $2
+      order by production_needs.created_at desc
+      limit 8
+    `,
+    [tenantId, itemId],
+  );
 
   return {
     item: item.rows[0] ?? null,
@@ -3006,6 +3074,9 @@ export async function loadItemDetail(
     suppliers: suppliers.rows,
     allSuppliers: allSuppliers.rows,
     availableComponents: components.rows,
+    orderLines: orderLines.rows,
+    purchaseWork: purchaseWork.rows,
+    productionWork: productionWork.rows,
   };
 }
 
@@ -3026,6 +3097,16 @@ export async function updateItemOperationsProperties(
     qcRequiredAfterProduction: boolean;
   },
 ) {
+  const allowedItemTypes = new Set([
+    "product",
+    "component",
+    "raw_material",
+    "assembly",
+  ]);
+  if (!allowedItemTypes.has(input.itemType)) {
+    throw new Error("Unsupported product type.");
+  }
+
   await db.query(
     `
       update items
@@ -3211,21 +3292,11 @@ export async function loadOperationsOrdersList(
         with movement_balances as (
           select
             inventory_movements.item_id,
-            coalesce(sum(inventory_movements.quantity_delta) filter (where inventory_movements.location_code = 'MAIN'), 0) as physical_quantity
+            coalesce(sum(inventory_movements.quantity_delta) filter (where inventory_movements.location_code = 'MAIN'), 0) as physical_quantity,
+            coalesce(sum(inventory_movements.quantity_delta - inventory_movements.reserved_delta) filter (where inventory_movements.location_code = 'MAIN'), 0) as available_quantity
           from inventory_movements
           where inventory_movements.tenant_id = $1
           group by inventory_movements.item_id
-        ),
-        customer_demand as (
-          select
-            operations_order_lines.item_id,
-            coalesce(sum(operations_order_lines.quantity), 0) as reserved_quantity
-          from operations_order_lines
-          join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
-          where operations_order_lines.tenant_id = $1
-            and operations_order_lines.supply_status <> 'cancelled'
-            and operations_orders.status in ('open', 'planned', 'in_progress')
-          group by operations_order_lines.item_id
         ),
         open_purchase_orders as (
           select
@@ -3242,35 +3313,150 @@ export async function loadOperationsOrdersList(
           select
             items.id as item_id,
             coalesce(movement_balances.physical_quantity, 0) as physical_quantity,
-            coalesce(customer_demand.reserved_quantity, 0) as reserved_quantity,
+            coalesce(movement_balances.available_quantity, 0) as available_quantity,
             coalesce(open_purchase_orders.ordered_quantity, 0) as ordered_quantity,
-            coalesce(movement_balances.physical_quantity, 0)
-              - coalesce(customer_demand.reserved_quantity, 0) as available_quantity,
-            coalesce(movement_balances.physical_quantity, 0)
-              - coalesce(customer_demand.reserved_quantity, 0)
+            coalesce(movement_balances.available_quantity, 0)
               + coalesce(open_purchase_orders.ordered_quantity, 0) as planned_quantity
           from items
           left join movement_balances on movement_balances.item_id = items.id
-          left join customer_demand on customer_demand.item_id = items.id
           left join open_purchase_orders on open_purchase_orders.item_id = items.id
           where items.tenant_id = $1
         ),
+        item_procurement as (
+          select item_id, count(*)::int as procurement_count
+          from purchase_needs
+          where tenant_id = $1
+          group by item_id
+        ),
+        item_receipts as (
+          select goods_receipt_lines.item_id, count(*)::int as receipt_count
+          from goods_receipt_lines
+          where goods_receipt_lines.tenant_id = $1
+          group by goods_receipt_lines.item_id
+        ),
+        item_production as (
+          select item_id, count(*)::int as production_count
+          from production_needs
+          where tenant_id = $1
+          group by item_id
+        ),
+        line_logistics as (
+          select
+            shipping_order_lines.operations_order_line_id,
+            count(*)::int as logistics_count,
+            string_agg(distinct shipping_orders.shipment_number, ', ' order by shipping_orders.shipment_number) as shipment_numbers
+          from shipping_order_lines
+          join shipping_orders on shipping_orders.id = shipping_order_lines.shipping_order_id
+          where shipping_order_lines.tenant_id = $1
+          group by shipping_order_lines.operations_order_line_id
+        ),
+        line_context as (
+          select
+            operations_order_lines.id,
+            operations_order_lines.operations_order_id,
+            operations_order_lines.item_id,
+            operations_order_lines.quantity,
+            operations_order_lines.supply_status,
+            coalesce(operations_order_lines.sku, items.sku) as sku,
+            items.is_sellable,
+            items.is_purchasable,
+            items.is_producible,
+            coalesce(item_availability.available_quantity, 0) as available_quantity,
+            coalesce(item_availability.planned_quantity, 0) as planned_quantity,
+            coalesce(item_procurement.procurement_count, 0) > 0
+              or coalesce(item_receipts.receipt_count, 0) > 0 as has_procurement,
+            coalesce(item_production.production_count, 0) > 0 as has_production,
+            coalesce(line_logistics.logistics_count, 0) > 0 as has_logistics,
+            line_logistics.shipment_numbers
+          from operations_order_lines
+          join items on items.id = operations_order_lines.item_id
+          left join item_availability on item_availability.item_id = operations_order_lines.item_id
+          left join item_procurement on item_procurement.item_id = operations_order_lines.item_id
+          left join item_receipts on item_receipts.item_id = operations_order_lines.item_id
+          left join item_production on item_production.item_id = operations_order_lines.item_id
+          left join line_logistics on line_logistics.operations_order_line_id = operations_order_lines.id
+          where operations_order_lines.tenant_id = $1
+        ),
+        line_decisions as (
+          select
+            line_context.*,
+            (
+              not line_context.is_sellable
+              and not line_context.is_purchasable
+              and not line_context.is_producible
+            ) as master_data_missing,
+            (
+              line_context.has_procurement
+              or line_context.has_production
+              or line_context.has_logistics
+            ) as has_work,
+            (
+              line_context.supply_status = 'reserved'
+              or line_context.available_quantity >= line_context.quantity
+            ) as stock_ready
+          from line_context
+        ),
         order_summary as (
           select
-            operations_order_lines.operations_order_id,
-            count(operations_order_lines.id)::int as line_count,
-            string_agg(coalesce(operations_order_lines.sku, items.sku), ', ' order by coalesce(operations_order_lines.sku, items.sku)) as skus,
-            coalesce(sum(greatest(0, operations_order_lines.quantity - coalesce(item_availability.available_quantity, 0))), 0) as shortage_quantity,
-            coalesce(sum(greatest(0, operations_order_lines.quantity - coalesce(item_availability.planned_quantity, 0))), 0) as planned_shortage_quantity
-          from operations_order_lines
-          left join items on items.id = operations_order_lines.item_id
-          left join item_availability on item_availability.item_id = operations_order_lines.item_id
-          where operations_order_lines.tenant_id = $1
-          group by operations_order_lines.operations_order_id
+            line_decisions.operations_order_id,
+            count(line_decisions.id)::int as line_count,
+            string_agg(line_decisions.sku, ', ' order by line_decisions.sku) as skus,
+            coalesce(sum(greatest(0, line_decisions.quantity - line_decisions.available_quantity)), 0) as shortage_quantity,
+            coalesce(sum(greatest(0, line_decisions.quantity - line_decisions.planned_quantity)), 0) as planned_shortage_quantity,
+            (count(*) filter (
+              where line_decisions.master_data_missing
+                or (
+                  not line_decisions.has_work
+                  and not line_decisions.stock_ready
+                  and not line_decisions.is_purchasable
+                  and not line_decisions.is_producible
+                )
+            ))::int as review_lines,
+            (count(*) filter (
+              where line_decisions.has_procurement
+                or (
+                  not line_decisions.master_data_missing
+                  and not line_decisions.has_work
+                  and not line_decisions.stock_ready
+                  and line_decisions.is_purchasable
+                )
+            ))::int as procurement_lines,
+            (count(*) filter (
+              where line_decisions.has_production
+                or (
+                  not line_decisions.master_data_missing
+                  and not line_decisions.has_work
+                  and not line_decisions.stock_ready
+                  and not line_decisions.is_purchasable
+                  and line_decisions.is_producible
+                )
+            ))::int as production_lines,
+            (count(*) filter (
+              where not line_decisions.master_data_missing
+                and not line_decisions.has_work
+                and line_decisions.stock_ready
+            ))::int as ready_lines,
+            (count(*) filter (
+              where line_decisions.has_work
+            ))::int as in_progress_lines,
+            (count(*) filter (
+              where line_decisions.has_logistics
+            ))::int as logistics_lines,
+            string_agg(distinct line_decisions.shipment_numbers, ', ' order by line_decisions.shipment_numbers)
+              filter (where line_decisions.shipment_numbers is not null) as shipment_numbers
+          from line_decisions
+          group by line_decisions.operations_order_id
         )
         select operations_orders.*,
           coalesce(order_summary.line_count, 0)::int as line_count,
           order_summary.skus,
+          coalesce(order_summary.review_lines, 0)::int as review_lines,
+          coalesce(order_summary.procurement_lines, 0)::int as procurement_lines,
+          coalesce(order_summary.production_lines, 0)::int as production_lines,
+          coalesce(order_summary.ready_lines, 0)::int as ready_lines,
+          coalesce(order_summary.in_progress_lines, 0)::int as in_progress_lines,
+          coalesce(order_summary.logistics_lines, 0)::int as logistics_lines,
+          order_summary.shipment_numbers,
           case
             when coalesce(order_summary.line_count, 0) = 0 then 'unchecked'
             when coalesce(order_summary.shortage_quantity, 0) <= 0 then 'available'
@@ -3282,7 +3468,54 @@ export async function loadOperationsOrdersList(
             when coalesce(order_summary.shortage_quantity, 0) <= 0 then 'Available'
             when coalesce(order_summary.planned_shortage_quantity, 0) <= 0 then 'Incoming covers'
             else concat('Short ', trim(to_char(order_summary.planned_shortage_quantity, 'FM999999990.####')))
-          end as stock_label
+          end as stock_label,
+          case
+            when coalesce(order_summary.review_lines, 0) > 0 then 'Review required'
+            when coalesce(order_summary.procurement_lines, 0) > 0 then 'Procurement in progress'
+            when coalesce(order_summary.production_lines, 0) > 0 then 'Production in progress'
+            when coalesce(order_summary.line_count, 0) > 0
+              and coalesce(order_summary.ready_lines, 0) = coalesce(order_summary.line_count, 0)
+              then 'Ready for logistics'
+            else 'In progress'
+          end as operational_status,
+          case
+            when coalesce(order_summary.review_lines, 0) > 0 then 'critical'
+            when coalesce(order_summary.procurement_lines, 0) > 0 then 'warning'
+            when coalesce(order_summary.production_lines, 0) > 0 then 'warning'
+            when coalesce(order_summary.line_count, 0) > 0
+              and coalesce(order_summary.ready_lines, 0) = coalesce(order_summary.line_count, 0)
+              then 'success'
+            else 'info'
+          end as operational_status_tone,
+          case
+            when coalesce(order_summary.review_lines, 0) > 0
+              then 'At least one order line is missing operational product data.'
+            when coalesce(order_summary.procurement_lines, 0) > 0
+              then 'At least one line needs procurement or has procurement/receiving work.'
+            when coalesce(order_summary.production_lines, 0) > 0
+              then 'At least one line needs production or has production work.'
+            when coalesce(order_summary.line_count, 0) > 0
+              and coalesce(order_summary.ready_lines, 0) = coalesce(order_summary.line_count, 0)
+              then 'All lines are ready from stock or already reserved.'
+            else 'Operations Kit has partial context for this order. Review line decisions.'
+          end as next_reason,
+          case
+            when coalesce(order_summary.review_lines, 0) > 0 then 'Review order lines'
+            when coalesce(order_summary.procurement_lines, 0) > 0 then 'Open Procurement'
+            when coalesce(order_summary.production_lines, 0) > 0 then 'Open Production'
+            when coalesce(order_summary.line_count, 0) > 0
+              and coalesce(order_summary.ready_lines, 0) = coalesce(order_summary.line_count, 0)
+              then 'Open Logistics'
+            else 'Review order lines'
+          end as next_action_label,
+          case
+            when coalesce(order_summary.procurement_lines, 0) > 0 then '/app/procurement'
+            when coalesce(order_summary.production_lines, 0) > 0 then '/app/production'
+            when coalesce(order_summary.line_count, 0) > 0
+              and coalesce(order_summary.ready_lines, 0) = coalesce(order_summary.line_count, 0)
+              then '/app/logistics'
+            else concat('/app/orders/', operations_orders.id)
+          end as next_action_href
         from operations_orders
         left join order_summary on order_summary.operations_order_id = operations_orders.id
         where operations_orders.tenant_id = $1

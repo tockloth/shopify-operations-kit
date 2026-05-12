@@ -106,14 +106,20 @@ function shopifyOrderUrl(shopDomain: string, legacyId?: string | null) {
   return `https://admin.shopify.com/store/${shop}/orders/${legacyId}`;
 }
 
-function formatDate(value?: string | null) {
-  if (!value) return "No date";
-  return new Intl.DateTimeFormat("en", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
+function statusTone(status?: string | null) {
+  if (status === "Review required") return "critical";
+  if (status === "Ready for logistics") return "success";
+  if (status === "Procurement in progress" || status === "Production in progress") {
+    return "warning";
+  }
+  return "info";
+}
+
+function compactSkus(value?: string | null) {
+  if (!value) return "No products";
+  const skus = value.split(", ").filter(Boolean);
+  if (skus.length <= 3) return value;
+  return `${skus.slice(0, 3).join(", ")} +${skus.length - 3} more`;
 }
 
 export default function Orders() {
@@ -123,15 +129,23 @@ export default function Orders() {
     return <SetupBanner message={data.setupError ?? "Database setup is incomplete."} />;
   }
 
+  const orders = data.orders ?? [];
+  const statusCounts = {
+    review: orders.filter((order: any) => order.operational_status === "Review required").length,
+    procurement: orders.filter((order: any) => order.operational_status === "Procurement in progress").length,
+    production: orders.filter((order: any) => order.operational_status === "Production in progress").length,
+    ready: orders.filter((order: any) => order.operational_status === "Ready for logistics").length,
+    inProgress: orders.filter((order: any) => order.operational_status === "In progress").length,
+  };
+
   return (
     <s-page heading="Orders">
       <s-section>
         <div className="kit-toolbar">
           <div>
-            <s-heading>Operations orders</s-heading>
+            <s-heading>Orders</s-heading>
             <div className="kit-list-summary">
-              Shopify orders enriched for MRP, procurement, production, QC,
-              inventory and logistics.
+              Review Shopify orders and see what operational work is needed.
             </div>
           </div>
           <div className="kit-toolbar-actions">
@@ -159,70 +173,92 @@ export default function Orders() {
             <s-paragraph>{actionData.message}</s-paragraph>
           </s-box>
         ) : null}
+      </s-section>
+
+      <s-section heading="Operational status">
         <DataTable
           headings={[
-            "Order",
-            "Date",
-            "Customer",
-            "Payment status",
-            "Fulfillment",
-            "Items",
-            "Products",
-            "Availability",
-            "Operations",
-            "Shopify",
-            "Privacy",
+            "Review required",
+            "Procurement in progress",
+            "Production in progress",
+            "Ready for logistics",
+            "In progress",
           ]}
-          rows={(data.orders ?? []).map((order: any) => ({
-            id: order.id,
-            href: `/app/orders/${order.id}`,
-            cells: [
-              <strong>{order.order_name}</strong>,
-              formatDate(order.processed_at ?? order.created_at),
-              order.customer_name ?? "No customer",
-              <MoneylessBadge tone={order.financial_status === "PAID" ? "success" : "neutral"}>
-                {order.financial_status ?? "unknown"}
-              </MoneylessBadge>,
-              <MoneylessBadge tone={order.fulfillment_status === "FULFILLED" ? "success" : "warning"}>
-                {order.fulfillment_status ?? "unfulfilled"}
-              </MoneylessBadge>,
-              `${Number(order.line_count ?? 0).toLocaleString()} ${Number(order.line_count ?? 0) === 1 ? "item" : "items"}`,
-              order.skus ?? "No lines",
-              <MoneylessBadge
-                tone={
-                  order.stock_state === "available"
-                    ? "success"
-                    : order.stock_state === "incoming"
-                      ? "info"
-                      : "warning"
-                }
-              >
-                {order.stock_label ?? "unchecked"}
-              </MoneylessBadge>,
-              <MoneylessBadge>{order.status}</MoneylessBadge>,
-              shopifyOrderUrl(data.shopDomain ?? "", order.shopify_order_legacy_id) ? (
-                <a
-                  href={shopifyOrderUrl(data.shopDomain ?? "", order.shopify_order_legacy_id)!}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open in Shopify
-                </a>
-              ) : (
-                "Not synced"
-              ),
-              order.customer_data_redacted_at ? (
-                "Redacted"
-              ) : (
-                <Form method="post" onClick={(event) => event.stopPropagation()}>
-                  <input type="hidden" name="intent" value="redactCustomerData" />
-                  <input type="hidden" name="orderId" value={order.id} />
-                  <s-button type="submit">Delete customer data</s-button>
-                </Form>
-              ),
+          rows={[
+            [
+              statusCounts.review.toLocaleString(),
+              statusCounts.procurement.toLocaleString(),
+              statusCounts.production.toLocaleString(),
+              statusCounts.ready.toLocaleString(),
+              statusCounts.inProgress.toLocaleString(),
             ],
-          }))}
+          ]}
         />
+      </s-section>
+
+      <s-section heading="Orders work queue">
+        {orders.length === 0 ? (
+          <s-box padding="base" borderWidth="base" borderRadius="base">
+            <s-paragraph>Sync Shopify orders to create operational demand.</s-paragraph>
+          </s-box>
+        ) : (
+          <DataTable
+            headings={[
+              "Order",
+              "Customer",
+              "Shopify status",
+              "Lines / products",
+              "Operational work",
+              "Next",
+            ]}
+            rows={orders.map((order: any) => {
+              const lineCount = Number(order.line_count ?? 0);
+
+              return {
+                id: order.id,
+                href: `/app/orders/${order.id}`,
+                cells: [
+                  <strong>{order.order_name}</strong>,
+                  order.customer_name ?? "No customer",
+                  <s-stack direction="block" gap="small">
+                    <MoneylessBadge tone={order.financial_status === "PAID" ? "success" : "neutral"}>
+                      {order.financial_status ?? "unknown"}
+                    </MoneylessBadge>
+                    <MoneylessBadge tone={order.fulfillment_status === "FULFILLED" ? "success" : "warning"}>
+                      {order.fulfillment_status ?? "unfulfilled"}
+                    </MoneylessBadge>
+                  </s-stack>,
+                  <s-stack direction="block" gap="small">
+                    <s-text>
+                      {lineCount.toLocaleString()} {lineCount === 1 ? "line" : "lines"}
+                    </s-text>
+                    <s-text>{compactSkus(order.skus)}</s-text>
+                  </s-stack>,
+                  <s-stack direction="block" gap="small">
+                    <MoneylessBadge tone={statusTone(order.operational_status)}>
+                      {order.operational_status ?? "In progress"}
+                    </MoneylessBadge>
+                    <s-text>{order.next_reason ?? "Review line decisions."}</s-text>
+                  </s-stack>,
+                  <s-stack direction="block" gap="small">
+                    <s-link href={order.next_action_href ?? `/app/orders/${order.id}`}>
+                      {order.next_action_label ?? "Open order"}
+                    </s-link>
+                    {shopifyOrderUrl(data.shopDomain ?? "", order.shopify_order_legacy_id) ? (
+                      <a
+                        href={shopifyOrderUrl(data.shopDomain ?? "", order.shopify_order_legacy_id)!}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open in Shopify
+                      </a>
+                    ) : null}
+                  </s-stack>,
+                ],
+              };
+            })}
+          />
+        )}
       </s-section>
     </s-page>
   );
