@@ -5,10 +5,27 @@ import { SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
 import { createOperationsItem } from "../lib/operations-kit.server";
 
+function safeReturnTo(value: string | null) {
+  return value?.startsWith("/app/") ? value : "/app/items";
+}
+
+function safeItemType(value: string | null) {
+  return ["product", "assembly", "component", "raw_material"].includes(
+    String(value),
+  )
+    ? String(value)
+    : "component";
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const context = await requireOperationsKitContext(request);
   if (!context.configured) return { configured: false, setupError: context.setupError };
-  return { configured: true };
+  const url = new URL(request.url);
+  return {
+    configured: true,
+    itemType: safeItemType(url.searchParams.get("itemType")),
+    returnTo: safeReturnTo(url.searchParams.get("returnTo")),
+  };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -19,7 +36,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   await createOperationsItem(context.pool, context.ctx.tenantId, {
     sku: String(form.get("sku") || ""),
     title: String(form.get("title") || ""),
-    itemType: String(form.get("itemType") || "component"),
+    itemType: safeItemType(String(form.get("itemType") || "component")),
     replenishmentPolicy: String(form.get("replenishmentPolicy") || "buy"),
     minInventoryQuantity: Number(form.get("minInventoryQuantity") || 0),
     defaultProductionQuantity: Number(form.get("defaultProductionQuantity") || 1),
@@ -27,7 +44,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     supplierLeadTimeDays: Number(form.get("supplierLeadTimeDays") || 7),
   });
 
-  return redirect("/app/items");
+  return redirect(safeReturnTo(String(form.get("returnTo") || "")));
 };
 
 export default function NewOperationalComponent() {
@@ -40,7 +57,7 @@ export default function NewOperationalComponent() {
   return (
     <s-page heading="Create operational component">
       <s-section>
-        <s-link href="/app/items">Back to products</s-link>
+        <s-link href={data.returnTo ?? "/app/items"}>Back to products</s-link>
         {actionData?.message ? (
           <s-box padding="base" borderWidth="base" borderRadius="base">
             <s-paragraph>{actionData.message}</s-paragraph>
@@ -51,6 +68,7 @@ export default function NewOperationalComponent() {
       <s-section>
         <s-box padding="base" borderWidth="base" borderRadius="base">
           <Form method="post">
+            <input type="hidden" name="returnTo" value={data.returnTo ?? "/app/items"} />
             <s-stack direction="block" gap="base">
               <s-stack direction="inline" gap="base">
                 <s-text-field
@@ -67,7 +85,7 @@ export default function NewOperationalComponent() {
                 ></s-text-field>
               </s-stack>
               <s-stack direction="inline" gap="base">
-                <s-select label="Product type" name="itemType" value="component">
+                <s-select label="Product type" name="itemType" value={data.itemType ?? "component"}>
                   <s-option value="component">Non-sellable component</s-option>
                   <s-option value="raw_material">Raw material</s-option>
                   <s-option value="product">Sellable product</s-option>
@@ -87,7 +105,7 @@ export default function NewOperationalComponent() {
               </s-stack>
               <s-stack direction="inline" gap="small">
                 <s-button variant="primary" type="submit">Create product</s-button>
-                <s-link href="/app/items">Cancel</s-link>
+                <s-link href={data.returnTo ?? "/app/items"}>Cancel</s-link>
               </s-stack>
             </s-stack>
           </Form>

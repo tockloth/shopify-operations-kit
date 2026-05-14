@@ -2961,6 +2961,9 @@ export async function loadItemDetail(
         component.id as component_id,
         component.sku as component_sku,
         component.title as component_title,
+        component.item_type,
+        component.is_purchasable,
+        component.is_producible,
         bom_lines.quantity,
         bom_lines.unit
       from boms

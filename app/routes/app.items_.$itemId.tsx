@@ -31,6 +31,44 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const form = await request.formData();
   const intent = String(form.get("intent"));
 
+  if (intent === "saveProductMasterData" || intent === "savePurchasingSettings") {
+    await updateItemOperationsProperties(context.pool, context.ctx.tenantId, {
+      itemId: params.itemId!,
+      itemType: String(form.get("itemType")),
+      isSellable: form.get("isSellable") === "on",
+      isPurchasable: form.get("isPurchasable") === "on",
+      isProducible: form.get("isProducible") === "on",
+      minInventoryQuantity: Number(form.get("minInventoryQuantity") || 0),
+      defaultProductionQuantity: Number(
+        form.get("defaultProductionQuantity") || 1,
+      ),
+      defaultOrderQuantity: Number(form.get("defaultOrderQuantity") || 1),
+      supplierLeadTimeDays: Number(form.get("supplierLeadTimeDays") || 7),
+      qcRequiredAfterPurchase: form.get("qcRequiredAfterPurchase") === "on",
+      qcRequiredAfterProduction: form.get("qcRequiredAfterProduction") === "on",
+    });
+
+    const supplierId = String(form.get("supplierId") || "");
+    if (supplierId) {
+      await saveSupplierForItem(context.pool, context.ctx.tenantId, {
+        itemId: params.itemId!,
+        supplierId,
+        isPreferred: form.get("isPreferred") === "on",
+        supplierSku: String(form.get("supplierSku") || ""),
+        unitPrice: Number(form.get("unitPrice") || 0),
+        currencyCode: String(form.get("currencyCode") || "EUR"),
+        leadTimeDays: Number(
+          form.get("supplierItemLeadTimeDays") ||
+            form.get("supplierLeadTimeDays") ||
+            0,
+        ),
+        minimumOrderQuantity: Number(form.get("minimumOrderQuantity") || 0),
+      });
+    }
+
+    return { message: "Product master data saved." };
+  }
+
   if (intent === "saveProperties") {
     await updateItemOperationsProperties(context.pool, context.ctx.tenantId, {
       itemId: params.itemId!,
@@ -118,68 +156,6 @@ function reviewState(item: any, preferredSupplier: any, activeBomCount: number) 
   };
 }
 
-function HiddenOperationsFields({
-  item,
-  except = [],
-}: {
-  item: any;
-  except?: string[];
-}) {
-  const skip = new Set(except);
-  return (
-    <>
-      {!skip.has("itemType") ? (
-        <input type="hidden" name="itemType" value={item.item_type} />
-      ) : null}
-      {!skip.has("isSellable") && item.is_sellable ? (
-        <input type="hidden" name="isSellable" value="on" />
-      ) : null}
-      {!skip.has("isPurchasable") && item.is_purchasable ? (
-        <input type="hidden" name="isPurchasable" value="on" />
-      ) : null}
-      {!skip.has("isProducible") && item.is_producible ? (
-        <input type="hidden" name="isProducible" value="on" />
-      ) : null}
-      {!skip.has("minInventoryQuantity") ? (
-        <input
-          type="hidden"
-          name="minInventoryQuantity"
-          value={String(item.min_inventory_quantity ?? 0)}
-        />
-      ) : null}
-      {!skip.has("defaultProductionQuantity") ? (
-        <input
-          type="hidden"
-          name="defaultProductionQuantity"
-          value={String(item.default_production_quantity ?? 1)}
-        />
-      ) : null}
-      {!skip.has("defaultOrderQuantity") ? (
-        <input
-          type="hidden"
-          name="defaultOrderQuantity"
-          value={String(item.default_order_quantity ?? 1)}
-        />
-      ) : null}
-      {!skip.has("supplierLeadTimeDays") ? (
-        <input
-          type="hidden"
-          name="supplierLeadTimeDays"
-          value={String(item.supplier_lead_time_days ?? 7)}
-        />
-      ) : null}
-      {!skip.has("qcRequiredAfterPurchase") &&
-      item.qc_required_after_purchase ? (
-        <input type="hidden" name="qcRequiredAfterPurchase" value="on" />
-      ) : null}
-      {!skip.has("qcRequiredAfterProduction") &&
-      item.qc_required_after_production ? (
-        <input type="hidden" name="qcRequiredAfterProduction" value="on" />
-      ) : null}
-    </>
-  );
-}
-
 export default function ProductDetail() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
@@ -228,143 +204,119 @@ export default function ProductDetail() {
   const activeBomComponentCount = (detail.bomLines ?? []).filter(
     (line: any) => line.is_active && line.component_id,
   ).length;
+  const activeBomLines = (detail.bomLines ?? []).filter(
+    (line: any) => line.is_active && line.component_id,
+  );
   const state = reviewState(item, preferredSupplier, activeBomCount);
-  const usageRows = [
-    ...(detail.orderLines ?? []).map((line: any) => ({
-      id: `order-${line.id}`,
-      href: `/app/order-lines/${line.id}`,
-      cells: [
-        "Order line",
-        <strong>{line.order_name}</strong>,
-        <MoneylessBadge>{line.supply_status}</MoneylessBadge>,
-        `${quantity(line.quantity)} ${line.unit}`,
-        <s-link href={`/app/orders/${line.operations_order_id}`}>
-          Open order
-        </s-link>,
-      ],
-    })),
-    ...(detail.purchaseWork ?? []).map((row: any) => ({
-      id: `purchase-${row.id}`,
-      href: row.purchase_order_id
-        ? `/app/procurement/${row.purchase_order_id}`
-        : "/app/procurement",
-      cells: [
-        "Procurement",
-        <strong>{row.purchase_order_number ?? "Purchase need"}</strong>,
-        <MoneylessBadge>
-          {row.purchase_order_status ?? row.purchase_need_status}
-        </MoneylessBadge>,
-        `${quantity(row.quantity)} ${row.unit}`,
-        row.supplier_name ?? "No supplier",
-      ],
-    })),
-    ...(detail.productionWork ?? []).map((row: any) => ({
-      id: `production-${row.id}`,
-      href: "/app/production",
-      cells: [
-        "Production",
-        <strong>{row.production_order_number ?? "Production need"}</strong>,
-        <MoneylessBadge>
-          {row.production_order_status ?? row.production_need_status}
-        </MoneylessBadge>,
-        `${quantity(row.quantity)} ${row.unit}`,
-        <s-link href="/app/production">Open production</s-link>,
-      ],
-    })),
-  ];
 
   return (
     <s-page heading={`${item.sku} · ${item.title}`}>
-      <s-section>
-        <s-stack direction="block" gap="base">
-          <s-link href="/app/items">Back to products</s-link>
+      <Form method="post" className="kit-master-form">
+        <input type="hidden" name="intent" value="saveProductMasterData" />
+
+        <s-section>
+          <div className="kit-product-action-row">
+            <s-link href="/app/items">Back to products</s-link>
+            <div className="kit-product-action-buttons">
+              <s-button variant="primary" type="submit">
+                Save
+              </s-button>
+              <s-link href={`/app/items/${item.id}`}>Cancel</s-link>
+            </div>
+          </div>
           {actionData?.message ? (
             <s-banner tone="success">{actionData.message}</s-banner>
           ) : null}
-        </s-stack>
-      </s-section>
+        </s-section>
 
-      <s-section heading="Product summary">
-        <DataTable
-          headings={[
-            "Product",
-            "Shopify context",
-            "Type",
-            "Operational roles",
-            "Review state",
-          ]}
-          rows={[
-            [
-              <strong>
-                {item.sku} · {item.title}
-              </strong>,
-              item.product_handle || item.variant_title
-                ? [item.product_handle, item.variant_title]
-                    .filter(Boolean)
-                    .join(" / ")
-                : item.shopify_variant_gid
-                  ? "Shopify variant linked"
-                  : "Operations item",
-              <MoneylessBadge>{itemTypeLabel(item.item_type)}</MoneylessBadge>,
-              <s-stack direction="inline" gap="small">
-                {item.is_sellable ? (
-                  <MoneylessBadge tone="success">sellable</MoneylessBadge>
-                ) : null}
-                {item.is_purchasable ? (
-                  <MoneylessBadge tone="info">purchasable</MoneylessBadge>
-                ) : null}
-                {item.is_producible ? (
-                  <MoneylessBadge tone="info">producible</MoneylessBadge>
-                ) : null}
-                {!item.is_sellable &&
-                !item.is_purchasable &&
-                !item.is_producible ? (
-                  <MoneylessBadge tone="critical">not classified</MoneylessBadge>
-                ) : null}
-              </s-stack>,
-              <s-stack direction="block" gap="small">
-                <MoneylessBadge tone={state.tone}>{state.label}</MoneylessBadge>
-                <s-text>{state.reason}</s-text>
-              </s-stack>,
-            ],
-          ]}
-        />
-      </s-section>
-
-      <s-section heading="Operational classification">
-        <s-box padding="base" borderWidth="base" borderRadius="base">
-          <Form method="post">
-            <input type="hidden" name="intent" value="saveProperties" />
-            <HiddenOperationsFields
-              item={item}
-              except={[
-                "itemType",
-                "isSellable",
-                "isPurchasable",
-                "isProducible",
+        <s-section heading="Product master data">
+          <s-stack direction="block" gap="base">
+            <DataTable
+              headings={[
+                "Product",
+                "Shopify context",
+                "Type",
+                "Operational roles",
+                "Review state",
+              ]}
+              rows={[
+                [
+                  <strong>
+                    {item.sku} · {item.title}
+                  </strong>,
+                  item.product_handle || item.variant_title
+                    ? [item.product_handle, item.variant_title]
+                        .filter(Boolean)
+                        .join(" / ")
+                    : item.shopify_variant_gid
+                      ? "Shopify variant linked"
+                      : "Operations item",
+                  <MoneylessBadge>{itemTypeLabel(item.item_type)}</MoneylessBadge>,
+                  <div className="kit-inline-badges">
+                    {item.is_sellable ? (
+                      <MoneylessBadge tone="success">sellable</MoneylessBadge>
+                    ) : null}
+                    {item.is_purchasable ? (
+                      <MoneylessBadge tone="info">purchasable</MoneylessBadge>
+                    ) : null}
+                    {item.is_producible ? (
+                      <MoneylessBadge tone="info">producible</MoneylessBadge>
+                    ) : null}
+                    {!item.is_sellable &&
+                    !item.is_purchasable &&
+                    !item.is_producible ? (
+                      <MoneylessBadge tone="critical">not classified</MoneylessBadge>
+                    ) : null}
+                  </div>,
+                  <MoneylessBadge tone={state.tone}>{state.label}</MoneylessBadge>,
+                ],
               ]}
             />
-            <s-stack direction="block" gap="base">
-              <s-grid grid-template-columns="repeat(2, minmax(0, 1fr))" gap="base">
-                <s-select
-                  label="Item type"
-                  name="itemType"
-                  value={item.item_type}
-                >
-                  <s-option value="product">Product</s-option>
-                  <s-option value="assembly">Assembly</s-option>
-                  <s-option value="component">Component</s-option>
-                  <s-option value="raw_material">Material</s-option>
-                </s-select>
-                <s-box padding="small" borderWidth="base" borderRadius="base">
-                  <s-text>
-                    Sellable items can appear on Shopify orders. Purchasable
-                    items can create purchase needs and purchase orders.
-                    Producible items can have BOMs and production work.
-                  </s-text>
-                </s-box>
-              </s-grid>
-              <s-grid grid-template-columns="repeat(3, minmax(0, 1fr))" gap="base">
+            <DataTable
+              headings={[
+                "Policy",
+                "Lead time",
+                "Standard order quantity",
+                "Standard production quantity",
+                "Minimum stock",
+              ]}
+              rows={[
+                [
+                  <MoneylessBadge
+                    tone={
+                      planningPolicy(item) === "Review master data"
+                        ? "critical"
+                        : planningPolicy(item) === "Sell only"
+                          ? "warning"
+                          : "success"
+                    }
+                  >
+                    {planningPolicy(item)}
+                  </MoneylessBadge>,
+                  `${quantity(item.supplier_lead_time_days)} days`,
+                  quantity(item.default_order_quantity ?? 1),
+                  quantity(item.default_production_quantity ?? 1),
+                  quantity(item.min_inventory_quantity ?? 0),
+                ],
+              ]}
+            />
+          </s-stack>
+        </s-section>
+
+        <s-section heading="Operational classification">
+          <div className="kit-edit-panel">
+            <div className="kit-classification-grid">
+              <s-select
+                label="Item type"
+                name="itemType"
+                value={item.item_type}
+              >
+                <s-option value="product">Product</s-option>
+                <s-option value="assembly">Assembly</s-option>
+                <s-option value="component">Component</s-option>
+                <s-option value="raw_material">Material</s-option>
+              </s-select>
+              <div className="kit-checkbox-row">
                 <s-checkbox
                   label="Sellable"
                   name="isSellable"
@@ -380,61 +332,99 @@ export default function ProductDetail() {
                   name="isProducible"
                   checked={Boolean(item.is_producible)}
                 ></s-checkbox>
-              </s-grid>
-              <s-button variant="primary" type="submit">
-                Save classification
-              </s-button>
-            </s-stack>
-          </Form>
-        </s-box>
-      </s-section>
+              </div>
+            </div>
+          </div>
+        </s-section>
 
-      <s-section heading="Planning policy">
-        <DataTable
-          headings={[
-            "Policy",
-            "Lead time",
-            "Standard order quantity",
-            "Standard production quantity",
-            "Minimum stock",
-          ]}
-          rows={[
-            [
-              <MoneylessBadge
-                tone={
-                  planningPolicy(item) === "Review master data"
-                    ? "critical"
-                    : planningPolicy(item) === "Sell only"
-                      ? "warning"
-                      : "success"
-                }
-              >
-                {planningPolicy(item)}
-              </MoneylessBadge>,
-              `${quantity(item.supplier_lead_time_days)} days`,
-              quantity(item.default_order_quantity ?? 1),
-              quantity(item.default_production_quantity ?? 1),
-              quantity(item.min_inventory_quantity ?? 0),
-            ],
-          ]}
-        />
-      </s-section>
-
-      <s-section heading="Supplier / purchasing settings">
-        <s-box padding="base" borderWidth="base" borderRadius="base">
-          <s-stack direction="block" gap="base">
-            {item.is_purchasable ? (
-              <Form method="post">
-                <input type="hidden" name="intent" value="saveProperties" />
-                <HiddenOperationsFields
-                  item={item}
-                  except={[
-                    "supplierLeadTimeDays",
-                    "defaultOrderQuantity",
-                    "minInventoryQuantity",
-                  ]}
-                />
-                <s-grid grid-template-columns="repeat(3, minmax(0, 1fr))" gap="base">
+        <s-section heading="Purchasing settings">
+          <div className="kit-edit-panel">
+            {item.is_purchasable && (detail.allSuppliers ?? []).length > 0 ? (
+              <div className="kit-compact-grid kit-grid-5">
+                <s-select
+                  label="Preferred supplier"
+                  name="supplierId"
+                  value={initialSupplier?.id ?? ""}
+                >
+                  {(detail.allSuppliers ?? []).map((supplier: any) => (
+                    <s-option key={supplier.id} value={supplier.id}>
+                      {supplier.name}
+                    </s-option>
+                  ))}
+                </s-select>
+                <s-text-field
+                  label="Supplier SKU"
+                  name="supplierSku"
+                  value={supplierFormValues.supplier_sku ?? item.sku}
+                ></s-text-field>
+                <s-checkbox
+                  label="Preferred"
+                  name="isPreferred"
+                  checked={supplierFormValues.is_preferred ?? true}
+                ></s-checkbox>
+                <s-number-field
+                  label="Lead time"
+                  name="supplierLeadTimeDays"
+                  min={0}
+                  step={1}
+                  value={String(item.supplier_lead_time_days ?? 7)}
+                ></s-number-field>
+                <s-number-field
+                  label="Standard order qty"
+                  name="defaultOrderQuantity"
+                  min={1}
+                  step={1}
+                  value={String(item.default_order_quantity ?? 1)}
+                ></s-number-field>
+                <s-number-field
+                  label="Standard production qty"
+                  name="defaultProductionQuantity"
+                  min={1}
+                  step={1}
+                  value={String(item.default_production_quantity ?? 1)}
+                ></s-number-field>
+                <s-number-field
+                  label="Minimum stock"
+                  name="minInventoryQuantity"
+                  min={0}
+                  step={1}
+                  value={String(item.min_inventory_quantity ?? 0)}
+                ></s-number-field>
+                <s-number-field
+                  label="Supplier MOQ"
+                  name="minimumOrderQuantity"
+                  min={0}
+                  step={1}
+                  value={String(supplierFormValues.minimum_order_quantity ?? "")}
+                ></s-number-field>
+                <s-number-field
+                  label="Supplier price"
+                  name="unitPrice"
+                  min={0}
+                  step={0.01}
+                  value={String(supplierFormValues.unit_price ?? "")}
+                ></s-number-field>
+                <s-select
+                  label="Currency"
+                  name="currencyCode"
+                  value={supplierFormValues.currency_code ?? "EUR"}
+                >
+                  <s-option value="EUR">EUR</s-option>
+                  <s-option value="USD">USD</s-option>
+                  <s-option value="GBP">GBP</s-option>
+                </s-select>
+              </div>
+            ) : (
+              <>
+                {item.is_purchasable ? (
+                  <div className="kit-compact-warning">
+                    <s-banner tone="warning">
+                      Create a supplier before assigning purchasing settings.
+                    </s-banner>
+                    <s-link href="/app/suppliers">Open suppliers</s-link>
+                  </div>
+                ) : null}
+                <div className="kit-compact-grid kit-grid-4">
                   <s-number-field
                     label="Lead time"
                     name="supplierLeadTimeDays"
@@ -443,11 +433,18 @@ export default function ProductDetail() {
                     value={String(item.supplier_lead_time_days ?? 7)}
                   ></s-number-field>
                   <s-number-field
-                    label="Standard order quantity"
+                    label="Standard order qty"
                     name="defaultOrderQuantity"
                     min={1}
                     step={1}
                     value={String(item.default_order_quantity ?? 1)}
+                  ></s-number-field>
+                  <s-number-field
+                    label="Standard production qty"
+                    name="defaultProductionQuantity"
+                    min={1}
+                    step={1}
+                    value={String(item.default_production_quantity ?? 1)}
                   ></s-number-field>
                   <s-number-field
                     label="Minimum stock"
@@ -456,230 +453,83 @@ export default function ProductDetail() {
                     step={1}
                     value={String(item.min_inventory_quantity ?? 0)}
                   ></s-number-field>
-                </s-grid>
-                <s-button type="submit">Save purchasing policy</s-button>
-              </Form>
-            ) : (
-              <s-paragraph>
-                Preferred supplier and purchasing quantities are only required
-                for purchasable items.
-              </s-paragraph>
+                </div>
+              </>
             )}
+          </div>
+        </s-section>
 
-            <DataTable
-              headings={[
-                "Supplier",
-                "Preferred",
-                "Supplier SKU",
-                "Price",
-                "Lead time",
-                "MOQ",
-                "Status",
-              ]}
-              rows={(detail.suppliers ?? []).map((supplier: any) => [
-                <strong>{supplier.name}</strong>,
-                supplier.is_preferred ? "Yes" : "No",
-                supplier.supplier_sku ?? "Not set",
-                supplier.unit_price
-                  ? `${Number(supplier.unit_price).toLocaleString()} ${supplier.currency_code ?? "EUR"}`
-                  : "No price",
-                supplier.lead_time_days != null
-                  ? `${Number(supplier.lead_time_days).toLocaleString()} days`
-                  : `${Number(item.supplier_lead_time_days ?? 7).toLocaleString()} days`,
-                supplier.minimum_order_quantity != null
-                  ? Number(supplier.minimum_order_quantity).toLocaleString()
-                  : "No MOQ",
-                supplier.supplier_item_is_active ? "Active" : "Inactive",
-              ])}
-            />
+        <s-section heading="QC">
+          <div className="kit-edit-panel">
+            <div className="kit-compact-grid kit-grid-2">
+              <s-checkbox
+                label="QC required on receiving"
+                name="qcRequiredAfterPurchase"
+                checked={Boolean(item.qc_required_after_purchase)}
+              ></s-checkbox>
+              <s-checkbox
+                label="QC required after production"
+                name="qcRequiredAfterProduction"
+                checked={Boolean(item.qc_required_after_production)}
+              ></s-checkbox>
+            </div>
+          </div>
+        </s-section>
 
-            {item.is_purchasable && (detail.allSuppliers ?? []).length === 0 ? (
-              <s-stack direction="block" gap="small">
-                <s-banner tone="warning">
-                  Create a supplier before assigning a preferred supplier.
-                </s-banner>
-                <s-link href="/app/suppliers">Open suppliers</s-link>
-              </s-stack>
-            ) : null}
-
-            {item.is_purchasable && (detail.allSuppliers ?? []).length > 0 ? (
-              <Form method="post">
-                <input type="hidden" name="intent" value="saveSupplier" />
-                <s-stack direction="block" gap="base">
-                  <s-grid grid-template-columns="1fr 1fr" gap="base">
-                    <s-select
-                      label="Supplier"
-                      name="supplierId"
-                      value={initialSupplier?.id ?? ""}
-                    >
-                      {(detail.allSuppliers ?? []).map((supplier: any) => (
-                        <s-option key={supplier.id} value={supplier.id}>
-                          {supplier.name}
-                        </s-option>
-                      ))}
-                    </s-select>
-                    <s-text-field
-                      label="Supplier SKU"
-                      name="supplierSku"
-                      value={supplierFormValues.supplier_sku ?? item.sku}
-                    ></s-text-field>
-                  </s-grid>
-                  <s-grid grid-template-columns="1fr 1fr 1fr" gap="base">
-                    <s-number-field
-                      label="Supplier price"
-                      name="unitPrice"
-                      min={0}
-                      step={0.01}
-                      value={String(supplierFormValues.unit_price ?? "")}
-                    ></s-number-field>
-                    <s-select
-                      label="Currency"
-                      name="currencyCode"
-                      value={supplierFormValues.currency_code ?? "EUR"}
-                    >
-                      <s-option value="EUR">EUR</s-option>
-                      <s-option value="USD">USD</s-option>
-                      <s-option value="GBP">GBP</s-option>
-                    </s-select>
-                    <s-number-field
-                      label="Minimum order quantity"
-                      name="minimumOrderQuantity"
-                      min={0}
-                      step={1}
-                      value={String(
-                        supplierFormValues.minimum_order_quantity ?? "",
-                      )}
-                    ></s-number-field>
-                  </s-grid>
-                  <s-grid grid-template-columns="1fr 1fr" gap="base">
-                    <s-number-field
-                      label="Supplier-specific lead time days"
-                      name="supplierItemLeadTimeDays"
-                      min={0}
-                      step={1}
-                      value={String(
-                        supplierFormValues.lead_time_days ??
-                          item.supplier_lead_time_days ??
-                          7,
-                      )}
-                    ></s-number-field>
-                    <s-checkbox
-                      label="Preferred supplier for this product"
-                      name="isPreferred"
-                      checked
-                    ></s-checkbox>
-                  </s-grid>
-                  <s-button-group gap="base">
-                    <s-button variant="primary" type="submit">
-                      Save purchasing terms
-                    </s-button>
-                    <s-link href="/app/suppliers">Open suppliers</s-link>
-                  </s-button-group>
-                </s-stack>
-              </Form>
-            ) : null}
-          </s-stack>
-        </s-box>
-      </s-section>
-
-      <s-section heading="QC">
-        <s-box padding="base" borderWidth="base" borderRadius="base">
-          <Form method="post">
-            <input type="hidden" name="intent" value="saveProperties" />
-            <HiddenOperationsFields
-              item={item}
-              except={["qcRequiredAfterPurchase", "qcRequiredAfterProduction"]}
-            />
-            <s-stack direction="block" gap="base">
-              <s-grid grid-template-columns="repeat(2, minmax(0, 1fr))" gap="base">
-                <s-checkbox
-                  label="QC required on receiving"
-                  name="qcRequiredAfterPurchase"
-                  checked={Boolean(item.qc_required_after_purchase)}
-                ></s-checkbox>
-                <s-checkbox
-                  label="QC required after production"
-                  name="qcRequiredAfterProduction"
-                  checked={Boolean(item.qc_required_after_production)}
-                ></s-checkbox>
-              </s-grid>
-              <s-text>
-                Receiving QC holds purchased goods before putaway. Production
-                QC controls produced quantity before inventory release.
-              </s-text>
-              <s-button type="submit">Save QC policy</s-button>
-            </s-stack>
-          </Form>
-        </s-box>
-      </s-section>
-
-      <s-section heading="BOM">
-        <s-box padding="base" borderWidth="base" borderRadius="base">
-          <s-stack direction="block" gap="base">
+        <s-section heading="BOM">
+          <div className="kit-edit-panel">
             {item.is_producible ? (
-              <>
+              <s-stack direction="block" gap="base">
                 <DataTable
-                  headings={["Status", "Active BOMs", "Components", "Next action"]}
+                  headings={["Active BOM", "Components", "Editor"]}
                   rows={[
                     [
                       activeBomCount > 0 ? (
-                        <MoneylessBadge tone="success">Active</MoneylessBadge>
+                        <MoneylessBadge tone="success">Yes</MoneylessBadge>
                       ) : (
-                        <MoneylessBadge tone="warning">Missing</MoneylessBadge>
+                        <MoneylessBadge tone="warning">No</MoneylessBadge>
                       ),
-                      activeBomCount,
                       activeBomComponentCount,
                       <s-link href={`/app/boms?parentItemId=${item.id}`}>
-                        {activeBomCount > 0
-                          ? "Open BOM for this product"
-                          : "Create BOM for this product"}
+                        Open BOM editor
                       </s-link>,
                     ],
                   ]}
                 />
-                {activeBomCount === 0 ? (
-                  <s-banner tone="warning">
-                    This item is producible but has no active BOM.
-                  </s-banner>
-                ) : activeBomComponentCount === 0 ? (
+                {activeBomLines.length > 0 ? (
+                  <DataTable
+                    headings={["Component", "Type", "Policy", "Quantity", "Unit"]}
+                    rows={activeBomLines.map((line: any) => [
+                      <strong>
+                        {line.component_sku} {line.component_title}
+                      </strong>,
+                      itemTypeLabel(line.item_type),
+                      [
+                        line.is_purchasable ? "buy" : null,
+                        line.is_producible ? "make" : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" / ") || "review",
+                      quantity(line.quantity),
+                      line.unit ?? "pcs",
+                    ])}
+                  />
+                ) : activeBomCount > 0 ? (
                   <s-banner tone="warning">
                     This item has an active BOM with no components.
                   </s-banner>
-                ) : null}
-              </>
+                ) : (
+                  <s-banner tone="warning">
+                    This producible item has no active BOM.
+                  </s-banner>
+                )}
+              </s-stack>
             ) : (
               <s-paragraph>BOM is only required for producible items.</s-paragraph>
             )}
-          </s-stack>
-        </s-box>
-      </s-section>
-
-      <s-section heading="Usage">
-        <s-stack direction="block" gap="base">
-          <DataTable
-            headings={["On hand", "Available", "Reserved", "QC hold", "Quarantine"]}
-            rows={[
-              [
-                quantity(item.physical_quantity),
-                quantity(item.available_quantity),
-                quantity(item.reserved_quantity),
-                quantity(item.qc_hold_quantity),
-                quantity(item.quarantine_quantity),
-              ],
-            ]}
-          />
-          {usageRows.length > 0 ? (
-            <DataTable
-              headings={["Work", "Reference", "Status", "Quantity", "Open"]}
-              rows={usageRows}
-            />
-          ) : (
-            <s-box padding="base" borderWidth="base" borderRadius="base">
-              <s-paragraph>No open operational work uses this item.</s-paragraph>
-            </s-box>
-          )}
-        </s-stack>
-      </s-section>
+          </div>
+        </s-section>
+      </Form>
     </s-page>
   );
 }

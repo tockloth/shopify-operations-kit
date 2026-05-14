@@ -23,10 +23,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const mrpRunId = url.searchParams.get("mrpRunId");
   const parentItemId = url.searchParams.get("parentItemId");
+  const editBomLineId = url.searchParams.get("editBomLineId");
 
   return {
     configured: true,
     parentItemId,
+    editBomLineId,
     boms: await loadBoms(context.pool, context.ctx.tenantId),
     bomContext: await loadBomProductContext(
       context.pool,
@@ -137,10 +139,19 @@ export default function BomMrp() {
   const bomContext = data.bomContext as any;
   const parent = bomContext?.parent as any;
   const activeBom = bomContext?.activeBom as any;
+  const bomLines = (bomContext?.bomLines ?? []) as any[];
+  const selectedBomLine = bomLines.find(
+    (line: any) => line.id === data.editBomLineId,
+  );
   const availableComponents = (bomContext?.availableComponents ?? []) as any[];
+  const createComponentHref = parent
+    ? `/app/items/new?itemType=component&returnTo=${encodeURIComponent(
+        `/app/boms?parentItemId=${parent.id}`,
+      )}`
+    : "/app/items/new?itemType=component";
 
   return (
-    <s-page heading="BOM and MRP">
+    <s-page heading="BOM master data">
       <s-section>
         <s-stack direction="block" gap="small">
           {parent ? (
@@ -149,10 +160,6 @@ export default function BomMrp() {
             <s-link href="/app/items">Back to products</s-link>
           )}
         </s-stack>
-        <s-paragraph>
-          Maintain the manufacturing relationship between sellable assemblies
-          and their required materials, then run planning previews.
-        </s-paragraph>
         {actionData?.message ? (
           <s-box padding="base" borderWidth="base" borderRadius="base">
             <s-paragraph>{actionData.message}</s-paragraph>
@@ -161,7 +168,7 @@ export default function BomMrp() {
       </s-section>
 
       {parent ? (
-        <s-section heading={`BOM for ${parent.sku} / ${parent.title}`}>
+        <s-section>
           <s-stack direction="block" gap="base">
             <DataTable
               headings={["Parent product", "Status", "Active BOM", "Components", "Open"]}
@@ -202,17 +209,17 @@ export default function BomMrp() {
 
             {activeBom ? (
               <>
-                {(bomContext.bomLines ?? []).length > 0 ? (
+                {bomLines.length > 0 ? (
                   <DataTable
                     headings={[
                       "Component",
                       "Type",
                       "Policy",
                       "Quantity",
-                      "Update quantity",
-                      "Remove component",
+                      "Unit",
+                      "Actions",
                     ]}
-                    rows={(bomContext.bomLines ?? []).map((line: any) => [
+                    rows={bomLines.map((line: any) => [
                       <strong>
                         {line.component_sku} {line.component_title}
                       </strong>,
@@ -223,98 +230,109 @@ export default function BomMrp() {
                       ]
                         .filter(Boolean)
                         .join(" / ") || "component",
-                      `${Number(line.quantity ?? 0).toLocaleString()} ${line.unit}`,
-                      <Form method="post">
-                        <input
-                          type="hidden"
-                          name="intent"
-                          value="updateBomLineQuantity"
-                        />
-                        <input
-                          type="hidden"
-                          name="parentItemId"
-                          value={parent.id}
-                        />
-                        <input
-                          type="hidden"
-                          name="bomLineId"
-                          value={line.id}
-                        />
-                        <s-stack direction="inline" gap="small">
-                          <s-number-field
-                            label="Quantity"
-                            name="quantity"
-                            min={0.0001}
-                            step={1}
-                            value={String(line.quantity ?? 1)}
-                          ></s-number-field>
-                          <s-text-field
-                            label="Unit"
-                            name="unit"
-                            value={line.unit ?? "pcs"}
-                          ></s-text-field>
-                          <s-button type="submit">Update quantity</s-button>
-                        </s-stack>
-                      </Form>,
-                      <Form method="post">
-                        <input
-                          type="hidden"
-                          name="intent"
-                          value="deleteBomLine"
-                        />
-                        <input
-                          type="hidden"
-                          name="parentItemId"
-                          value={parent.id}
-                        />
-                        <input
-                          type="hidden"
-                          name="bomLineId"
-                          value={line.id}
-                        />
-                        <s-button type="submit">Remove component</s-button>
-                      </Form>,
+                      Number(line.quantity ?? 0).toLocaleString(),
+                      line.unit ?? "pcs",
+                      <s-stack direction="inline" gap="small">
+                        <s-link
+                          href={`/app/boms?parentItemId=${parent.id}&editBomLineId=${line.id}`}
+                        >
+                          Edit
+                        </s-link>
+                        <Form method="post">
+                          <input
+                            type="hidden"
+                            name="intent"
+                            value="deleteBomLine"
+                          />
+                          <input
+                            type="hidden"
+                            name="parentItemId"
+                            value={parent.id}
+                          />
+                          <input
+                            type="hidden"
+                            name="bomLineId"
+                            value={line.id}
+                          />
+                          <s-button type="submit">Remove component</s-button>
+                        </Form>
+                      </s-stack>,
                     ])}
                   />
                 ) : (
-                  <s-box padding="base" borderWidth="base" borderRadius="base">
-                    <s-paragraph>
-                      Add components to define what is required to produce this item.
-                    </s-paragraph>
-                  </s-box>
+                  <s-banner tone="warning">
+                    This active BOM has no components.
+                  </s-banner>
                 )}
 
-                {availableComponents.length > 0 ? (
+                {selectedBomLine ? (
                   <s-box padding="base" borderWidth="base" borderRadius="base">
                     <Form method="post">
-                      <input type="hidden" name="intent" value="addBomLine" />
-                      <input type="hidden" name="parentItemId" value={parent.id} />
-                      <s-stack direction="block" gap="base">
-                        <s-grid grid-template-columns="minmax(0, 2fr) minmax(140px, 1fr)" gap="base">
-                          <s-select label="Component" name="componentItemId">
-                            {availableComponents.map((component: any) => (
-                              <s-option key={component.id} value={component.id}>
-                                {component.sku} / {component.title}
-                              </s-option>
-                            ))}
-                          </s-select>
-                          <s-number-field
-                            label="Quantity"
-                            name="quantity"
-                            min={1}
-                            step={1}
-                            value="1"
-                          ></s-number-field>
-                        </s-grid>
-                        <s-button variant="primary" type="submit">
-                          Add component
-                        </s-button>
-                      </s-stack>
+                      <input
+                        type="hidden"
+                        name="intent"
+                        value="updateBomLineQuantity"
+                      />
+                      <input
+                        type="hidden"
+                        name="parentItemId"
+                        value={parent.id}
+                      />
+                      <input
+                        type="hidden"
+                        name="bomLineId"
+                        value={selectedBomLine.id}
+                      />
+                      <s-grid grid-template-columns="minmax(0, 2fr) minmax(120px, 1fr) minmax(120px, 1fr) auto" gap="base">
+                        <s-text>
+                          {selectedBomLine.component_sku} {selectedBomLine.component_title}
+                        </s-text>
+                        <s-number-field
+                          label="Quantity"
+                          name="quantity"
+                          min={0.0001}
+                          step={1}
+                          value={String(selectedBomLine.quantity ?? 1)}
+                        ></s-number-field>
+                        <s-text-field
+                          label="Unit"
+                          name="unit"
+                          value={selectedBomLine.unit ?? "pcs"}
+                        ></s-text-field>
+                        <s-button type="submit">Update quantity</s-button>
+                      </s-grid>
                     </Form>
                   </s-box>
+                ) : null}
+
+                {availableComponents.length > 0 ? (
+                  <Form method="post">
+                    <input type="hidden" name="intent" value="addBomLine" />
+                    <input type="hidden" name="parentItemId" value={parent.id} />
+                    <s-grid grid-template-columns="minmax(0, 2fr) minmax(120px, 1fr) auto" gap="base">
+                      <s-select label="Component" name="componentItemId">
+                        {availableComponents.map((component: any) => (
+                          <s-option key={component.id} value={component.id}>
+                            {component.sku} / {component.title}
+                          </s-option>
+                        ))}
+                      </s-select>
+                      <s-number-field
+                        label="Quantity"
+                        name="quantity"
+                        min={1}
+                        step={1}
+                        value="1"
+                      ></s-number-field>
+                      <s-button variant="primary" type="submit">
+                        Add component
+                      </s-button>
+                    </s-grid>
+                  </Form>
                 ) : (
                   <s-banner tone="warning">
                     Create component or material products before adding BOM lines.
+                    <s-link href={createComponentHref}>Create component product</s-link>
                   </s-banner>
                 )}
               </>
@@ -323,74 +341,86 @@ export default function BomMrp() {
         </s-section>
       ) : null}
 
-      <s-section heading="Active BOMs">
-        <DataTable
-          headings={["Parent product", "Active BOM", "Components", "Product", "Next action"]}
-          rows={(data.boms ?? []).map((bom: any) => ({
-            id: bom.id,
-            href: `/app/boms?parentItemId=${bom.parent_item_id}`,
-            cells: [
-              <strong>
-                {bom.parent_sku} {bom.parent_title}
-              </strong>,
-              <MoneylessBadge tone={bom.is_active ? "success" : "warning"}>
-                {bom.is_active ? "active" : "inactive"}
-              </MoneylessBadge>,
-              bom.line_count,
-              <s-link href={`/app/items/${bom.parent_item_id}`}>
-                Open product
-              </s-link>,
-              !bom.is_producible ? (
-                "Review product classification"
-              ) : Number(bom.line_count ?? 0) === 0 ? (
-                <s-link href={`/app/boms?parentItemId=${bom.parent_item_id}`}>
-                  Add components
-                </s-link>
-              ) : (
-                <s-link href={`/app/boms?parentItemId=${bom.parent_item_id}`}>
-                  Review BOM
-                </s-link>
-              ),
-            ],
-          }))}
-        />
-      </s-section>
+      {!parent ? (
+        <s-section heading="Active BOMs">
+          <DataTable
+            headings={["Parent product", "Active BOM", "Components", "Product", "Next action"]}
+            rows={(data.boms ?? []).map((bom: any) => ({
+              id: bom.id,
+              href: `/app/boms?parentItemId=${bom.parent_item_id}`,
+              cells: [
+                <strong>
+                  {bom.parent_sku} {bom.parent_title}
+                </strong>,
+                <MoneylessBadge tone={bom.is_active ? "success" : "warning"}>
+                  {bom.is_active ? "active" : "inactive"}
+                </MoneylessBadge>,
+                bom.line_count,
+                <s-link href={`/app/items/${bom.parent_item_id}`}>
+                  Open product
+                </s-link>,
+                !bom.is_producible ? (
+                  "Review product classification"
+                ) : Number(bom.line_count ?? 0) === 0 ? (
+                  <s-link href={`/app/boms?parentItemId=${bom.parent_item_id}`}>
+                    Add components
+                  </s-link>
+                ) : (
+                  <s-link href={`/app/boms?parentItemId=${bom.parent_item_id}`}>
+                    Review BOM
+                  </s-link>
+                ),
+              ],
+            }))}
+          />
+        </s-section>
+      ) : null}
 
-      <s-section heading="Run MRP">
-        <Form method="post">
-          <input type="hidden" name="intent" value="runOperationsMrp" />
-          <s-button variant="primary" type="submit">
-            Plan open Shopify orders
-          </s-button>
-        </Form>
-      </s-section>
+      {!parent ? (
+        <s-section heading="MRP planning">
+          <s-stack direction="block" gap="base">
+            <s-box padding="base" borderWidth="base" borderRadius="base">
+              <s-stack direction="block" gap="small">
+                <s-paragraph>
+                  MRP is an operational planning step. Maintain product and BOM
+                  master data first.
+                </s-paragraph>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="runOperationsMrp" />
+                  <s-button variant="primary" type="submit">
+                    Plan open Shopify orders
+                  </s-button>
+                </Form>
+              </s-stack>
+            </s-box>
 
-      <s-section heading="MRP runs">
-        <DataTable
-          headings={["Run", "Scenario", "Status", "Lines", "Next action"]}
-          rows={(data.mrpRuns ?? []).map((run: any) => [
-            <Link to={`/app/boms?mrpRunId=${run.id}`}>
-              <strong>{String(run.id).slice(0, 8)}</strong>
-            </Link>,
-            run.scenario_mode,
-            <MoneylessBadge tone={run.status === "committed" ? "success" : "info"}>
-              {run.status}
-            </MoneylessBadge>,
-            run.line_count,
-            run.status === "committed" ? (
-              <s-link href="/app/procurement">Open needs</s-link>
-            ) : (
-              <Form method="post">
-                <input type="hidden" name="intent" value="commit" />
-                <input type="hidden" name="mrpRunId" value={run.id} />
-                <s-button type="submit">Commit needs</s-button>
-              </Form>
-            ),
-          ])}
-        />
-      </s-section>
+            <DataTable
+              headings={["Run", "Scenario", "Status", "Lines", "Next action"]}
+              rows={(data.mrpRuns ?? []).map((run: any) => [
+                <Link to={`/app/boms?mrpRunId=${run.id}`}>
+                  <strong>{String(run.id).slice(0, 8)}</strong>
+                </Link>,
+                run.scenario_mode,
+                <MoneylessBadge tone={run.status === "committed" ? "success" : "info"}>
+                  {run.status}
+                </MoneylessBadge>,
+                run.line_count,
+                run.status === "committed" ? (
+                  <s-link href="/app/procurement">Open needs</s-link>
+                ) : (
+                  <Form method="post">
+                    <input type="hidden" name="intent" value="commit" />
+                    <input type="hidden" name="mrpRunId" value={run.id} />
+                    <s-button type="submit">Commit needs</s-button>
+                  </Form>
+                ),
+              ])}
+            />
+          </s-stack>
+        </s-section>
+      ) : null}
 
-      {data.mrpDetail?.run ? (
+      {!parent && data.mrpDetail?.run ? (
         <s-section heading="Selected MRP run detail">
           <DataTable
             headings={["Item", "Demand", "Available", "Shortage", "Recommended action", "Explanation"]}
