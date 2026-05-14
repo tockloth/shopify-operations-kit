@@ -156,6 +156,34 @@ function reviewState(item: any, preferredSupplier: any, activeBomCount: number) 
   };
 }
 
+function shopifyStatus(item: any) {
+  if (!item.shopify_product_gid) {
+    return { label: "Operations item", tone: "neutral" as const };
+  }
+  if (!item.is_active || item.product_status === "MISSING") {
+    return { label: "Missing from latest sync", tone: "critical" as const };
+  }
+  if (item.product_status === "DRAFT") {
+    return { label: "Draft", tone: "warning" as const };
+  }
+  if (item.product_status === "ARCHIVED") {
+    return { label: "Archived", tone: "neutral" as const };
+  }
+  if (
+    item.product_status === "ACTIVE" &&
+    (item.shopify_published_at || item.shopify_online_store_url)
+  ) {
+    return { label: "On shop", tone: "success" as const };
+  }
+  if (item.product_status === "ACTIVE") {
+    return { label: "Active, not published", tone: "warning" as const };
+  }
+  return {
+    label: item.product_status ?? "Shopify synced",
+    tone: "info" as const,
+  };
+}
+
 export default function ProductDetail() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
@@ -208,6 +236,7 @@ export default function ProductDetail() {
     (line: any) => line.is_active && line.component_id,
   );
   const state = reviewState(item, preferredSupplier, activeBomCount);
+  const shopifyState = shopifyStatus(item);
 
   return (
     <s-page heading={`${item.sku} · ${item.title}`}>
@@ -235,6 +264,7 @@ export default function ProductDetail() {
               headings={[
                 "Product",
                 "Shopify context",
+                "Shopify status",
                 "Type",
                 "Operational roles",
                 "Review state",
@@ -251,6 +281,9 @@ export default function ProductDetail() {
                     : item.shopify_variant_gid
                       ? "Shopify variant linked"
                       : "Operations item",
+                  <MoneylessBadge tone={shopifyState.tone}>
+                    {shopifyState.label}
+                  </MoneylessBadge>,
                   <MoneylessBadge>{itemTypeLabel(item.item_type)}</MoneylessBadge>,
                   <div className="kit-inline-badges">
                     {item.is_sellable ? (

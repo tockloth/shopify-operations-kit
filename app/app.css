@@ -164,6 +164,28 @@
   gap: 8px;
 }
 
+.kit-process-guide {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: #5c5f62;
+  font-size: 13px;
+}
+
+.kit-process-guide span {
+  padding: 6px 8px;
+  border: 1px solid #dcdfe4;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.kit-process-guide span:not(:last-child)::after {
+  content: "→";
+  margin-left: 8px;
+  color: #8c9196;
+}
+
 .kit-step-card {
   min-height: 86px;
   padding: 12px;

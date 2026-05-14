@@ -31,6 +31,33 @@ function formatDate(value?: string | null) {
   return date.toLocaleDateString();
 }
 
+function formatAddress(address?: any) {
+  if (!address) return "No shipping address";
+  return [
+    address.name,
+    address.address1,
+    address.address2,
+    address.zip,
+    address.city,
+    address.provinceCode,
+    address.countryCodeV2,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function shippingBlockReason(order: any, shippingAddress?: any) {
+  const missing = [
+    order.customer_name ? null : "customer name",
+    order.customer_email ? null : "customer email",
+    shippingAddress ? null : "shipping address",
+  ].filter(Boolean);
+
+  return missing.length > 0
+    ? `Missing ${missing.join(", ")}. Logistics shipment creation will be blocked.`
+    : null;
+}
+
 type Decision = {
   label:
     | "Ready from stock"
@@ -172,6 +199,7 @@ export default function OrderDetail() {
       </s-page>
     );
   }
+  const shippingReason = shippingBlockReason(order, shippingAddress);
 
   const lineStates = lines.map((line) => ({
     line,
@@ -312,20 +340,31 @@ export default function OrderDetail() {
             ],
           ]}
         />
-        {shippingAddress ? (
-          <s-paragraph>
-            Ship to:{" "}
-            {[
-              shippingAddress.name ?? order.customer_name,
-              shippingAddress.address1,
-              shippingAddress.zip,
-              shippingAddress.city,
-              shippingAddress.countryCodeV2,
-            ]
-              .filter(Boolean)
-              .join(", ")}
-          </s-paragraph>
-        ) : null}
+      </s-section>
+
+      <s-section heading="Customer / shipping">
+        <DataTable
+          headings={["Customer", "Email", "Shipping address", "Logistics"]}
+          rows={[
+            [
+              order.customer_name ?? "No customer name",
+              order.customer_email ?? "No customer email",
+              shippingAddress ? (
+                formatAddress(shippingAddress)
+              ) : (
+                <MoneylessBadge tone="warning">Missing</MoneylessBadge>
+              ),
+              shippingReason ? (
+                <s-stack direction="block" gap="small">
+                  <MoneylessBadge tone="warning">Blocked</MoneylessBadge>
+                  <s-text>{shippingReason}</s-text>
+                </s-stack>
+              ) : (
+                <MoneylessBadge tone="success">Ready</MoneylessBadge>
+              ),
+            ],
+          ]}
+        />
       </s-section>
 
       <s-section heading="Operational status">

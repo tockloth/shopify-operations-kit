@@ -29,7 +29,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const result = await syncShopifyProducts(context.pool, context.ctx.tenantId, admin);
   return {
-    message: `${result.products} Shopify product(s) and ${result.variants} variant(s) synced into Operations Kit.`,
+    message: `${result.products} Shopify product(s) and ${result.variants} variant(s) synced into Operations Kit. ${result.markedMissing} stale product record(s) marked missing.`,
   };
 };
 
@@ -37,6 +37,32 @@ function shopifyProductUrl(shopDomain: string, legacyId?: string | null) {
   if (!legacyId) return null;
   const shop = shopDomain.replace(".myshopify.com", "");
   return `https://admin.shopify.com/store/${shop}/products/${legacyId}`;
+}
+
+function shopVisibility(item: any) {
+  if (item.product_source !== "shopify") {
+    return { label: "Not in Shopify", tone: "neutral" as const };
+  }
+  if (!item.is_active || item.product_status === "MISSING") {
+    return { label: "Stale / missing", tone: "critical" as const };
+  }
+  if (item.product_status === "DRAFT") {
+    return { label: "Draft", tone: "warning" as const };
+  }
+  if (item.product_status === "ARCHIVED") {
+    return { label: "Archived", tone: "neutral" as const };
+  }
+  if (item.shop_product_flag === "shop") {
+    return { label: "On shop", tone: "success" as const };
+  }
+  if (
+    item.product_status === "ACTIVE" &&
+    !item.shopify_published_at &&
+    !item.shopify_online_store_url
+  ) {
+    return { label: "Not published", tone: "warning" as const };
+  }
+  return { label: "Shopify synced", tone: "info" as const };
 }
 
 export default function Items() {
@@ -111,8 +137,8 @@ export default function Items() {
               <MoneylessBadge tone={item.product_source === "shopify" ? "success" : "info"}>
                 {item.product_source === "shopify" ? "Shopify" : "Operations"}
               </MoneylessBadge>,
-              <MoneylessBadge tone={item.shop_product_flag === "shop" ? "success" : "neutral"}>
-                {item.shop_product_flag === "shop" ? "On shop" : "Not on shop"}
+              <MoneylessBadge tone={shopVisibility(item).tone}>
+                {shopVisibility(item).label}
               </MoneylessBadge>,
               <MoneylessBadge tone={item.product_status === "ACTIVE" ? "success" : "neutral"}>
                 {item.product_status ?? "operational"}

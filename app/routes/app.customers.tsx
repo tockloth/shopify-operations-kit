@@ -106,6 +106,7 @@ export default function Customers() {
           ]}
           rows={(data.customers ?? []).map((customer: any) => ({
             id: customer.id,
+            href: `/app/customers/${customer.id}`,
             cells: [
               <strong>
                 {customer.display_name ??

@@ -10,14 +10,20 @@ type ShopifyAdmin = {
 };
 
 const PRODUCT_SYNC_QUERY = `#graphql
-  query OperationsKitProducts($first: Int!) {
-    products(first: $first, sortKey: UPDATED_AT, reverse: true) {
+  query OperationsKitProducts($first: Int!, $after: String) {
+    products(first: $first, after: $after, sortKey: UPDATED_AT, reverse: true) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
       nodes {
         id
         legacyResourceId
         title
         handle
         status
+        publishedAt
+        onlineStoreUrl
         variants(first: 100) {
           nodes {
             id
@@ -251,6 +257,8 @@ async function upsertShopifyVariantItem(
     productTitle: string;
     productHandle: string | null;
     productStatus: string | null;
+    productPublishedAt: string | null;
+    onlineStoreUrl: string | null;
     variantGid: string;
     variantLegacyId: string | null;
     variantTitle: string | null;
@@ -258,6 +266,7 @@ async function upsertShopifyVariantItem(
     inventoryItemGid: string | null;
     inventoryItemLegacyId: string | null;
     inventoryQuantity: number | null;
+    syncSeenAt: string;
   },
 ) {
   const sku =
@@ -269,6 +278,9 @@ async function upsertShopifyVariantItem(
     input.variantTitle && input.variantTitle !== "Default Title"
       ? `${input.productTitle} / ${input.variantTitle}`
       : input.productTitle;
+  const isCurrentlyOnShop =
+    input.productStatus === "ACTIVE" &&
+    Boolean(input.productPublishedAt || input.onlineStoreUrl);
 
   const result = await db.query<{ id: string }>(
     `
@@ -276,13 +288,14 @@ async function upsertShopifyVariantItem(
         tenant_id, shopify_product_gid, shopify_product_legacy_id,
         shopify_variant_gid, shopify_variant_legacy_id,
         shopify_inventory_item_gid, product_handle, product_status,
+        shopify_published_at, shopify_online_store_url, shopify_last_seen_at,
         variant_title, sku, title, item_type, unit, is_sellable,
-        is_purchasable, is_producible, shopify_inventory_available
+        is_purchasable, is_producible, is_active, shopify_inventory_available
       )
       values (
         $1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, 'product', 'pcs', true,
-        false, false, $12
+        $9, $10, $11, $12, $13, $14, 'product', 'pcs', $15,
+        false, false, true, $16
       )
       on conflict (tenant_id, shopify_variant_gid)
       do update set
@@ -292,9 +305,13 @@ async function upsertShopifyVariantItem(
         shopify_inventory_item_gid = excluded.shopify_inventory_item_gid,
         product_handle = excluded.product_handle,
         product_status = excluded.product_status,
+        shopify_published_at = coalesce(excluded.shopify_published_at, items.shopify_published_at),
+        shopify_online_store_url = coalesce(excluded.shopify_online_store_url, items.shopify_online_store_url),
+        shopify_last_seen_at = coalesce(excluded.shopify_last_seen_at, items.shopify_last_seen_at),
         variant_title = excluded.variant_title,
         sku = excluded.sku,
         title = excluded.title,
+        is_active = true,
         shopify_inventory_available = excluded.shopify_inventory_available,
         updated_at = now()
       returning id
@@ -308,9 +325,13 @@ async function upsertShopifyVariantItem(
       input.inventoryItemGid,
       input.productHandle,
       input.productStatus,
+      input.productPublishedAt,
+      input.onlineStoreUrl,
+      input.syncSeenAt,
       input.variantTitle,
       sku,
       title,
+      isCurrentlyOnShop,
       input.inventoryQuantity,
     ],
   );
@@ -384,14 +405,20 @@ export async function syncShopifyProducts(
   admin: ShopifyAdmin,
 ) {
   return withKitTransaction(db, async (tx) => {
-    const data = await graphqlJson<{
+    type ProductSyncData = {
       products: {
+        pageInfo: {
+          hasNextPage: boolean;
+          endCursor: string | null;
+        };
         nodes: Array<{
           id: string;
           legacyResourceId: string | null;
           title: string;
           handle: string | null;
           status: string | null;
+          publishedAt: string | null;
+          onlineStoreUrl: string | null;
           variants: {
             nodes: Array<{
               id: string;
@@ -407,30 +434,72 @@ export async function syncShopifyProducts(
           };
         }>;
       };
-    }>(admin, PRODUCT_SYNC_QUERY, { first: 50 });
+    };
 
+    const syncSeenAt = new Date().toISOString();
+    const syncedProductGids: string[] = [];
+    let after: string | null = null;
+    let products = 0;
     let variants = 0;
-    for (const product of data.products.nodes) {
-      for (const variant of product.variants.nodes) {
-        await upsertShopifyVariantItem(tx, tenantId, {
-          productGid: product.id,
-          productLegacyId: product.legacyResourceId,
-          productTitle: product.title,
-          productHandle: product.handle,
-          productStatus: product.status,
-          variantGid: variant.id,
-          variantLegacyId: variant.legacyResourceId,
-          variantTitle: variant.title,
-          sku: variant.sku,
-          inventoryItemGid: variant.inventoryItem?.id ?? null,
-          inventoryItemLegacyId: variant.inventoryItem?.legacyResourceId ?? null,
-          inventoryQuantity: variant.inventoryQuantity,
-        });
-        variants += 1;
-      }
-    }
 
-    return { products: data.products.nodes.length, variants };
+    do {
+      const data: ProductSyncData = await graphqlJson<ProductSyncData>(
+        admin,
+        PRODUCT_SYNC_QUERY,
+        { first: 50, after },
+      );
+      products += data.products.nodes.length;
+
+      for (const product of data.products.nodes) {
+        syncedProductGids.push(product.id);
+        for (const variant of product.variants.nodes) {
+          await upsertShopifyVariantItem(tx, tenantId, {
+            productGid: product.id,
+            productLegacyId: product.legacyResourceId,
+            productTitle: product.title,
+            productHandle: product.handle,
+            productStatus: product.status,
+            productPublishedAt: product.publishedAt,
+            onlineStoreUrl: product.onlineStoreUrl,
+            variantGid: variant.id,
+            variantLegacyId: variant.legacyResourceId,
+            variantTitle: variant.title,
+            sku: variant.sku,
+            inventoryItemGid: variant.inventoryItem?.id ?? null,
+            inventoryItemLegacyId:
+              variant.inventoryItem?.legacyResourceId ?? null,
+            inventoryQuantity: variant.inventoryQuantity,
+            syncSeenAt,
+          });
+          variants += 1;
+        }
+      }
+
+      after = data.products.pageInfo.hasNextPage
+        ? data.products.pageInfo.endCursor
+        : null;
+    } while (after);
+
+    const missing = await tx.query<{ count: string }>(
+      `
+        update items
+        set is_active = false,
+            product_status = 'MISSING',
+            shopify_inventory_available = null,
+            updated_at = now()
+        where tenant_id = $1
+          and shopify_product_gid is not null
+          and not (shopify_product_gid = any($2::text[]))
+        returning id
+      `,
+      [tenantId, syncedProductGids],
+    );
+
+    return {
+      products,
+      variants,
+      markedMissing: missing.rows.length,
+    };
   });
 }
 
@@ -586,6 +655,8 @@ export async function syncShopifyOrders(
                 productTitle: line.variant.product.title,
                 productHandle: line.variant.product.handle,
                 productStatus: line.variant.product.status,
+                productPublishedAt: null,
+                onlineStoreUrl: null,
                 variantGid: line.variant.id,
                 variantLegacyId: line.variant.legacyResourceId,
                 variantTitle: line.variant.title,
@@ -593,6 +664,7 @@ export async function syncShopifyOrders(
                 inventoryItemGid: line.variant.inventoryItem?.id ?? null,
                 inventoryItemLegacyId: line.variant.inventoryItem?.legacyResourceId ?? null,
                 inventoryQuantity: null,
+                syncSeenAt: new Date().toISOString(),
               })
             : await upsertShopifyOrderLineFallbackItem(tx, tenantId, {
                 lineItemGid: line.id,

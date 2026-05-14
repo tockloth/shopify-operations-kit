@@ -82,13 +82,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 function purchaseOrderBusinessStatus(po: any) {
   if (po.status === "cancelled") return "cancelled";
-  if (po.receipt_status === "closed") return "stocked";
-  if (po.receipt_status === "putaway_pending") return "qc-approved";
+  if (po.receipt_status === "closed") return "Inventory booked";
+  if (po.receipt_status === "putaway_pending") return "Putaway pending";
   if (po.receipt_status === "qc_required" || po.receipt_status === "posted")
-    return "delivered";
-  if (po.status === "acknowledged" || po.status === "sent") return "ordered";
-  if (po.status === "approved") return "approved";
-  return "created";
+    return "Receiving / QC";
+  if (po.status === "acknowledged") return "Awaiting receipt";
+  if (po.status === "sent") return "Sent to supplier";
+  if (po.status === "approved") return "Purchase Order created";
+  return "Purchase Order created";
 }
 
 type BadgeTone =
@@ -101,8 +102,13 @@ type BadgeTone =
   | "critical";
 
 function purchaseOrderStatusTone(status: string): BadgeTone {
-  if (status === "stocked" || status === "qc-approved") return "success";
-  if (status === "ordered" || status === "delivered") return "info";
+  if (status === "Inventory booked") return "success";
+  if (
+    status === "Sent to supplier" ||
+    status === "Awaiting receipt" ||
+    status === "Receiving / QC"
+  )
+    return "info";
   if (status === "cancelled") return "critical";
   return "warning";
 }
@@ -119,7 +125,7 @@ function nextReceivingAction(order: any, receipts: any[]) {
   const openReceipt = receipts.find((receipt) => receipt.status !== "cancelled");
   if (openReceipt) {
     if (openReceipt.status === "closed") return "Complete";
-    if (openReceipt.status === "putaway_pending") return "Putaway";
+    if (openReceipt.status === "putaway_pending") return "Put away to inventory";
     return "QC";
   }
   if (order.status === "acknowledged") return "Create goods receipt";
@@ -179,7 +185,7 @@ export default function PurchaseOrderDetail() {
       <s-page heading="Purchase order">
         <s-section>
           <s-stack direction="block" gap="small">
-            <Link to="/app/procurement">Back to purchase orders</Link>
+            <Link to="/app/procurement">Back to Procurement</Link>
             <s-heading>Purchase order not found</s-heading>
           </s-stack>
         </s-section>
@@ -197,14 +203,17 @@ export default function PurchaseOrderDetail() {
     <s-page heading={`Purchase order ${order.display_number}`}>
       <s-section>
         <s-stack direction="block" gap="small">
-          <Link to="/app/procurement">Back to purchase orders</Link>
+          <s-stack direction="inline" gap="small">
+            <Link to="/app/procurement">Back to Procurement</Link>
+            <s-link href="/app/receiving">Back to Receiving list</s-link>
+          </s-stack>
           {actionData?.message ? (
             <s-box padding="base" borderWidth="base" borderRadius="base">
               <s-stack direction="block" gap="small">
                 <s-paragraph>{actionData.message}</s-paragraph>
                 {"receiptId" in actionData && actionData.receiptId ? (
                   <s-link href={`/app/receiving/${actionData.receiptId}`}>
-                    Open Receipt detail
+                    Open Receipt
                   </s-link>
                 ) : null}
               </s-stack>
@@ -219,8 +228,9 @@ export default function PurchaseOrderDetail() {
                 </MoneylessBadge>
               </s-stack>
               <s-paragraph>
-                Lifecycle: Draft {"->"} Procurement Manager approval {"->"} Sent{" "}
-                {"->"} Acknowledged {"->"} Receiving/QC.
+                Lifecycle: Draft {"->"} Procurement approval {"->"} Sent{" "}
+                {"->"} Supplier acknowledged {"->"} Goods Receipt {"->"} QC{" "}
+                {"->"} Putaway / Einlagerung.
               </s-paragraph>
               <s-stack direction="inline" gap="small">
                 {order.status === "draft" ? (
@@ -271,7 +281,7 @@ export default function PurchaseOrderDetail() {
               "Receiving status",
               "Goods Receipt",
               "Lines",
-              "Next action",
+            "Next action",
             ]}
             rows={[
               [
@@ -317,17 +327,7 @@ export default function PurchaseOrderDetail() {
                 Create goods receipt
               </s-button>
             </Form>
-          ) : hasOpenReceipt ? (
-            <s-stack direction="inline" gap="small">
-              {receipts
-                .filter((receipt: any) => receipt.status !== "cancelled")
-                .map((receipt: any) => (
-                  <s-link key={receipt.id} href={`/app/receiving/${receipt.id}`}>
-                    Open {receipt.receipt_number}
-                  </s-link>
-                ))}
-            </s-stack>
-          ) : (
+          ) : hasOpenReceipt ? null : (
             <s-paragraph>
               Receiving is available after the supplier acknowledges this
               Purchase Order.

@@ -108,18 +108,34 @@ function shopifyOrderUrl(shopDomain: string, legacyId?: string | null) {
 
 function statusTone(status?: string | null) {
   if (status === "Review required") return "critical";
-  if (status === "Ready for logistics") return "success";
-  if (status === "Procurement in progress" || status === "Production in progress") {
+  if (status === "Ready for logistics" || status === "Complete") return "success";
+  if (
+    status === "Needs planning" ||
+    status === "Purchase proposal ready" ||
+    status === "Putaway pending" ||
+    status === "Logistics blocked" ||
+    status === "Production in progress"
+  ) {
     return "warning";
   }
   return "info";
 }
 
-function compactSkus(value?: string | null) {
+function compactProducts(value?: string | null) {
   if (!value) return "No products";
-  const skus = value.split(", ").filter(Boolean);
-  if (skus.length <= 3) return value;
-  return `${skus.slice(0, 3).join(", ")} +${skus.length - 3} more`;
+  const products = value.split(" || ").filter(Boolean);
+  if (products.length <= 2) return products.join(" · ");
+  return `${products.slice(0, 2).join(" · ")} · +${products.length - 2} more`;
+}
+
+function shippingBlockReason(order: any) {
+  const missing = [
+    order.customer_name ? null : "missing customer name",
+    order.customer_email ? null : "missing customer email",
+    order.shipping_address ? null : "missing shipping address",
+  ].filter(Boolean);
+
+  return missing.length > 0 ? missing.join(", ") : null;
 }
 
 export default function Orders() {
@@ -130,14 +146,6 @@ export default function Orders() {
   }
 
   const orders = data.orders ?? [];
-  const statusCounts = {
-    review: orders.filter((order: any) => order.operational_status === "Review required").length,
-    procurement: orders.filter((order: any) => order.operational_status === "Procurement in progress").length,
-    production: orders.filter((order: any) => order.operational_status === "Production in progress").length,
-    ready: orders.filter((order: any) => order.operational_status === "Ready for logistics").length,
-    inProgress: orders.filter((order: any) => order.operational_status === "In progress").length,
-  };
-
   return (
     <s-page heading="Orders">
       <s-section>
@@ -179,18 +187,20 @@ export default function Orders() {
         <DataTable
           headings={[
             "Review required",
-            "Procurement in progress",
-            "Production in progress",
+            "Needs planning",
+            "Purchase proposal ready",
+            "Receiving / QC",
             "Ready for logistics",
-            "In progress",
+            "Complete",
           ]}
           rows={[
             [
-              statusCounts.review.toLocaleString(),
-              statusCounts.procurement.toLocaleString(),
-              statusCounts.production.toLocaleString(),
-              statusCounts.ready.toLocaleString(),
-              statusCounts.inProgress.toLocaleString(),
+              orders.filter((order: any) => order.operational_status === "Review required").length.toLocaleString(),
+              orders.filter((order: any) => order.operational_status === "Needs planning").length.toLocaleString(),
+              orders.filter((order: any) => order.operational_status === "Purchase proposal ready").length.toLocaleString(),
+              orders.filter((order: any) => order.operational_status === "Receiving / QC").length.toLocaleString(),
+              orders.filter((order: any) => order.operational_status === "Ready for logistics").length.toLocaleString(),
+              orders.filter((order: any) => order.operational_status === "Complete").length.toLocaleString(),
             ],
           ]}
         />
@@ -232,13 +242,17 @@ export default function Orders() {
                     <s-text>
                       {lineCount.toLocaleString()} {lineCount === 1 ? "line" : "lines"}
                     </s-text>
-                    <s-text>{compactSkus(order.skus)}</s-text>
+                    <s-text>{compactProducts(order.product_summary ?? order.skus)}</s-text>
                   </s-stack>,
                   <s-stack direction="block" gap="small">
                     <MoneylessBadge tone={statusTone(order.operational_status)}>
                       {order.operational_status ?? "In progress"}
                     </MoneylessBadge>
-                    <s-text>{order.next_reason ?? "Review line decisions."}</s-text>
+                    <s-text>
+                      {order.operational_status === "Logistics blocked"
+                        ? shippingBlockReason(order)
+                        : order.next_reason ?? "Review line decisions."}
+                    </s-text>
                   </s-stack>,
                   <s-stack direction="block" gap="small">
                     <s-link href={order.next_action_href ?? `/app/orders/${order.id}`}>

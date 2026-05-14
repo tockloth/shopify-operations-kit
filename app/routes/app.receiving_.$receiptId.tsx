@@ -53,7 +53,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return { message: "No putaway was performed for this receipt line." };
     }
     return {
-      message: `Putaway completed. Inventory was updated and the receipt status was refreshed.${
+      message: `Putaway completed. Accepted quantity was booked into inventory.${
         result.paymentId
           ? " Payment entry is now open for this purchase order."
           : ""
@@ -145,7 +145,13 @@ export default function ReceiptDetail() {
     return (
       <s-page heading="Receipt not found">
         <s-section>
-          <s-link href="/app/receiving">Back to Receiving</s-link>
+          <s-stack direction="inline" gap="small">
+            <s-link href="/app/receiving">Back to Receiving</s-link>
+            <s-link href="/app/procurement">Back to Procurement</s-link>
+            <s-link href={`/app/procurement/${receipt.purchase_order_id}`}>
+              Back to Purchase Order
+            </s-link>
+          </s-stack>
         </s-section>
       </s-page>
     );
@@ -326,7 +332,10 @@ export default function ReceiptDetail() {
       ) : null}
 
       {putawayLines.length > 0 ? (
-        <s-section heading="Putaway actions">
+        <s-section heading="Putaway / Einlagerung actions">
+          <s-paragraph>
+            Accepted goods are booked into inventory when they are put away.
+          </s-paragraph>
           <s-stack direction="block" gap="base">
             {putawayLines.map((line: any) => (
               <s-box
@@ -348,14 +357,14 @@ export default function ReceiptDetail() {
                   />
                   <s-stack direction="block" gap="small">
                     <s-heading>
-                      Putaway · {line.sku} {line.title}
+                      Putaway / Einlagerung · {line.sku} {line.title}
                     </s-heading>
                     <s-paragraph>
                       {Number(line.accepted_quantity).toLocaleString()}{" "}
-                      {line.unit} ready for MAIN inventory.
+                      {line.unit} ready to book into MAIN inventory.
                     </s-paragraph>
                     <s-button variant="primary" type="submit">
-                      Put away
+                      Put away to inventory
                     </s-button>
                   </s-stack>
                 </Form>

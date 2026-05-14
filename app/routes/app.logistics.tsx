@@ -4,6 +4,7 @@ import { Form, useActionData, useLoaderData } from "react-router";
 import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
 import {
+  backfillTestShippingAddressForOpenOrders,
   createShippingOrdersFromOpenOperationsOrders,
   loadShippableOperationsOrders,
   loadShippingOrders,
@@ -56,6 +57,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { message: "Shipping order updated." };
   }
 
+  if (intent === "backfillTestShippingAddress") {
+    const result = await backfillTestShippingAddressForOpenOrders(
+      context.pool,
+      context.ctx.tenantId,
+    );
+    return {
+      message: `${result.updated} open order(s) backfilled with a local test shipping address.`,
+    };
+  }
+
   return { message: "No action was performed." };
 };
 
@@ -75,6 +86,14 @@ export default function Logistics() {
           address.countryCodeV2,
         ].filter(Boolean).join(", ")
       : "No address";
+  const blockingReason = (order: any) =>
+    [
+      order.customer_name ? null : "Missing customer name",
+      order.customer_email ? null : "Missing customer email",
+      order.shipping_address ? null : "Missing shipping address",
+    ]
+      .filter(Boolean)
+      .join(" · ");
 
   return (
     <s-page heading="Logistics">
@@ -89,24 +108,65 @@ export default function Logistics() {
             <s-paragraph>{actionData.message}</s-paragraph>
           </s-box>
         ) : null}
+        {process.env.NODE_ENV !== "production" ? (
+          <s-box padding="base" borderWidth="base" borderRadius="base">
+            <s-stack direction="block" gap="small">
+              <s-text>
+                Development only: backfill a local test shipping address for
+                open orders that are missing customer or shipping data.
+              </s-text>
+              <Form method="post">
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="backfillTestShippingAddress"
+                />
+                <s-button type="submit">
+                  Backfill test shipping address for open local test orders
+                </s-button>
+              </Form>
+            </s-stack>
+          </s-box>
+        ) : null}
       </s-section>
 
       <s-section heading="Ready for logistics">
         <DataTable
-          headings={["Order", "Customer", "Ship to", "Products", "Lines", "Status", "Action"]}
-          rows={(data.shippableOrders ?? []).map((order: any) => [
-            <strong>{order.order_name}</strong>,
-            order.customer_name ?? "No customer",
-            formatAddress(order.shipping_address),
-            order.skus ?? "",
-            order.line_count,
-            <MoneylessBadge>{order.status}</MoneylessBadge>,
-            <Form method="post">
-              <input type="hidden" name="intent" value="createShipping" />
-              <input type="hidden" name="operationsOrderId" value={order.id} />
-              <s-button variant="primary" type="submit">Create shipment</s-button>
-            </Form>,
-          ])}
+          headings={["Order", "Customer", "Ship to", "Products", "Lines", "Readiness", "Action"]}
+          rows={(data.shippableOrders ?? []).map((order: any) => {
+            const blocked = blockingReason(order);
+
+            return [
+              <strong>{order.order_name}</strong>,
+              order.customer_name ?? "No customer",
+              formatAddress(order.shipping_address),
+              order.skus ?? "",
+              order.line_count,
+              blocked ? (
+                <s-stack direction="block" gap="small">
+                  <MoneylessBadge tone="warning">Blocked</MoneylessBadge>
+                  <s-text>{blocked}</s-text>
+                </s-stack>
+              ) : (
+                <MoneylessBadge tone="success">Ready</MoneylessBadge>
+              ),
+              blocked ? (
+                "Resolve customer / shipping data"
+              ) : (
+                <Form method="post">
+                  <input type="hidden" name="intent" value="createShipping" />
+                  <input
+                    type="hidden"
+                    name="operationsOrderId"
+                    value={order.id}
+                  />
+                  <s-button variant="primary" type="submit">
+                    Create shipment
+                  </s-button>
+                </Form>
+              ),
+            ];
+          })}
         />
       </s-section>
 

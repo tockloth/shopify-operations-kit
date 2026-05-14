@@ -22,10 +22,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!context.configured)
     return { configured: false, setupError: context.setupError };
 
+  const planningRun = await runOperationsMrp(context.pool, context.ctx.tenantId);
+  const autoPlanResult = await commitMrpRun(
+    context.pool,
+    context.ctx.tenantId,
+    planningRun.mrpRunId,
+  );
+
   return {
     configured: true,
     shopDomain: context.shopDomain,
     tenantId: context.ctx.tenantId,
+    autoPlanResult,
     needs: await loadPurchaseNeeds(context.pool, context.ctx.tenantId),
     purchaseOrders: await loadPurchaseOrders(
       context.pool,
@@ -123,13 +131,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 function purchaseOrderBusinessStatus(po: any) {
   if (po.status === "cancelled") return "cancelled";
-  if (po.receipt_status === "closed") return "stocked";
-  if (po.receipt_status === "putaway_pending") return "qc-approved";
+  if (po.payment_status && po.payment_status !== "paid") return "Payment open";
+  if (po.receipt_status === "closed") return "Received / put away";
+  if (po.receipt_status === "putaway_pending") return "Putaway pending";
   if (po.receipt_status === "qc_required" || po.receipt_status === "posted")
-    return "delivered";
-  if (po.status === "acknowledged" || po.status === "sent") return "ordered";
-  if (po.status === "approved") return "approved";
-  return "created";
+    return "Receiving / QC";
+  if (po.status === "acknowledged") return "Awaiting receipt";
+  if (po.status === "sent") return "Sent / ordered";
+  if (po.status === "approved") return "PO created";
+  return "PO created";
 }
 
 type BadgeTone =
@@ -142,14 +152,21 @@ type BadgeTone =
   | "critical";
 
 function purchaseOrderStatusTone(status: string): BadgeTone {
-  if (status === "stocked" || status === "qc-approved") return "success";
-  if (status === "ordered" || status === "delivered") return "info";
+  if (status === "Received / put away") return "success";
+  if (
+    status === "Sent / ordered" ||
+    status === "Awaiting receipt" ||
+    status === "Receiving / QC" ||
+    status === "Putaway pending" ||
+    status === "Payment open"
+  )
+    return "info";
   if (status === "cancelled") return "critical";
   return "warning";
 }
 
 function purchaseNeedStatus(need: any) {
-  if (!need.supplier_id) return "Needs supplier";
+  if (!need.supplier_id) return "Need supplier";
   return "Ready for PO";
 }
 
@@ -168,6 +185,50 @@ function formatMoney(amount: unknown, currencyCode: unknown) {
   return `${Number(amount ?? 0).toLocaleString()} ${String(currencyCode || "EUR")}`;
 }
 
+function roleSummary(row: any) {
+  return [
+    row.is_sellable ? "sellable" : null,
+    row.is_purchasable ? "purchasable" : null,
+    row.is_producible ? "producible" : null,
+  ]
+    .filter(Boolean)
+    .join(" / ") || "not classified";
+}
+
+function policySummary(row: any) {
+  return (
+    <s-stack direction="block" gap="small">
+      <s-text>Roles: {roleSummary(row)}</s-text>
+      <s-text>
+        Lead time: {Number(row.supplier_lead_time_days ?? row.max_lead_time_days ?? 7).toLocaleString()} days
+      </s-text>
+      <s-text>
+        Order qty: {Number(row.default_order_quantity ?? row.max_default_order_quantity ?? 1).toLocaleString()}
+      </s-text>
+      <s-text>
+        Min stock: {Number(row.min_inventory_quantity ?? row.max_min_inventory_quantity ?? 0).toLocaleString()}
+      </s-text>
+    </s-stack>
+  );
+}
+
+function nextPurchaseOrderAction(po: any) {
+  if (po.status === "draft" || po.status === "pending_approval") {
+    return "Open Purchase Order";
+  }
+  if (po.status === "approved") return "Send to supplier";
+  if (po.status === "sent") return "Acknowledge supplier";
+  if (po.status === "acknowledged" && !po.receipt_status) {
+    return "Create Goods Receipt";
+  }
+  if (po.receipt_status === "posted" || po.receipt_status === "qc_required") {
+    return "Complete QC";
+  }
+  if (po.receipt_status === "putaway_pending") return "Put away";
+  if (po.receipt_status === "closed") return "View inventory";
+  return "Open Purchase Order";
+}
+
 export default function Procurement() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
@@ -180,6 +241,12 @@ export default function Procurement() {
   }
 
   const suppliers = (data.suppliers ?? []) as any[];
+  const paymentByPurchaseOrder = new Map(
+    (data.payables ?? []).map((payment: any) => [
+      payment.purchase_order_id,
+      payment,
+    ]),
+  );
   const proposalRows = (data.needs ?? [])
     .filter((need: any) => !need.purchase_order_id)
     .map((need: any) => {
@@ -277,32 +344,50 @@ export default function Procurement() {
 
       return [
         <strong>Purchase proposal</strong>,
-        supplierCell,
         <MoneylessBadge tone={purchaseNeedStatusTone(need)}>
           {purchaseNeedStatus(need)}
         </MoneylessBadge>,
         itemCell,
+        policySummary(need),
+        supplierCell,
         `${Number(need.quantity).toLocaleString()} ${need.unit}`,
-        "0 EUR",
-        "",
+        `${Number(need.preferred_unit_price ?? 0).toLocaleString()} ${need.preferred_currency_code ?? "EUR"}`,
+        `${(Number(need.quantity ?? 0) * Number(need.preferred_unit_price ?? 0)).toLocaleString()} ${need.preferred_currency_code ?? "EUR"}`,
         actionCell,
       ];
     });
 
   const purchaseOrderRows = (data.purchaseOrders ?? []).map((po: any) => {
-    const businessStatus = purchaseOrderBusinessStatus(po);
+    const payment = paymentByPurchaseOrder.get(po.id) as any;
+    const row = { ...po, payment_status: payment?.status };
+    const businessStatus = purchaseOrderBusinessStatus(row);
+    const nextActionHref =
+      po.latest_receipt_id &&
+      ["posted", "qc_required", "putaway_pending", "closed"].includes(
+        String(po.receipt_status),
+      )
+        ? `/app/receiving/${po.latest_receipt_id}`
+        : `/app/procurement/${po.id}`;
     return [
       <Link to={`/app/procurement/${po.id}`}>
         <strong>{po.display_number}</strong>
       </Link>,
-      po.supplier_name,
       <MoneylessBadge tone={purchaseOrderStatusTone(businessStatus)}>
         {businessStatus}
       </MoneylessBadge>,
-      `${po.line_count} line${po.line_count === 1 ? "" : "s"}`,
-      "",
+      <s-stack direction="block" gap="small">
+        <strong>{po.item_summary ?? `${po.line_count} line${po.line_count === 1 ? "" : "s"}`}</strong>
+      </s-stack>,
+      policySummary(row),
+      <s-stack direction="block" gap="small">
+        <strong>{po.supplier_name}</strong>
+        {po.preferred_supplier_names ? (
+          <s-text>Preferred: {po.preferred_supplier_names}</s-text>
+        ) : null}
+      </s-stack>,
+      `${Number(po.total_quantity ?? 0).toLocaleString()} ${po.unit ?? "pcs"}`,
+      `${Number(po.unit_price ?? 0).toLocaleString()} ${po.currency_code ?? "EUR"}`,
       `${Number(po.net_amount ?? 0).toLocaleString()} ${po.currency_code ?? "EUR"}`,
-      formatDate(po.next_expected_delivery_date),
       <s-stack direction="inline" gap="small">
         {po.status === "draft" ? (
           <Form method="post">
@@ -345,6 +430,9 @@ export default function Procurement() {
         {po.status === "acknowledged" ? (
           <s-text>Awaiting receipt</s-text>
         ) : null}
+        <s-link href={nextActionHref}>
+          {nextPurchaseOrderAction(po)}
+        </s-link>
       </s-stack>,
     ];
   });
@@ -378,7 +466,7 @@ export default function Procurement() {
             <Form method="post">
               <input type="hidden" name="intent" value="planPurchaseNeeds" />
               <s-button variant="primary" type="submit">
-                Plan purchasing needs
+                Refresh purchasing needs
               </s-button>
             </Form>
           </div>
@@ -387,19 +475,43 @@ export default function Procurement() {
           <s-box padding="base" borderWidth="base" borderRadius="base">
             <s-paragraph>{actionData.message}</s-paragraph>
           </s-box>
+        ) : data.autoPlanResult ? (
+          <s-box padding="base" borderWidth="base" borderRadius="base">
+            <s-paragraph>
+              Purchasing needs were refreshed from open order shortages.
+            </s-paragraph>
+          </s-box>
         ) : null}
+      </s-section>
+
+      <s-section heading="Procurement process">
+        <div className="kit-process-guide">
+          {[
+            "Purchase proposal",
+            "Supplier assigned",
+            "Purchase Order",
+            "Supplier acknowledgement",
+            "Goods Receipt",
+            "QC",
+            "Putaway",
+            "Inventory",
+          ].map((step) => (
+            <span key={step}>{step}</span>
+          ))}
+        </div>
       </s-section>
 
       <s-section heading="Purchase orders">
         <DataTable
           headings={[
-            "PO",
-            "Supplier",
+            "Reference",
             "Status",
-            "Item / lines",
+            "Item",
+            "Product context",
+            "Supplier",
             "Quantity",
-            "Net value",
-            "Expected delivery",
+            "Unit price",
+            "Line value",
             "Action",
           ]}
           rows={purchaseOrderSectionRows}
