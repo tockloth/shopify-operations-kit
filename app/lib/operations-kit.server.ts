@@ -3217,6 +3217,13 @@ export async function addBomLineToItem(
   },
 ) {
   return withKitTransaction(db, async (tx) => {
+    if (!input.componentItemId) {
+      throw new Error("Select a component before saving the BOM line.");
+    }
+    if (input.parentItemId === input.componentItemId) {
+      throw new Error("A product cannot be a component of itself.");
+    }
+
     const parent = await tx.query<{ is_producible: boolean }>(
       "select is_producible from items where tenant_id = $1 and id = $2",
       [tenantId, input.parentItemId],
@@ -3243,9 +3250,48 @@ export async function addBomLineToItem(
         on conflict (tenant_id, bom_id, component_item_id)
         do update set quantity = excluded.quantity, unit = 'pcs'
       `,
-      [tenantId, bom.rows[0].id, input.componentItemId, input.quantity],
+      [
+        tenantId,
+        bom.rows[0].id,
+        input.componentItemId,
+        Math.max(Number(input.quantity) || 1, 1),
+      ],
     );
   });
+}
+
+export async function createActiveBomForItem(
+  db: QueryExecutor,
+  tenantId: string,
+  parentItemId: string,
+) {
+  const parent = await db.query<{
+    id: string;
+    is_producible: boolean;
+    item_type: string;
+  }>(
+    "select id, is_producible, item_type from items where tenant_id = $1 and id = $2",
+    [tenantId, parentItemId],
+  );
+  if (!parent.rows[0]) {
+    throw new Error("Parent product not found.");
+  }
+  if (!parent.rows[0].is_producible) {
+    throw new Error("Only producible products can have an active BOM.");
+  }
+
+  const bom = await db.query<{ id: string }>(
+    `
+      insert into boms (tenant_id, parent_item_id, version, is_active)
+      values ($1, $2, '1', true)
+      on conflict (tenant_id, parent_item_id, version)
+      do update set is_active = true, updated_at = now()
+      returning id
+    `,
+    [tenantId, parentItemId],
+  );
+
+  return { bomId: bom.rows[0].id };
 }
 
 export async function savePreferredSupplierForItem(
@@ -4469,7 +4515,9 @@ export async function loadBoms(db: QueryExecutor, tenantId: string) {
   return (
     await db.query(
       `
-        select boms.id, boms.version, boms.is_active, parent.sku as parent_sku, parent.title as parent_title,
+        select boms.id, boms.parent_item_id, boms.version, boms.is_active,
+          parent.sku as parent_sku,
+          parent.title as parent_title,
           parent.is_producible,
           count(bom_lines.id)::int as line_count
         from boms
@@ -4482,6 +4530,115 @@ export async function loadBoms(db: QueryExecutor, tenantId: string) {
       [tenantId],
     )
   ).rows;
+}
+
+export async function loadBomProductContext(
+  db: QueryExecutor,
+  tenantId: string,
+  parentItemId: string | null,
+) {
+  if (!parentItemId) return null;
+
+  const parent = await db.query<{
+    id: string;
+    sku: string;
+    title: string;
+    item_type: string;
+    is_sellable: boolean;
+    is_purchasable: boolean;
+    is_producible: boolean;
+  }>(
+    `
+      select id, sku, title, item_type, is_sellable, is_purchasable, is_producible
+      from items
+      where tenant_id = $1 and id = $2
+    `,
+    [tenantId, parentItemId],
+  );
+  if (!parent.rows[0]) return null;
+
+  const activeBom = await db.query<{
+    id: string;
+    version: string;
+    is_active: boolean;
+    line_count: number;
+  }>(
+    `
+      select boms.id, boms.version, boms.is_active, count(bom_lines.id)::int as line_count
+      from boms
+      left join bom_lines on bom_lines.bom_id = boms.id
+        and bom_lines.tenant_id = boms.tenant_id
+      where boms.tenant_id = $1
+        and boms.parent_item_id = $2
+        and boms.is_active
+      group by boms.id
+      order by boms.version
+      limit 1
+    `,
+    [tenantId, parentItemId],
+  );
+  const bomId = activeBom.rows[0]?.id ?? null;
+
+  const bomLines = bomId
+    ? await db.query<{
+        id: string;
+        quantity: string | number;
+        unit: string;
+        component_id: string;
+        component_sku: string;
+        component_title: string;
+        item_type: string;
+        is_purchasable: boolean;
+        is_producible: boolean;
+      }>(
+        `
+          select
+            bom_lines.id,
+            bom_lines.quantity,
+            bom_lines.unit,
+            component.id as component_id,
+            component.sku as component_sku,
+            component.title as component_title,
+            component.item_type,
+            component.is_purchasable,
+            component.is_producible
+          from bom_lines
+          join items component on component.id = bom_lines.component_item_id
+          where bom_lines.tenant_id = $1 and bom_lines.bom_id = $2
+          order by component.sku
+        `,
+        [tenantId, bomId],
+      )
+    : { rows: [] };
+
+  const availableComponents = await db.query<{
+    id: string;
+    sku: string;
+    title: string;
+    item_type: string;
+    is_purchasable: boolean;
+    is_producible: boolean;
+  }>(
+    `
+      select id, sku, title, item_type, is_purchasable, is_producible
+      from items
+      where tenant_id = $1
+        and id <> $2
+        and (
+          item_type in ('component', 'raw_material')
+          or is_purchasable
+        )
+      order by sku
+    `,
+    [tenantId, parentItemId],
+  );
+
+  return {
+    parent: parent.rows[0],
+    activeBom: activeBom.rows[0] ?? null,
+    bomLines: bomLines.rows,
+    availableComponents: availableComponents.rows,
+  };
 }
 
 export async function loadMrpRuns(db: QueryExecutor, tenantId: string) {

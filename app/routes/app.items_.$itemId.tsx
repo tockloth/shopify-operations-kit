@@ -619,7 +619,7 @@ export default function ProductDetail() {
             {item.is_producible ? (
               <>
                 <DataTable
-                  headings={["Status", "Active BOMs", "Components", "Open"]}
+                  headings={["Status", "Active BOMs", "Components", "Next action"]}
                   rows={[
                     [
                       activeBomCount > 0 ? (
@@ -629,7 +629,11 @@ export default function ProductDetail() {
                       ),
                       activeBomCount,
                       activeBomComponentCount,
-                      <s-link href="/app/boms">Open BOMs</s-link>,
+                      <s-link href={`/app/boms?parentItemId=${item.id}`}>
+                        {activeBomCount > 0
+                          ? "Open BOM for this product"
+                          : "Create BOM for this product"}
+                      </s-link>,
                     ],
                   ]}
                 />

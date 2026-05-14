@@ -4,7 +4,10 @@ import { Form, Link, useActionData, useLoaderData } from "react-router";
 import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
 import {
+  addBomLineToItem,
   commitMrpRun,
+  createActiveBomForItem,
+  loadBomProductContext,
   loadBoms,
   loadMrpRunDetail,
   loadMrpRuns,
@@ -17,10 +20,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const url = new URL(request.url);
   const mrpRunId = url.searchParams.get("mrpRunId");
+  const parentItemId = url.searchParams.get("parentItemId");
 
   return {
     configured: true,
+    parentItemId,
     boms: await loadBoms(context.pool, context.ctx.tenantId),
+    bomContext: await loadBomProductContext(
+      context.pool,
+      context.ctx.tenantId,
+      parentItemId,
+    ),
     mrpRuns: await loadMrpRuns(context.pool, context.ctx.tenantId),
     mrpDetail: mrpRunId
       ? await loadMrpRunDetail(context.pool, context.ctx.tenantId, mrpRunId)
@@ -34,6 +44,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const form = await request.formData();
   const intent = String(form.get("intent"));
+  const parentItemId = String(form.get("parentItemId") || "");
+
+  if (intent === "createActiveBom") {
+    await createActiveBomForItem(
+      context.pool,
+      context.ctx.tenantId,
+      parentItemId,
+    );
+    return { message: "Active BOM created. Add components next." };
+  }
+
+  if (intent === "addBomLine") {
+    await addBomLineToItem(context.pool, context.ctx.tenantId, {
+      parentItemId,
+      componentItemId: String(form.get("componentItemId") || ""),
+      quantity: Math.max(Number(form.get("quantity") || 1), 1),
+    });
+    return { message: "BOM component saved." };
+  }
 
   if (intent === "runOperationsMrp") {
     const result = await runOperationsMrp(context.pool, context.ctx.tenantId);
@@ -59,10 +88,21 @@ export default function BomMrp() {
   if (!data.configured || !("boms" in data)) {
     return <SetupBanner message={data.setupError ?? "Database setup is incomplete."} />;
   }
+  const bomContext = data.bomContext as any;
+  const parent = bomContext?.parent as any;
+  const activeBom = bomContext?.activeBom as any;
+  const availableComponents = (bomContext?.availableComponents ?? []) as any[];
 
   return (
     <s-page heading="BOM and MRP">
       <s-section>
+        <s-stack direction="block" gap="small">
+          {parent ? (
+            <s-link href={`/app/items/${parent.id}`}>Back to product</s-link>
+          ) : (
+            <s-link href="/app/items">Back to products</s-link>
+          )}
+        </s-stack>
         <s-paragraph>
           Maintain the manufacturing relationship between sellable assemblies
           and their required materials, then run planning previews.
@@ -74,21 +114,134 @@ export default function BomMrp() {
         ) : null}
       </s-section>
 
+      {parent ? (
+        <s-section heading={`BOM for ${parent.sku} / ${parent.title}`}>
+          <s-stack direction="block" gap="base">
+            <DataTable
+              headings={["Parent product", "Status", "Active BOM", "Components", "Open"]}
+              rows={[
+                [
+                  <strong>
+                    {parent.sku} {parent.title}
+                  </strong>,
+                  parent.is_producible ? (
+                    <MoneylessBadge tone="success">Producible</MoneylessBadge>
+                  ) : (
+                    <MoneylessBadge tone="warning">Not producible</MoneylessBadge>
+                  ),
+                  activeBom ? (
+                    <MoneylessBadge tone="success">Active</MoneylessBadge>
+                  ) : (
+                    <MoneylessBadge tone="warning">Missing</MoneylessBadge>
+                  ),
+                  Number(activeBom?.line_count ?? 0).toLocaleString(),
+                  <s-link href={`/app/items/${parent.id}`}>Open product</s-link>,
+                ],
+              ]}
+            />
+
+            {!parent.is_producible ? (
+              <s-banner tone="warning">
+                Mark this item as producible on Product Detail before creating a BOM.
+              </s-banner>
+            ) : !activeBom ? (
+              <Form method="post">
+                <input type="hidden" name="intent" value="createActiveBom" />
+                <input type="hidden" name="parentItemId" value={parent.id} />
+                <s-button variant="primary" type="submit">
+                  Create active BOM
+                </s-button>
+              </Form>
+            ) : null}
+
+            {activeBom ? (
+              <>
+                <DataTable
+                  headings={["Component", "Type", "Policy", "Quantity"]}
+                  rows={(bomContext.bomLines ?? []).map((line: any) => [
+                    <strong>
+                      {line.component_sku} {line.component_title}
+                    </strong>,
+                    line.item_type,
+                    [
+                      line.is_purchasable ? "buy" : null,
+                      line.is_producible ? "make" : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" / ") || "component",
+                    `${Number(line.quantity ?? 0).toLocaleString()} ${line.unit}`,
+                  ])}
+                />
+
+                {availableComponents.length > 0 ? (
+                  <s-box padding="base" borderWidth="base" borderRadius="base">
+                    <Form method="post">
+                      <input type="hidden" name="intent" value="addBomLine" />
+                      <input type="hidden" name="parentItemId" value={parent.id} />
+                      <s-stack direction="block" gap="base">
+                        <s-grid grid-template-columns="minmax(0, 2fr) minmax(140px, 1fr)" gap="base">
+                          <s-select label="Component" name="componentItemId">
+                            {availableComponents.map((component: any) => (
+                              <s-option key={component.id} value={component.id}>
+                                {component.sku} / {component.title}
+                              </s-option>
+                            ))}
+                          </s-select>
+                          <s-number-field
+                            label="Quantity"
+                            name="quantity"
+                            min={1}
+                            step={1}
+                            value="1"
+                          ></s-number-field>
+                        </s-grid>
+                        <s-button variant="primary" type="submit">
+                          Add component
+                        </s-button>
+                      </s-stack>
+                    </Form>
+                  </s-box>
+                ) : (
+                  <s-banner tone="warning">
+                    Create component or material products before adding BOM lines.
+                  </s-banner>
+                )}
+              </>
+            ) : null}
+          </s-stack>
+        </s-section>
+      ) : null}
+
       <s-section heading="Active BOMs">
         <DataTable
-          headings={["Parent item", "Status", "Components", "Validation"]}
-          rows={(data.boms ?? []).map((bom: any) => [
-            <strong>
-              {bom.parent_sku} {bom.parent_title}
-            </strong>,
-            <MoneylessBadge tone={bom.is_active ? "success" : "warning"}>
-              {bom.is_active ? "active" : "inactive"}
-            </MoneylessBadge>,
-            bom.line_count,
-            bom.is_producible
-              ? "Valid for production MRP"
-              : "Parent must be producible before active MRP",
-          ])}
+          headings={["Parent product", "Active BOM", "Components", "Product", "Next action"]}
+          rows={(data.boms ?? []).map((bom: any) => ({
+            id: bom.id,
+            href: `/app/boms?parentItemId=${bom.parent_item_id}`,
+            cells: [
+              <strong>
+                {bom.parent_sku} {bom.parent_title}
+              </strong>,
+              <MoneylessBadge tone={bom.is_active ? "success" : "warning"}>
+                {bom.is_active ? "active" : "inactive"}
+              </MoneylessBadge>,
+              bom.line_count,
+              <s-link href={`/app/items/${bom.parent_item_id}`}>
+                Open product
+              </s-link>,
+              !bom.is_producible ? (
+                "Review product classification"
+              ) : Number(bom.line_count ?? 0) === 0 ? (
+                <s-link href={`/app/boms?parentItemId=${bom.parent_item_id}`}>
+                  Add components
+                </s-link>
+              ) : (
+                <s-link href={`/app/boms?parentItemId=${bom.parent_item_id}`}>
+                  Review BOM
+                </s-link>
+              ),
+            ],
+          }))}
         />
       </s-section>
 
