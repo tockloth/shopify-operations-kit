@@ -7,11 +7,13 @@ import {
   addBomLineToItem,
   commitMrpRun,
   createActiveBomForItem,
+  deleteBomLine,
   loadBomProductContext,
   loadBoms,
   loadMrpRunDetail,
   loadMrpRuns,
   runOperationsMrp,
+  updateBomLineQuantity,
 } from "../lib/operations-kit.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -47,21 +49,65 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const parentItemId = String(form.get("parentItemId") || "");
 
   if (intent === "createActiveBom") {
-    await createActiveBomForItem(
-      context.pool,
-      context.ctx.tenantId,
-      parentItemId,
-    );
-    return { message: "Active BOM created. Add components next." };
+    try {
+      await createActiveBomForItem(
+        context.pool,
+        context.ctx.tenantId,
+        parentItemId,
+      );
+      return { message: "Active BOM created. Add components next." };
+    } catch (error) {
+      return { message: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   if (intent === "addBomLine") {
-    await addBomLineToItem(context.pool, context.ctx.tenantId, {
-      parentItemId,
-      componentItemId: String(form.get("componentItemId") || ""),
-      quantity: Math.max(Number(form.get("quantity") || 1), 1),
-    });
-    return { message: "BOM component saved." };
+    const quantity = Number(form.get("quantity") || 0);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return { message: "Quantity must be greater than zero." };
+    }
+
+    try {
+      await addBomLineToItem(context.pool, context.ctx.tenantId, {
+        parentItemId,
+        componentItemId: String(form.get("componentItemId") || ""),
+        quantity,
+      });
+      return { message: "BOM component saved." };
+    } catch (error) {
+      return { message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  if (intent === "updateBomLineQuantity") {
+    const quantity = Number(form.get("quantity") || 0);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return { message: "Quantity must be greater than zero." };
+    }
+
+    try {
+      await updateBomLineQuantity(context.pool, context.ctx.tenantId, {
+        bomLineId: String(form.get("bomLineId") || ""),
+        quantity,
+        unit: String(form.get("unit") || "pcs"),
+      });
+      return { message: "Component quantity updated." };
+    } catch (error) {
+      return { message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  if (intent === "deleteBomLine") {
+    try {
+      await deleteBomLine(
+        context.pool,
+        context.ctx.tenantId,
+        String(form.get("bomLineId") || ""),
+      );
+      return { message: "Component removed from BOM." };
+    } catch (error) {
+      return { message: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   if (intent === "runOperationsMrp") {
@@ -156,22 +202,87 @@ export default function BomMrp() {
 
             {activeBom ? (
               <>
-                <DataTable
-                  headings={["Component", "Type", "Policy", "Quantity"]}
-                  rows={(bomContext.bomLines ?? []).map((line: any) => [
-                    <strong>
-                      {line.component_sku} {line.component_title}
-                    </strong>,
-                    line.item_type,
-                    [
-                      line.is_purchasable ? "buy" : null,
-                      line.is_producible ? "make" : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" / ") || "component",
-                    `${Number(line.quantity ?? 0).toLocaleString()} ${line.unit}`,
-                  ])}
-                />
+                {(bomContext.bomLines ?? []).length > 0 ? (
+                  <DataTable
+                    headings={[
+                      "Component",
+                      "Type",
+                      "Policy",
+                      "Quantity",
+                      "Update quantity",
+                      "Remove component",
+                    ]}
+                    rows={(bomContext.bomLines ?? []).map((line: any) => [
+                      <strong>
+                        {line.component_sku} {line.component_title}
+                      </strong>,
+                      line.item_type,
+                      [
+                        line.is_purchasable ? "buy" : null,
+                        line.is_producible ? "make" : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" / ") || "component",
+                      `${Number(line.quantity ?? 0).toLocaleString()} ${line.unit}`,
+                      <Form method="post">
+                        <input
+                          type="hidden"
+                          name="intent"
+                          value="updateBomLineQuantity"
+                        />
+                        <input
+                          type="hidden"
+                          name="parentItemId"
+                          value={parent.id}
+                        />
+                        <input
+                          type="hidden"
+                          name="bomLineId"
+                          value={line.id}
+                        />
+                        <s-stack direction="inline" gap="small">
+                          <s-number-field
+                            label="Quantity"
+                            name="quantity"
+                            min={0.0001}
+                            step={1}
+                            value={String(line.quantity ?? 1)}
+                          ></s-number-field>
+                          <s-text-field
+                            label="Unit"
+                            name="unit"
+                            value={line.unit ?? "pcs"}
+                          ></s-text-field>
+                          <s-button type="submit">Update quantity</s-button>
+                        </s-stack>
+                      </Form>,
+                      <Form method="post">
+                        <input
+                          type="hidden"
+                          name="intent"
+                          value="deleteBomLine"
+                        />
+                        <input
+                          type="hidden"
+                          name="parentItemId"
+                          value={parent.id}
+                        />
+                        <input
+                          type="hidden"
+                          name="bomLineId"
+                          value={line.id}
+                        />
+                        <s-button type="submit">Remove component</s-button>
+                      </Form>,
+                    ])}
+                  />
+                ) : (
+                  <s-box padding="base" borderWidth="base" borderRadius="base">
+                    <s-paragraph>
+                      Add components to define what is required to produce this item.
+                    </s-paragraph>
+                  </s-box>
+                )}
 
                 {availableComponents.length > 0 ? (
                   <s-box padding="base" borderWidth="base" borderRadius="base">

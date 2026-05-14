@@ -3260,6 +3260,60 @@ export async function addBomLineToItem(
   });
 }
 
+export async function updateBomLineQuantity(
+  db: QueryExecutor,
+  tenantId: string,
+  input: {
+    bomLineId: string;
+    quantity: number;
+    unit?: string | null;
+  },
+) {
+  const quantity = Number(input.quantity);
+  if (!input.bomLineId) {
+    throw new Error("BOM line is required.");
+  }
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error("Quantity must be greater than zero.");
+  }
+
+  const result = await db.query<{ id: string }>(
+    `
+      update bom_lines
+      set quantity = $3,
+          unit = coalesce(nullif($4, ''), unit)
+      where tenant_id = $1 and id = $2
+      returning id
+    `,
+    [tenantId, input.bomLineId, quantity, input.unit?.trim() ?? ""],
+  );
+  if (!result.rows[0]) {
+    throw new Error("BOM component not found.");
+  }
+}
+
+export async function deleteBomLine(
+  db: QueryExecutor,
+  tenantId: string,
+  bomLineId: string,
+) {
+  if (!bomLineId) {
+    throw new Error("BOM line is required.");
+  }
+
+  const result = await db.query<{ id: string }>(
+    `
+      delete from bom_lines
+      where tenant_id = $1 and id = $2
+      returning id
+    `,
+    [tenantId, bomLineId],
+  );
+  if (!result.rows[0]) {
+    throw new Error("BOM component not found.");
+  }
+}
+
 export async function createActiveBomForItem(
   db: QueryExecutor,
   tenantId: string,
