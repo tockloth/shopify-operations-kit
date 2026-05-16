@@ -57,6 +57,16 @@ const ORDER_SYNC_QUERY = `#graphql
           defaultEmailAddress {
             emailAddress
           }
+          defaultAddress {
+            name
+            address1
+            address2
+            city
+            provinceCode
+            zip
+            countryCodeV2
+            phone
+          }
         }
         shippingAddress {
           name
@@ -112,6 +122,16 @@ const ORDER_SYNC_WITH_CUSTOMER_QUERY = `#graphql
           displayName
           defaultEmailAddress {
             emailAddress
+          }
+          defaultAddress {
+            name
+            address1
+            address2
+            city
+            provinceCode
+            zip
+            countryCodeV2
+            phone
           }
         }
         lineItems(first: 100) {
@@ -183,6 +203,37 @@ const ORDER_SYNC_WITHOUT_CUSTOMER_QUERY = `#graphql
     }
   }
 `;
+
+type ShopifyShippingAddress = {
+  name: string | null;
+  address1: string | null;
+  address2: string | null;
+  city: string | null;
+  provinceCode: string | null;
+  zip: string | null;
+  countryCodeV2: string | null;
+  phone: string | null;
+} | null;
+
+function hasUsableShopifyShippingAddress(address: ShopifyShippingAddress) {
+  return Boolean(address?.address1 && address.city && address.countryCodeV2);
+}
+
+function selectShopifyOrderAddress(order: {
+  shippingAddress?: ShopifyShippingAddress;
+  customer?: { defaultAddress?: ShopifyShippingAddress } | null;
+}) {
+  if (hasUsableShopifyShippingAddress(order.shippingAddress ?? null)) {
+    return { address: order.shippingAddress, source: "order_shipping" };
+  }
+  if (hasUsableShopifyShippingAddress(order.customer?.defaultAddress ?? null)) {
+    return {
+      address: order.customer?.defaultAddress ?? null,
+      source: "customer_default",
+    };
+  }
+  return { address: null, source: null };
+}
 
 const CUSTOMER_SYNC_QUERY = `#graphql
   query OperationsKitCustomers($first: Int!) {
@@ -524,6 +575,16 @@ export async function syncShopifyOrders(
             defaultEmailAddress: {
               emailAddress: string | null;
             } | null;
+            defaultAddress: {
+              name: string | null;
+              address1: string | null;
+              address2: string | null;
+              city: string | null;
+              provinceCode: string | null;
+              zip: string | null;
+              countryCodeV2: string | null;
+              phone: string | null;
+            } | null;
           } | null;
           shippingAddress: {
             name: string | null;
@@ -566,12 +627,17 @@ export async function syncShopifyOrders(
 
     let customerDataAvailable = true;
     let shippingAddressAvailable = true;
+    let customerDefaultAddressAvailable = true;
+    let protectedCustomerDataUnavailable = false;
+    let fallbackQueryUsed = false;
     let data: OrderSyncData;
     try {
       data = await graphqlJson<OrderSyncData>(admin, ORDER_SYNC_QUERY, { first: 25 });
     } catch (error) {
       if (!isProtectedCustomerDataError(error)) throw error;
 
+      protectedCustomerDataUnavailable = true;
+      fallbackQueryUsed = true;
       shippingAddressAvailable = false;
       try {
         data = await graphqlJson<OrderSyncData>(
@@ -582,7 +648,10 @@ export async function syncShopifyOrders(
       } catch (customerError) {
         if (!isProtectedCustomerDataError(customerError)) throw customerError;
 
+        protectedCustomerDataUnavailable = true;
+        fallbackQueryUsed = true;
         customerDataAvailable = false;
+        customerDefaultAddressAvailable = false;
         data = await graphqlJson<OrderSyncData>(
           admin,
           ORDER_SYNC_WITHOUT_CUSTOMER_QUERY,
@@ -592,7 +661,28 @@ export async function syncShopifyOrders(
     }
 
     let lines = 0;
+    let shippingAddressesStored = 0;
+    let orderShippingAddressesStored = 0;
+    let customerDefaultAddressesStored = 0;
+    let shippingAddressesMissing = 0;
+    const ordersMissingShippingAddress: string[] = [];
     for (const order of data.orders.nodes) {
+      const selectedAddress = selectShopifyOrderAddress(order);
+      const addressDataAvailable =
+        shippingAddressAvailable || customerDefaultAddressAvailable;
+      if (selectedAddress.address) {
+        shippingAddressesStored += 1;
+        if (selectedAddress.source === "order_shipping") {
+          orderShippingAddressesStored += 1;
+        }
+        if (selectedAddress.source === "customer_default") {
+          customerDefaultAddressesStored += 1;
+        }
+      } else if (addressDataAvailable) {
+        shippingAddressesMissing += 1;
+        ordersMissingShippingAddress.push(order.name);
+      }
+
       const orderResult = await tx.query<{ id: string }>(
         `
           insert into operations_orders (
@@ -609,12 +699,32 @@ export async function syncShopifyOrders(
             shopify_order_legacy_id = excluded.shopify_order_legacy_id,
             customer_name = null,
             customer_email = null,
-            customer_name_encrypted = excluded.customer_name_encrypted,
-            customer_email_encrypted = excluded.customer_email_encrypted,
-            customer_lookup_hash = excluded.customer_lookup_hash,
-            customer_data_redacted_at = null,
-            customer_data_retention_until = excluded.customer_data_retention_until,
-            shipping_address_encrypted = excluded.shipping_address_encrypted,
+            customer_name_encrypted = coalesce(
+              excluded.customer_name_encrypted,
+              operations_orders.customer_name_encrypted
+            ),
+            customer_email_encrypted = coalesce(
+              excluded.customer_email_encrypted,
+              operations_orders.customer_email_encrypted
+            ),
+            customer_lookup_hash = coalesce(
+              excluded.customer_lookup_hash,
+              operations_orders.customer_lookup_hash
+            ),
+            customer_data_redacted_at = case
+              when excluded.customer_name_encrypted is not null
+                or excluded.customer_email_encrypted is not null
+              then null
+              else operations_orders.customer_data_redacted_at
+            end,
+            customer_data_retention_until = coalesce(
+              excluded.customer_data_retention_until,
+              operations_orders.customer_data_retention_until
+            ),
+            shipping_address_encrypted = coalesce(
+              excluded.shipping_address_encrypted,
+              operations_orders.shipping_address_encrypted
+            ),
             financial_status = excluded.financial_status,
             fulfillment_status = excluded.fulfillment_status,
             processed_at = excluded.processed_at,
@@ -637,8 +747,8 @@ export async function syncShopifyOrders(
               )
             : null,
           customerDataRetentionUntil(order.processedAt, retentionDays),
-          shippingAddressAvailable && order.shippingAddress
-            ? encryptCustomerData(JSON.stringify(order.shippingAddress))
+          selectedAddress.address
+            ? encryptCustomerData(JSON.stringify(selectedAddress.address))
             : null,
           order.displayFinancialStatus,
           order.displayFulfillmentStatus,
@@ -709,6 +819,14 @@ export async function syncShopifyOrders(
       lines,
       customerDataAvailable,
       shippingAddressAvailable,
+      customerDefaultAddressAvailable,
+      protectedCustomerDataUnavailable,
+      fallbackQueryUsed,
+      shippingAddressesStored,
+      orderShippingAddressesStored,
+      customerDefaultAddressesStored,
+      shippingAddressesMissing,
+      ordersMissingShippingAddress,
     };
   });
 }

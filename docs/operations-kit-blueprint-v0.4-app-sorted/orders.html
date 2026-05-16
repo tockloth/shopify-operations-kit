@@ -1,0 +1,44 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orders</title><link rel="stylesheet" href="assets/blueprint.css"></head><body><header><h1>Orders</h1><p>Demand Work Queue: Shopify-Bestellungen verstehen, planen und in operative Arbeit überführen</p></header><div class="layout"><nav><a class="" href="index.html">Start</a>
+<a class="active" href="orders.html">01 Orders</a>
+<a class="" href="products.html">02 Products</a>
+<a class="" href="procurement.html">03 Procurement</a>
+<a class="" href="receiving.html">04 Receiving</a>
+<a class="" href="inventory.html">05 Inventory</a>
+<a class="" href="logistics.html">06 Logistics</a>
+<a class="" href="customers.html">07 Customers</a>
+<a class="" href="suppliers.html">08 Suppliers</a>
+<a class="" href="bom-kitting.html">09 BOM / Kitting</a>
+<a class="" href="settings.html">10 Settings</a>
+<a class="" href="cross-cutting.html">11 Querschnitt</a>
+<a class="" href="implementation.html">12 Codex Umsetzung</a></nav><main>
+    <section class='card'><h2>Orders</h2><div class='section-meta'><div class='field'><label>App-Bereich</label><div>Orders</div></div><div class='field'><label>Codex-Quelle</label><div>specs/orders.md + orders.html</div></div><div class='field'><label>Abschnitte</label><div>Entitäten · Prozess · UI</div></div></div></section>
+    <section class='card'><h2>Entitäten</h2><table><tr><th>Entität</th><th>Attribute / Bedeutung</th><th>Regel</th></tr>
+<tr><td>OperationsOrder</td><td>Order-Kopf aus Shopify oder manuell. Enthält order_name, Shopify IDs, Zahlungs-/Fulfillmentstatus, Kunde, E-Mail, Lieferadresse, Prozessstatus, Timestamps.</td><td>Quelle der Nachfrage. Löscht nie Historie; Status wird aus Zeilen und Folgeobjekten abgeleitet.</td></tr>
+<tr><td>OperationsOrderLine</td><td>Eine bestellte Position mit Shopify line item id, Item, SKU/Titel, Menge, Einheit, Supply-Status.</td><td>Muss einzeln nachvollziehbar sein. Bei gleicher SKU in mehreren Orders darf Status nicht über Item-Level “überspringen”.</td></tr>
+<tr><td>Customer/Shipping Snapshot</td><td>Order-eigene Kundendaten und Shipping Address, verschlüsselt gespeichert.</td><td>Die Lieferadresse ist Bestandteil der Order. Ohne Adresse blockiert Logistics. Kein manueller Ersatz im echten Prozess.</td></tr>
+<tr><td>Demand Link</td><td>source_order_line_id auf PurchaseNeed, ShippingOrderLine.operations_order_line_id.</td><td>Verbindet Nachfragezeile mit Beschaffung, Wareneingang, Bestand und Versand.</td></tr>
+</table></section>
+    <section class='card'><h2>Prozess</h2><table><tr><th>Schritt</th><th>Prozessregel</th></tr>
+<tr><td>1. Sync Shopify Orders</td><td>Bestellungen mit Kundenname, E-Mail, Lieferadresse und Line Items importieren. Sync darf vorhandene gültige Adresse nicht durch Null aus Fallback-Query überschreiben.</td></tr>
+<tr><td>2. Demand Decision</td><td>Für jede Order Line: Ready from stock, Needs procurement, Needs production/kitting, Review master data, Already in progress.</td></tr>
+<tr><td>3. Planning</td><td>Refresh planning erzeugt Purchase Needs für Beschaffungsbedarf. Direkter Bezug: PurchaseNeed.source_order_line_id.</td></tr>
+<tr><td>4. Status ableiten</td><td>Order-Status wird aus Lines, Needs, POs, Receipts, Inventory, Shipment und Address Readiness abgeleitet. Kein pauschales “in progress”.</td></tr>
+<tr><td>5. Next Action</td><td>Eine klare nächste Aktion: Open Procurement, Open Receiving, Open Logistics, Open order.</td></tr>
+</table></section>
+    <section class='card'><h2>UI</h2><div class="wire"><div class="bar"><div><strong>Orders — Demand Work Queue</strong><div class="small">/app/orders</div></div><div class="toolbar"><span class="btn primary">Sync Shopify orders</span><span class="btn ">Refresh planning</span><span class="btn ">Create manual order later</span><span class="btn ">Export later</span></div></div><div class="body"><div class="filters"><div class="input">Order #</div><div class="input">Customer</div><div class="input">Product</div><div class="input">Operational status</div><div class="input">Address missing?</div></div><table><tr><th>Order</th><th>Customer</th><th>Products / quantities</th><th>Payment</th><th>Fulfillment</th><th>Address</th><th>Operational status</th><th>Next reason / blocker</th><th>Next action</th></tr>
+<tr><td>#1005</td><td>Jörn Voigt</td><td>1 × Videographer Snowboard</td><td>PAID</td><td>UNFULFILLED</td><td><span class="badge ok">Ready</span></td><td>Needs planning</td><td>No purchase work exists yet</td><td>Refresh planning</td></tr>
+<tr><td>#1004</td><td>Jörn Voigt</td><td>1 × Collection Snowboard: Liquid</td><td>PAID</td><td>UNFULFILLED</td><td><span class="badge ok">Ready</span></td><td>Ready for logistics</td><td>Inventory is ready and address exists</td><td>Open Logistics</td></tr>
+<tr><td>#1003</td><td>Jörn Voigt</td><td>1 × Collection Snowboard: Hydrogen</td><td>PAID</td><td>UNFULFILLED</td><td><span class="badge warn">Missing</span></td><td>Logistics blocked</td><td>Shipping address missing</td><td>Open Order</td></tr>
+</table></div></div><div class="wire"><div class="bar"><div><strong>Order Detail — Demand Situation</strong><div class="small">/app/orders/:orderId</div></div><div class="toolbar"><span class="btn primary">Back to Orders</span><span class="btn ">Open in Shopify</span><span class="btn ">Refresh planning</span></div></div><div class="body"><div class="tabs"><div class="tab active">Summary</div><div class="tab ">Lines</div><div class="tab ">Related work</div><div class="tab ">Events</div></div><div class="formgrid cols4"><div class="field"><label>Order</label><div>#1005</div></div><div class="field"><label>Customer</label><div>Jörn Voigt</div></div><div class="field"><label>Payment</label><div>PAID</div></div><div class="field"><label>Fulfillment</label><div>UNFULFILLED</div></div><div class="field"><label>Address readiness</label><div>Ready</div></div><div class="field"><label>Operations status</label><div>Needs planning</div></div><div class="field"><label>Next action</label><div>Refresh planning</div></div></div><div class="next"><strong>Next action:</strong> Refresh planning because no purchase need exists for one order line.</div><table><tr><th>Line</th><th>SKU / title</th><th>Customer quantity</th><th>Available stock</th><th>Shortage</th><th>Decision</th><th>Linked work</th><th>Open</th></tr>
+<tr><td>1</td><td>4769... / Videographer Snowboard</td><td>1</td><td>0</td><td>1</td><td>Needs procurement</td><td>No linked work</td><td>Open line</td></tr>
+</table><table><tr><th>Related object</th><th>Reference</th><th>Status</th><th>Demand scope</th><th>Open</th></tr>
+<tr><td>Purchase Need</td><td>Need-104</td><td>Ready for PO</td><td>This order line</td><td>Open Procurement</td></tr>
+<tr><td>Shipment</td><td>—</td><td>Not created</td><td>This order line</td><td>Open Logistics</td></tr>
+</table></div></div><div class="wire"><div class="bar"><div><strong>Order Line Detail — Decision Explanation</strong><div class="small">/app/order-lines/:lineId</div></div><div class="toolbar"><span class="btn primary">Back to Order</span><span class="btn ">Open Product</span><span class="btn ">Open Procurement or Logistics</span></div></div><div class="body"><div class="formgrid cols3"><div class="field"><label>Ordered</label><div>1 × Videographer Snowboard</div></div><div class="field"><label>Decision</label><div>Needs procurement</div></div><div class="field"><label>Reason</label><div>Available stock 0, shortage 1</div></div><div class="field"><label>Demand scope</label><div>This order line</div></div><div class="field"><label>Target page</label><div>Procurement</div></div><div class="field"><label>Blocking data</label><div>None</div></div></div><table><tr><th>Inventory</th><th>On hand</th><th>Reserved</th><th>Available</th><th>Allocated available</th><th>Shortage</th><th>QC hold</th></tr>
+<tr><td>MAIN</td><td>0</td><td>0</td><td>0</td><td>0</td><td>1</td><td>0</td></tr>
+</table><table><tr><th>Need</th><th>Scope</th><th>Supplier</th><th>PO</th><th>Receipt</th><th>Quantity</th><th>Open</th></tr>
+<tr><td>Need-104</td><td>This order line</td><td>Test Trading Supplier</td><td>—</td><td>—</td><td>1 pcs</td><td>Open Procurement</td></tr>
+</table><table><tr><th>Customer</th><th>Address readiness</th><th>Shipment</th><th>Status</th><th>Open</th></tr>
+<tr><td>Jörn Voigt</td><td>Ready</td><td>No shipment</td><td>Not created</td><td>Open Logistics</td></tr>
+</table></div></div></section>
+    </main></div></body></html>

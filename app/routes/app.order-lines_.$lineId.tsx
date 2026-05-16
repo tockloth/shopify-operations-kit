@@ -53,24 +53,41 @@ function quantity(value: unknown) {
   return Number(value ?? 0).toLocaleString();
 }
 
-function movementLabel(value: unknown) {
-  const movement = String(value || "");
-  const labels: Record<string, string> = {
-    stock_adjustment: "Inventory adjustment",
-    reservation: "Reservation",
-    reservation_release: "Reservation release",
-    purchase_receipt: "Purchase receipt",
-    qc_hold: "QC hold",
-    putaway: "Putaway",
-    quarantine: "Quarantine",
-    pick: "Pick",
-    pack: "Pack",
-    ship: "Ship",
-    consume: "Consume",
-    produce: "Produce",
-    count_adjustment: "Count adjustment",
-  };
-  return labels[movement] ?? movement.replaceAll("_", " ");
+function scopeLabel(value: unknown) {
+  const scope = String(value || "");
+  if (scope === "order_line") return "This order line";
+  if (scope === "order") return "This order";
+  if (scope === "item_fallback") return "Item-level fallback";
+  return "Linked context";
+}
+
+function hasShippingAddress(address: any) {
+  return Boolean(
+      address &&
+      (address.address1 || address.street) &&
+      address.city &&
+      (address.countryCodeV2 || address.country || address.countryCode),
+  );
+}
+
+function shippingBlockers(line: any) {
+  const blockers: string[] = [];
+  if (!line.customer_name) blockers.push("Missing customer name");
+  if (!line.customer_email) blockers.push("Missing customer email");
+  if (!hasShippingAddress(line.shipping_address)) {
+    blockers.push("Missing shipping address");
+  }
+  return blockers;
+}
+
+function putawayLabel(row: any) {
+  if (row.receipt_line_status === "putaway_completed") {
+    return "Inventory booked";
+  }
+  if (Number(row.accepted_quantity ?? 0) > 0) {
+    return "Putaway pending";
+  }
+  return "Not ready";
 }
 
 type Decision = {
@@ -112,16 +129,25 @@ export default function OrderLineDetail() {
   const sku = line.sku ?? line.item_sku;
   const title = line.title ?? line.item_title;
   const orderedQuantity = Number(line.quantity ?? 0);
-  const availableQuantity = Number(line.available_quantity ?? 0);
+  const allocatedAvailableQuantity = Number(
+    line.allocated_available_quantity ?? line.available_quantity ?? 0,
+  );
+  const shortageQuantity = Math.max(
+    orderedQuantity - allocatedAvailableQuantity,
+    0,
+  );
   const masterDataMissing =
     !line.is_sellable && !line.is_purchasable && !line.is_producible;
   const procurementRows = (detail.procurement ?? []) as any[];
+  const hasItemFallbackProcurement = procurementRows.some(
+    (row) => row.demand_link_scope === "item_fallback",
+  );
   const receiptRows = (detail.receipts ?? []) as any[];
-  const inventoryMovementRows = (detail.inventoryMovements ?? []) as any[];
   const productionRows = (detail.production ?? []) as any[];
   const logisticsRows = (detail.logistics ?? []) as any[];
   const purchaseOrder = procurementRows.find((row) => row.purchase_order_id);
   const receipt = receiptRows[0] ?? procurementRows.find((row) => row.receipt_id);
+  const blockers = shippingBlockers(line);
 
   let decision: Decision;
   if (masterDataMissing) {
@@ -139,12 +165,14 @@ export default function OrderLineDetail() {
   ) {
     decision = {
       label: "Already in progress",
-      reason: "Existing operational work is linked to this item or order line.",
+      reason: hasItemFallbackProcurement
+        ? "Existing procurement work is item-level because no direct order-line link is available."
+        : "Existing operational work is linked to this order.",
       tone: "info",
     };
   } else if (
     line.supply_status === "reserved" ||
-    availableQuantity >= orderedQuantity
+    allocatedAvailableQuantity >= orderedQuantity
   ) {
     decision = {
       label: "Ready from stock",
@@ -209,8 +237,8 @@ export default function OrderLineDetail() {
               ? {
                   label: "Open Logistics",
                   href: "/app/logistics",
-                  reason:
-                    "Stock is available; logistics work is handled separately.",
+                reason:
+                  "Stock is available; logistics work is handled separately.",
                 }
               : {
                   label: "Open product",
@@ -218,48 +246,25 @@ export default function OrderLineDetail() {
                   reason: "Review operational product setup.",
                 };
 
-  const relatedWorkRows = [
-    ...receiptRows.map((row: any) => ({
-      type: "Receipt",
-      reference: row.receipt_number,
-      status: row.receipt_status,
-      quantity: `${quantity(row.accepted_quantity)} accepted / ${quantity(
-        row.rejected_quantity,
-      )} rejected`,
-      href: `/app/receiving/${row.receipt_id}`,
-    })),
-    ...inventoryMovementRows.map((row: any) => ({
-      type: "Inventory",
-      reference: movementLabel(row.movement_type),
-      status: row.location_code ?? "Unassigned",
-      quantity: quantity(row.quantity_delta),
-      href: "/app/inventory",
-    })),
-    ...productionRows.map((row: any) => ({
-      type: "Production",
-      reference: row.production_order_number ?? "Production need",
-      status: row.production_order_status ?? row.production_need_status,
-      quantity: `${quantity(row.quantity)} ${row.unit}`,
-      href: "/app/production",
-    })),
-    ...logisticsRows.map((row: any) => ({
-      type: "Logistics",
-      reference: row.shipment_number,
-      status: row.status ?? row.shipping_order_status,
-      quantity: `${quantity(row.ordered_quantity)} ${row.unit}`,
-      href: "/app/logistics",
-    })),
-  ].slice(0, 8);
+  const toolbarAction = nextAction.href.startsWith("/app/procurement")
+    ? { label: "Open Procurement", href: "/app/procurement" }
+    : nextAction.href.startsWith("/app/logistics")
+      ? { label: "Open Logistics", href: "/app/logistics" }
+      : nextAction.href.startsWith("/app/receiving")
+        ? { label: "Open Receiving", href: nextAction.href }
+        : nextAction.href.startsWith("/app/production")
+          ? { label: "Open Production", href: nextAction.href }
+          : { label: nextAction.label, href: nextAction.href };
 
   return (
     <s-page heading={`${line.order_name} · ${sku}`}>
       <s-section>
         <s-stack direction="inline" gap="small">
-          <s-link href="/app/orders">Back to orders</s-link>
           <s-link href={`/app/orders/${line.operations_order_id}`}>
-            Open order
+            Back to Order
           </s-link>
           <s-link href={`/app/items/${line.item_id}`}>Open product</s-link>
+          <s-link href={toolbarAction.href}>{toolbarAction.label}</s-link>
         </s-stack>
         {actionData?.message ? (
           <s-box padding="base" borderWidth="base" borderRadius="base">
@@ -275,6 +280,7 @@ export default function OrderLineDetail() {
             "Line item",
             "Quantity",
             "Customer",
+            "Shopify line reference",
             "Payment",
             "Fulfillment",
             "Operations",
@@ -287,6 +293,9 @@ export default function OrderLineDetail() {
               </strong>,
               `${quantity(line.quantity)} ${line.unit}`,
               line.customer_name ?? "No customer",
+              line.shopify_line_item_gid
+                ? "Shopify line linked"
+                : "No Shopify line reference",
               <MoneylessBadge>
                 {line.financial_status ?? "unknown"}
               </MoneylessBadge>,
@@ -309,6 +318,12 @@ export default function OrderLineDetail() {
               </MoneylessBadge>
             </s-stack>
             <s-paragraph>{decision.reason}</s-paragraph>
+            {blockers.length > 0 ? (
+              <s-paragraph tone="critical">
+                Blocking data: {blockers.join(", ")}
+              </s-paragraph>
+            ) : null}
+            <s-link href={nextAction.href}>Target page: {nextAction.label}</s-link>
           </s-stack>
         </s-box>
       </s-section>
@@ -363,11 +378,11 @@ export default function OrderLineDetail() {
       <s-section heading="Inventory availability">
         <DataTable
           headings={[
-            "Physical",
+            "On hand",
             "Reserved",
             "Available",
-            "Ordered",
-            "Planned",
+            "Allocated available",
+            "Shortage",
             "QC hold",
             "Quarantine",
           ]}
@@ -376,8 +391,8 @@ export default function OrderLineDetail() {
               quantity(line.physical_quantity),
               quantity(line.reserved_quantity),
               quantity(line.available_quantity),
-              quantity(line.ordered_quantity),
-              quantity(line.planned_quantity),
+              quantity(allocatedAvailableQuantity),
+              quantity(shortageQuantity),
               quantity(line.qc_hold_quantity),
               quantity(line.quarantine_quantity),
             ],
@@ -390,13 +405,15 @@ export default function OrderLineDetail() {
           <DataTable
             headings={[
               "Purchase need",
+              "Scope",
               "Supplier",
               "Purchase Order",
-              "Receiving",
+              "Receipt",
               "Quantity",
             ]}
             rows={procurementRows.map((row: any) => [
               <MoneylessBadge>{row.purchase_need_status}</MoneylessBadge>,
+              scopeLabel(row.demand_link_scope),
               row.supplier_name ?? "No supplier",
               row.purchase_order_id ? (
                 <s-link href={`/app/procurement/${row.purchase_order_id}`}>
@@ -422,23 +439,64 @@ export default function OrderLineDetail() {
         )}
       </s-section>
 
-      <s-section heading="Related work">
-        {relatedWorkRows.length > 0 ? (
+      <s-section heading="Receiving context">
+        {receiptRows.length > 0 ? (
           <DataTable
-            headings={["Work", "Reference", "Status", "Quantity", "Open"]}
-            rows={relatedWorkRows.map((row) => [
-              row.type,
-              row.reference ?? "No reference",
-              <MoneylessBadge>{row.status ?? "open"}</MoneylessBadge>,
-              row.quantity,
-              <s-link href={row.href}>Open</s-link>,
+            headings={[
+              "Receipt",
+              "Scope",
+              "Status",
+              "QC",
+              "Putaway",
+              "Quantity",
+              "Open receipt",
+            ]}
+            rows={receiptRows.map((row: any) => [
+              row.receipt_number ?? "No receipt number",
+              scopeLabel(row.demand_link_scope),
+              <MoneylessBadge>{row.receipt_status ?? "open"}</MoneylessBadge>,
+              <MoneylessBadge>{row.receipt_line_status ?? "pending"}</MoneylessBadge>,
+              putawayLabel(row),
+              `${quantity(row.accepted_quantity)} accepted / ${quantity(
+                row.rejected_quantity,
+              )} rejected`,
+              <s-link href={`/app/receiving/${row.receipt_id}`}>
+                Open receipt
+              </s-link>,
             ])}
           />
         ) : (
-          <s-paragraph>
-            No receiving, inventory, production or logistics work is linked yet.
-          </s-paragraph>
+          <s-paragraph>No receiving work is linked to this order line yet.</s-paragraph>
         )}
+      </s-section>
+
+      <s-section heading="Logistics context">
+        <DataTable
+          headings={["Customer", "Address readiness", "Shipment", "Status", "Open"]}
+          rows={[
+            [
+              line.customer_name ?? "No customer",
+              blockers.length > 0 ? (
+                <s-paragraph tone="critical">{blockers.join(", ")}</s-paragraph>
+              ) : (
+                <MoneylessBadge tone="success">Ready</MoneylessBadge>
+              ),
+              logisticsRows[0]?.shipment_number ?? "No shipment",
+              logisticsRows[0] ? (
+                <MoneylessBadge>
+                  {logisticsRows[0].status ?? logisticsRows[0].shipping_order_status}
+                </MoneylessBadge>
+              ) : (
+                "Not created"
+              ),
+              logisticsRows[0] ? (
+                <s-link href="/app/logistics">Open Logistics</s-link>
+              ) : (
+                <s-link href="/app/logistics">Open Logistics</s-link>
+              ),
+            ],
+          ]}
+        />
       </s-section>
 
       <s-section heading="Next action">

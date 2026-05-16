@@ -1,0 +1,36 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Procurement</title><link rel="stylesheet" href="assets/blueprint.css"></head><body><header><h1>Procurement</h1><p>Purchase Needs und Purchase Orders für Handelsware organisieren</p></header><div class="layout"><nav><a class="" href="index.html">Start</a>
+<a class="" href="orders.html">01 Orders</a>
+<a class="" href="products.html">02 Products</a>
+<a class="active" href="procurement.html">03 Procurement</a>
+<a class="" href="receiving.html">04 Receiving</a>
+<a class="" href="inventory.html">05 Inventory</a>
+<a class="" href="logistics.html">06 Logistics</a>
+<a class="" href="customers.html">07 Customers</a>
+<a class="" href="suppliers.html">08 Suppliers</a>
+<a class="" href="bom-kitting.html">09 BOM / Kitting</a>
+<a class="" href="settings.html">10 Settings</a>
+<a class="" href="cross-cutting.html">11 Querschnitt</a>
+<a class="" href="implementation.html">12 Codex Umsetzung</a></nav><main>
+    <section class='card'><h2>Procurement</h2><div class='section-meta'><div class='field'><label>App-Bereich</label><div>Procurement</div></div><div class='field'><label>Codex-Quelle</label><div>specs/procurement.md + procurement.html</div></div><div class='field'><label>Abschnitte</label><div>Entitäten · Prozess · UI</div></div></div></section>
+    <section class='card'><h2>Entitäten</h2><table><tr><th>Entität</th><th>Attribute / Bedeutung</th><th>Regel</th></tr>
+<tr><td>PurchaseNeed</td><td>Beschaffungsbedarf aus Order Line, Min Stock oder item-level Planung. Felder: item, quantity, source_order_line_id, supplier, status, expected date.</td><td>MVP: direkte source_order_line_id wenn aus Kundenbedarf. Null nur bei aggregiertem Bedarf.</td></tr>
+<tr><td>PurchaseOrder</td><td>Bestellung an Lieferanten. Header: supplier, status, dates, total, notes.</td><td>Eigentümer des PO-Lifecycles bis Goods Receipt.</td></tr>
+<tr><td>PurchaseOrderLine</td><td>PO-Zeile: product, quantity, unit, unit price, line value, expected date, purchase_need_id.</td><td>Menge folgt shortage quantity, außer explizite MOQ/Losgröße.</td></tr>
+<tr><td>Supplier/SupplierItem</td><td>Lieferant + Einkaufskonditionen.</td><td>Quelle für Preis, Währung, MOQ, Lead Time.</td></tr>
+</table></section>
+    <section class='card'><h2>Prozess</h2><table><tr><th>Schritt</th><th>Prozessregel</th></tr>
+<tr><td>1. Need entsteht</td><td>Refresh planning oder Order Line erzeugt PurchaseNeed. Direkter Kundenbedarf muss source_order_line_id haben.</td></tr>
+<tr><td>2. Supplier assignment</td><td>Preferred supplier automatisch, sonst Need supplier Blocker.</td></tr>
+<tr><td>3. Create PO</td><td>Need wird in PO-Line umgewandelt. PO quantity = shortage bei order qty/MOQ 1.</td></tr>
+<tr><td>4. PO lifecycle</td><td>Draft → Approve optional → Send to supplier → Supplier acknowledged optional → Create Goods Receipt.</td></tr>
+<tr><td>5. Übergabe Receiving</td><td>Wareneingang/QC/Putaway gehören nicht in die Procurement-Queue, sondern auf Receipt Detail.</td></tr>
+</table></section>
+    <section class='card'><h2>UI</h2><div class="wire"><div class="bar"><div><strong>Procurement — Work Queue</strong><div class="small">/app/procurement</div></div><div class="toolbar"><span class="btn primary">Refresh purchasing needs</span><span class="btn ">Export later</span></div></div><div class="body"><div class="tabs"><div class="tab active">Purchase Needs</div><div class="tab ">Purchase Orders</div><div class="tab ">Goods Receipts</div><div class="tab ">Completed</div></div><div class="filters"><div class="input">Status</div><div class="input">Supplier</div><div class="input">Product</div><div class="input">Source order</div><div class="input">Expected date</div></div><table><tr><th>Reference</th><th>Status</th><th>Source</th><th>Item</th><th>Qty</th><th>Supplier</th><th>Unit price</th><th>Line value</th><th>Expected</th><th>Next action</th></tr>
+<tr><td>Need-104</td><td>Ready for PO</td><td>#1005 line 1</td><td>Videographer Snowboard</td><td>1 pcs</td><td>Test Trading Supplier</td><td>0 EUR</td><td>0 EUR</td><td>May 24</td><td>Create Purchase Order</td></tr>
+<tr><td>PO-1007</td><td>Awaiting receipt</td><td>#1003 line 1</td><td>Hydrogen Snowboard</td><td>1 pcs</td><td>Test Trading Supplier</td><td>0 EUR</td><td>0 EUR</td><td>May 20</td><td>Open Purchase Order</td></tr>
+</table></div></div><div class="wire"><div class="bar"><div><strong>Purchase Order Detail</strong><div class="small">/app/procurement/:purchaseOrderId</div></div><div class="toolbar"><span class="btn primary">Back to Procurement</span><span class="btn ">Approve</span><span class="btn ">Send to supplier</span><span class="btn ">Mark supplier acknowledged</span><span class="btn ">Create Goods Receipt</span><span class="btn ">Cancel PO</span></div></div><div class="body"><div class="tabs"><div class="tab active">Header</div><div class="tab ">Lines</div><div class="tab ">Receipts</div><div class="tab ">Events</div></div><div class="formgrid cols3"><div class="field"><label>PO number</label><div>PO-1007</div></div><div class="field"><label>Supplier</label><div>Test Trading Supplier</div></div><div class="field"><label>Status</label><div>sent</div></div><div class="field"><label>Expected date</label><div>May 20</div></div><div class="field"><label>Total value</label><div>30 EUR</div></div><div class="field"><label>Lifecycle state</label><div>Awaiting acknowledgement</div></div></div><table><tr><th>Product</th><th>Qty</th><th>Unit</th><th>Unit price</th><th>Line value</th><th>Expected</th><th>Status</th></tr>
+<tr><td>Ski Wax</td><td>3</td><td>pcs</td><td>10 EUR</td><td>30 EUR</td><td>May 20</td><td>ordered</td></tr>
+</table><table><tr><th>Receipt</th><th>Status</th><th>Received date</th><th>QC</th><th>Putaway</th><th>Open</th></tr>
+<tr><td>GR-1007</td><td>Receiving / QC</td><td>May 18</td><td>required</td><td>pending</td><td>Open Receipt</td></tr>
+</table></div></div></section>
+    </main></div></body></html>

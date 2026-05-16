@@ -1,0 +1,35 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Receiving</title><link rel="stylesheet" href="assets/blueprint.css"></head><body><header><h1>Receiving</h1><p>Goods Receipt, QC und Putaway / Einlagerung</p></header><div class="layout"><nav><a class="" href="index.html">Start</a>
+<a class="" href="orders.html">01 Orders</a>
+<a class="" href="products.html">02 Products</a>
+<a class="" href="procurement.html">03 Procurement</a>
+<a class="active" href="receiving.html">04 Receiving</a>
+<a class="" href="inventory.html">05 Inventory</a>
+<a class="" href="logistics.html">06 Logistics</a>
+<a class="" href="customers.html">07 Customers</a>
+<a class="" href="suppliers.html">08 Suppliers</a>
+<a class="" href="bom-kitting.html">09 BOM / Kitting</a>
+<a class="" href="settings.html">10 Settings</a>
+<a class="" href="cross-cutting.html">11 Querschnitt</a>
+<a class="" href="implementation.html">12 Codex Umsetzung</a></nav><main>
+    <section class='card'><h2>Receiving</h2><div class='section-meta'><div class='field'><label>App-Bereich</label><div>Receiving</div></div><div class='field'><label>Codex-Quelle</label><div>specs/receiving.md + receiving.html</div></div><div class='field'><label>Abschnitte</label><div>Entitäten · Prozess · UI</div></div></div></section>
+    <section class='card'><h2>Entitäten</h2><table><tr><th>Entität</th><th>Attribute / Bedeutung</th><th>Regel</th></tr>
+<tr><td>GoodsReceipt</td><td>Wareneingangskopf zu PurchaseOrder. Felder: PO, supplier, status, received date.</td><td>Startet nach PO sent/acknowledged je nach Setting.</td></tr>
+<tr><td>GoodsReceiptLine</td><td>Wareneingangszeile: item, received qty, accepted qty, rejected qty, QC status, putaway status, purchase_order_line_id.</td><td>Überträgt bestellte Ware in QC-HOLD oder MAIN.</td></tr>
+<tr><td>InventoryMovement</td><td>Buchungen: qc_hold, putaway, rejection/quarantine später.</td><td>Putaway bedeutet: akzeptierte Ware wird in Bestand MAIN gebucht.</td></tr>
+</table></section>
+    <section class='card'><h2>Prozess</h2><table><tr><th>Schritt</th><th>Prozessregel</th></tr>
+<tr><td>1. Create Goods Receipt</td><td>Von PO Detail, wenn PO Status/Settings es erlauben.</td></tr>
+<tr><td>2. Receive</td><td>Menge wird als received erfasst. Bei QC-Policy zunächst QC hold.</td></tr>
+<tr><td>3. Complete QC</td><td>Accepted/Rejected Quantity + Notes. Accepted darf nicht größer als received sein.</td></tr>
+<tr><td>4. Put away to inventory</td><td>Accepted goods werden nach MAIN gebucht. Idempotent: keine Doppelbuchung.</td></tr>
+<tr><td>5. Danach</td><td>Order kann ready for logistics werden, wenn Adresse und Bestand vorhanden sind.</td></tr>
+</table></section>
+    <section class='card'><h2>UI</h2><div class="wire"><div class="bar"><div><strong>Receiving — Goods Receipt Work Queue</strong><div class="small">/app/receiving</div></div><div class="toolbar"><span class="btn primary">Back to Procurement</span><span class="btn ">Refresh</span><span class="btn ">Export later</span></div></div><div class="body"><div class="tabs"><div class="tab active">Expected / Awaiting receipt</div><div class="tab ">Received / QC required</div><div class="tab ">Putaway pending</div><div class="tab ">Completed</div></div><div class="filters"><div class="input">Receipt status</div><div class="input">Supplier</div><div class="input">PO</div><div class="input">QC status</div><div class="input">Date</div></div><table><tr><th>Receipt</th><th>PO</th><th>Supplier</th><th>Products</th><th>Received qty</th><th>QC status</th><th>Putaway status</th><th>Next action</th></tr>
+<tr><td>GR-1007</td><td>PO-1007</td><td>Test Trading Supplier</td><td>Ski Wax</td><td>3</td><td>QC required</td><td>pending</td><td>Open Receipt</td></tr>
+<tr><td>GR-1008</td><td>PO-1008</td><td>Test Supplier</td><td>Packaging</td><td>5</td><td>passed</td><td>putaway pending</td><td>Open Receipt</td></tr>
+</table></div></div><div class="wire"><div class="bar"><div><strong>Receipt Detail — QC and Putaway</strong><div class="small">/app/receiving/:receiptId</div></div><div class="toolbar"><span class="btn primary">Back to Receiving</span><span class="btn ">Back to Procurement</span><span class="btn ">Back to Purchase Order</span><span class="btn ">Complete QC</span><span class="btn ">Put away to inventory</span></div></div><div class="body"><div class="tabs"><div class="tab active">Header</div><div class="tab ">Lines / QC</div><div class="tab ">Putaway</div><div class="tab ">Inventory outcome</div><div class="tab ">Events</div></div><div class="formgrid cols3"><div class="field"><label>Receipt</label><div>GR-1007</div></div><div class="field"><label>PO</label><div>PO-1007</div></div><div class="field"><label>Supplier</label><div>Test Trading Supplier</div></div><div class="field"><label>Status</label><div>Receiving / QC</div></div><div class="field"><label>Received date</label><div>May 18</div></div><div class="field"><label>Next action</label><div>Complete QC</div></div></div><table><tr><th>Item</th><th>Received</th><th>Accepted</th><th>Rejected</th><th>QC result</th><th>Putaway status</th></tr>
+<tr><td>Ski Wax</td><td>3</td><td>3</td><td>0</td><td>accepted</td><td>pending</td></tr>
+</table><h4>QC form</h4><div class="formgrid cols4"><div class="field"><label>Accepted quantity</label><div>3</div></div><div class="field"><label>Rejected quantity</label><div>0</div></div><div class="field"><label>Notes</label><div>Looks good</div></div><div class="field"><label>Action</label><div>Complete QC</div></div></div><h4>Putaway form</h4><div class="formgrid cols3"><div class="field"><label>Accepted quantity</label><div>3</div></div><div class="field"><label>Target location</label><div>MAIN</div></div><div class="field"><label>Action</label><div>Put away to inventory</div></div></div><table><tr><th>Item</th><th>Quantity</th><th>Movement</th><th>Location</th><th>Source</th></tr>
+<tr><td>Ski Wax</td><td>+3</td><td>putaway</td><td>MAIN</td><td>GR-1007</td></tr>
+</table></div></div></section>
+    </main></div></body></html>

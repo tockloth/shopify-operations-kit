@@ -343,7 +343,19 @@ export default function Procurement() {
       }
 
       return [
-        <strong>Purchase proposal</strong>,
+        <s-stack direction="block" gap="small">
+          <strong>Purchase proposal</strong>
+          {need.demand_link_scope === "order_line" ? (
+            <s-text>
+              Source line: {need.source_order_name ?? "Order"} ·{" "}
+              {need.source_line_sku ?? need.sku}
+            </s-text>
+          ) : need.source_order_name ? (
+            <s-text>Source order: {need.source_order_name}</s-text>
+          ) : (
+            <s-text>Source: item-level planning</s-text>
+          )}
+        </s-stack>,
         <MoneylessBadge tone={purchaseNeedStatusTone(need)}>
           {purchaseNeedStatus(need)}
         </MoneylessBadge>,

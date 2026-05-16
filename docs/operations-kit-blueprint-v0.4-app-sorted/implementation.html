@@ -1,0 +1,28 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Codex Umsetzung</title><link rel="stylesheet" href="assets/blueprint.css"></head><body><header><h1>Codex Umsetzung</h1><p>Wie Codex mit der neuen Modul-Spezifikation arbeiten soll</p></header><div class="layout"><nav><a class="" href="index.html">Start</a>
+<a class="" href="orders.html">01 Orders</a>
+<a class="" href="products.html">02 Products</a>
+<a class="" href="procurement.html">03 Procurement</a>
+<a class="" href="receiving.html">04 Receiving</a>
+<a class="" href="inventory.html">05 Inventory</a>
+<a class="" href="logistics.html">06 Logistics</a>
+<a class="" href="customers.html">07 Customers</a>
+<a class="" href="suppliers.html">08 Suppliers</a>
+<a class="" href="bom-kitting.html">09 BOM / Kitting</a>
+<a class="" href="settings.html">10 Settings</a>
+<a class="" href="cross-cutting.html">11 Querschnitt</a>
+<a class="active" href="implementation.html">12 Codex Umsetzung</a></nav><main>
+<section class="card"><h2>Codex-Arbeitsmodus</h2>
+<p>Jeder Implementierungsprompt referenziert genau ein Modul. Codex muss vor dem Coding die Modul-Spec lesen und im Abschlussbericht nachweisen, welche Anforderungen umgesetzt wurden.</p>
+<table><tr><th>Prompt-Element</th><th>Pflichtinhalt</th></tr>
+<tr><td>Ziel</td><td>Ein klarer Satz: welcher sichtbare App-Bereich wird verbessert?</td></tr>
+<tr><td>Blueprint-Quelle</td><td>z. B. specs/orders.md und orders.html.</td></tr>
+<tr><td>Umfang</td><td>Welche Route/Helper/Tests gehören zum Modul?</td></tr>
+<tr><td>Akzeptanz</td><td>Welche UI ist sichtbar besser? Welche Daten/Status stimmen?</td></tr>
+<tr><td>Tests</td><td>DB-Test, UI/static check, Browser-Retestpfad.</td></tr>
+<tr><td>Final Mapping</td><td>Blueprint requirement | Implemented file | Status | Notes.</td></tr>
+</table></section>
+<section class="card"><h2>Beispiel für Orders-Prompt</h2><pre>Roadmap step: Orders Work Queue alignment
+Blueprint source: docs/operations-kit-blueprint-v0.4-app-sorted/specs/orders.md and orders.html
+Goal: Orders list and Order Detail must match Orders UI wireframes.
+Expected visible result: filters, products/quantities, address readiness, derived status, next action, order-line decision detail.
+Final report must map each Orders Blueprint requirement to implemented files.</pre></section></main></div></body></html>

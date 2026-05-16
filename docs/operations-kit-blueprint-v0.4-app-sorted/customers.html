@@ -1,0 +1,34 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Customers</title><link rel="stylesheet" href="assets/blueprint.css"></head><body><header><h1>Customers</h1><p>Kunden-/Adresskontext, Datenschutz und Order-Bezug</p></header><div class="layout"><nav><a class="" href="index.html">Start</a>
+<a class="" href="orders.html">01 Orders</a>
+<a class="" href="products.html">02 Products</a>
+<a class="" href="procurement.html">03 Procurement</a>
+<a class="" href="receiving.html">04 Receiving</a>
+<a class="" href="inventory.html">05 Inventory</a>
+<a class="" href="logistics.html">06 Logistics</a>
+<a class="active" href="customers.html">07 Customers</a>
+<a class="" href="suppliers.html">08 Suppliers</a>
+<a class="" href="bom-kitting.html">09 BOM / Kitting</a>
+<a class="" href="settings.html">10 Settings</a>
+<a class="" href="cross-cutting.html">11 Querschnitt</a>
+<a class="" href="implementation.html">12 Codex Umsetzung</a></nav><main>
+    <section class='card'><h2>Customers</h2><div class='section-meta'><div class='field'><label>App-Bereich</label><div>Customers</div></div><div class='field'><label>Codex-Quelle</label><div>specs/customers.md + customers.html</div></div><div class='field'><label>Abschnitte</label><div>Entitäten · Prozess · UI</div></div></div></section>
+    <section class='card'><h2>Entitäten</h2><table><tr><th>Entität</th><th>Attribute / Bedeutung</th><th>Regel</th></tr>
+<tr><td>OperationCustomer</td><td>Synchronisierter Shopify-Kunde: display name, email, phone optional, Shopify id, privacy/redaction status, amount spent/order count.</td><td>Personendaten verschlüsselt; nie Raw Ciphertext anzeigen.</td></tr>
+<tr><td>Order shipping address</td><td>Die echte Versandadresse gehört primär zur Order.</td><td>Customer Detail zeigt Adressbereitschaft über Orders; kein Shopify Writeback.</td></tr>
+<tr><td>Privacy / Redaction</td><td>Redaction löscht/verschleiert personenbezogene Daten nach Shopify Anforderungen.</td><td>Detail darf nicht crashen, wenn Daten fehlen oder redacted sind.</td></tr>
+</table></section>
+    <section class='card'><h2>Prozess</h2><table><tr><th>Schritt</th><th>Prozessregel</th></tr>
+<tr><td>1. Sync Customers</td><td>Kundenstammdaten importieren. Für Versand ist Order Sync mit Shipping Address entscheidend.</td></tr>
+<tr><td>2. Inspect readiness</td><td>Kunden-Detail zeigt Orders und ob Order-Shipping vorhanden ist.</td></tr>
+<tr><td>3. Redaction</td><td>Datenschutzaktion später/wo erlaubt.</td></tr>
+<tr><td>4. Test address</td><td>Nur Development-Hilfe, nie echte Akzeptanzbedingung.</td></tr>
+</table></section>
+    <section class='card'><h2>UI</h2><div class="wire"><div class="bar"><div><strong>Customers — Customer List</strong><div class="small">/app/customers</div></div><div class="toolbar"><span class="btn primary">Sync Shopify customers</span><span class="btn ">Export later</span></div></div><div class="body"><div class="filters"><div class="input">Customer</div><div class="input">Email</div><div class="input">Address present</div><div class="input">Privacy</div><div class="input">Orders</div></div><table><tr><th>Customer</th><th>Email</th><th>Orders</th><th>Address</th><th>Last order</th><th>Privacy</th><th>Open</th></tr>
+<tr><td>Jörn Voigt</td><td>voigtjo@gmail.com</td><td>4</td><td>present</td><td>#1004</td><td>Encrypted</td><td>Open customer</td></tr>
+<tr><td>Anonymous</td><td>—</td><td>1</td><td>missing</td><td>#1003</td><td>Redacted</td><td>Open customer</td></tr>
+</table></div></div><div class="wire"><div class="bar"><div><strong>Customer Detail</strong><div class="small">/app/customers/:customerId</div></div><div class="toolbar"><span class="btn primary">Back to Customers</span><span class="btn ">Sync Shopify customers</span><span class="btn ">Redact customer data</span><span class="btn ">Add test address (dev only)</span></div></div><div class="body"><div class="tabs"><div class="tab active">Header</div><div class="tab ">Addresses</div><div class="tab ">Orders</div><div class="tab ">Privacy / Events</div></div><div class="formgrid cols3"><div class="field"><label>Customer name</label><div>Jörn Voigt</div></div><div class="field"><label>Email</label><div>voigtjo@gmail.com</div></div><div class="field"><label>Phone</label><div>No phone</div></div><div class="field"><label>Shopify customer ID</label><div>gid://shopify/Customer/...</div></div><div class="field"><label>Privacy status</label><div>Encrypted</div></div><div class="field"><label>Address completeness</label><div>Order address present</div></div></div><table><tr><th>Type</th><th>Name</th><th>Street</th><th>City</th><th>Country</th><th>Postal code</th><th>Complete?</th><th>Source</th></tr>
+<tr><td>Shipping</td><td>Jörn Voigt</td><td>123 Test St</td><td>Washington</td><td>US</td><td>20340</td><td>yes</td><td>Shopify order</td></tr>
+</table><table><tr><th>Order</th><th>Date</th><th>Products</th><th>Fulfillment</th><th>Operations status</th><th>Address present</th><th>Open</th></tr>
+<tr><td>#1004</td><td>May 16</td><td>1 × Snowboard</td><td>unfulfilled</td><td>Needs planning</td><td>yes</td><td>Open order</td></tr>
+</table></div></div></section>
+    </main></div></body></html>

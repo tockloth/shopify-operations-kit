@@ -1,0 +1,29 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Querschnitt</title><link rel="stylesheet" href="assets/blueprint.css"></head><body><header><h1>Querschnitt</h1><p>Regeln, die alle Module einhalten müssen</p></header><div class="layout"><nav><a class="" href="index.html">Start</a>
+<a class="" href="orders.html">01 Orders</a>
+<a class="" href="products.html">02 Products</a>
+<a class="" href="procurement.html">03 Procurement</a>
+<a class="" href="receiving.html">04 Receiving</a>
+<a class="" href="inventory.html">05 Inventory</a>
+<a class="" href="logistics.html">06 Logistics</a>
+<a class="" href="customers.html">07 Customers</a>
+<a class="" href="suppliers.html">08 Suppliers</a>
+<a class="" href="bom-kitting.html">09 BOM / Kitting</a>
+<a class="" href="settings.html">10 Settings</a>
+<a class="active" href="cross-cutting.html">11 Querschnitt</a>
+<a class="" href="implementation.html">12 Codex Umsetzung</a></nav><main>
+<section class="card"><h2>Querschnittsregeln</h2>
+<table><tr><th>Regel</th><th>Beschreibung</th></tr>
+<tr><td>Tabellenfilter wie Excel</td><td>Jede große Work Queue hat Filter für Text, Status, Datum, Zahl, Boolean und Relation. Clear filters ist Pflicht.</td></tr>
+<tr><td>Next Action</td><td>Jede Work Queue und Detailseite zeigt eine fachlich eindeutige nächste Aktion mit Grund.</td></tr>
+<tr><td>Page Ownership</td><td>Listen priorisieren Arbeit; Detailseiten führen die jeweilige Prozessaktion aus. Fremde Prozessaktionen werden nicht auf falschen Seiten versteckt.</td></tr>
+<tr><td>Blocked State</td><td>Blocker müssen sichtbar sein: fehlender Lieferant, fehlende Adresse, fehlender Bestand, fehlende BOM, ungültige Kundendaten.</td></tr>
+<tr><td>Event/Audit später</td><td>Detailseiten erhalten Events-Tabs; zunächst darf dies leer/placeholder sein, aber Mutationen sollen perspektivisch Events schreiben.</td></tr>
+<tr><td>Keine Testhilfe als Fachlösung</td><td>Dev Backfill darf Demo-Daten retten, aber echte Akzeptanz läuft über Shopify Sync und echte Prozessdaten.</td></tr>
+</table></section>
+<section class="card"><h2>Statusmodelle zusammengefasst</h2><table><tr><th>Bereich</th><th>Status</th></tr>
+<tr><td>Orders</td><td>Needs planning → Purchase proposal ready → Purchase Order created → Sent to supplier → Awaiting receipt → Receiving/QC → Putaway pending → Ready for logistics → Shipment created → Complete; Blocker: Logistics blocked, Review required.</td></tr>
+<tr><td>Purchase Need</td><td>Need supplier → Ready for PO → Converted to PO → Cancelled. MVP-Aliase müssen klar gemappt werden.</td></tr>
+<tr><td>Purchase Order</td><td>Draft → Approved optional → Sent → Supplier acknowledged optional → Receiving allowed → Closed/Complete.</td></tr>
+<tr><td>Receipt</td><td>Expected → Received/QC required → QC completed → Putaway pending → Closed.</td></tr>
+<tr><td>Shipment</td><td>Ready → Created → Packed optional → Shipped → Complete; kein Shopify Fulfillment Writeback im MVP.</td></tr>
+</table></section></main></div></body></html>

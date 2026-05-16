@@ -1,9 +1,9 @@
 import type { QueryExecutor } from "./kit-db.server";
 import { withKitTransaction } from "./kit-db.server";
 import {
-  decryptCustomerData,
   encryptCustomerData,
   hashCustomerLookup,
+  safeDecryptCustomerData,
 } from "./customer-privacy.server";
 
 export type ScenarioMode = "available" | "shortage" | "operations";
@@ -70,6 +70,17 @@ type CustomerEncryptedRow = {
   [key: string]: unknown;
 };
 
+type NormalizedShippingAddress = {
+  name: string | null;
+  address1: string | null;
+  address2: string | null;
+  city: string | null;
+  provinceCode: string | null;
+  zip: string | null;
+  countryCodeV2: string | null;
+  phone: string | null;
+};
+
 type OperationCustomerEncryptedRow = {
   display_name?: string | null;
   email?: string | null;
@@ -81,20 +92,109 @@ type OperationCustomerEncryptedRow = {
 };
 
 function decryptOrderRow<T extends CustomerEncryptedRow>(row: T) {
-  const shippingAddress = decryptCustomerData(row.shipping_address_encrypted);
+  const shippingAddress = safeDecryptCustomerData(
+    row.shipping_address_encrypted,
+  );
 
   return {
     ...row,
     customer_name:
-      decryptCustomerData(row.customer_name_encrypted) ??
+      safeDecryptCustomerData(row.customer_name_encrypted) ??
       row.customer_name ??
       null,
     customer_email:
-      decryptCustomerData(row.customer_email_encrypted) ??
+      safeDecryptCustomerData(row.customer_email_encrypted) ??
       row.customer_email ??
       null,
-    shipping_address: shippingAddress ? JSON.parse(shippingAddress) : null,
+    shipping_address: normalizeShippingAddress(shippingAddress),
   };
+}
+
+function normalizeShippingAddress(
+  encryptedValue: string | null | undefined,
+): NormalizedShippingAddress | null {
+  if (!encryptedValue) return null;
+  try {
+    const parsed = JSON.parse(encryptedValue) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    const address = parsed as Record<string, unknown>;
+    return {
+      name: stringOrNull(address.name),
+      address1: stringOrNull(address.address1 ?? address.street),
+      address2: stringOrNull(address.address2),
+      city: stringOrNull(address.city),
+      provinceCode: stringOrNull(address.provinceCode ?? address.province),
+      zip: stringOrNull(address.zip ?? address.postalCode),
+      countryCodeV2: stringOrNull(
+        address.countryCodeV2 ?? address.countryCode ?? address.country,
+      ),
+      phone: stringOrNull(address.phone),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function stringOrNull(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function hasUsableShippingAddress(address: NormalizedShippingAddress | null) {
+  return Boolean(address?.address1 && address.city && address.countryCodeV2);
+}
+
+function missingOrderShippingData(row: {
+  customer_name?: unknown;
+  customer_email?: unknown;
+  shipping_address?: NormalizedShippingAddress | null;
+}) {
+  return [
+    row.customer_name ? null : "customer name",
+    row.customer_email ? null : "customer email",
+    hasUsableShippingAddress(row.shipping_address ?? null)
+      ? null
+      : "shipping address",
+  ].filter(Boolean) as string[];
+}
+
+function applyDecodedOrderDataQuality(row: any) {
+  const missing = missingOrderShippingData(row);
+  if (missing.length === 0) return row;
+  const missingParts = missing.map((value) =>
+    value === "customer email" ? "email" : value,
+  );
+  const missingLabel =
+    missingParts.length <= 1
+      ? (missingParts[0] ?? "shipping data")
+      : `${missingParts.slice(0, -1).join(", ")} or ${
+          missingParts[missingParts.length - 1]
+        }`;
+
+  if (row.operational_status === "Ready for logistics") {
+    return {
+      ...row,
+      operational_status: "Logistics blocked",
+      operational_status_tone: "warning",
+      next_reason: `Inventory is ready, but ${missingLabel} is missing.`,
+      next_action_label: "Open order",
+      next_action_href: `/app/orders/${row.id}`,
+    };
+  }
+
+  if (row.operational_status === "Complete") {
+    return {
+      ...row,
+      operational_status: "Shipment complete, address missing in Operations Kit",
+      operational_status_tone: "warning",
+      next_reason: `Shipment is complete, but Operations Kit is missing ${missingLabel}.`,
+      next_action_label: "Open order",
+      next_action_href: `/app/orders/${row.id}`,
+    };
+  }
+
+  return row;
 }
 
 function decryptOperationCustomerRow<T extends OperationCustomerEncryptedRow>(
@@ -103,12 +203,12 @@ function decryptOperationCustomerRow<T extends OperationCustomerEncryptedRow>(
   return {
     ...row,
     display_name:
-      decryptCustomerData(row.display_name_encrypted) ??
+      safeDecryptCustomerData(row.display_name_encrypted) ??
       row.display_name ??
       null,
-    email: decryptCustomerData(row.email_encrypted) ?? row.email ?? null,
-    first_name: decryptCustomerData(row.first_name_encrypted),
-    last_name: decryptCustomerData(row.last_name_encrypted),
+    email: safeDecryptCustomerData(row.email_encrypted) ?? row.email ?? null,
+    first_name: safeDecryptCustomerData(row.first_name_encrypted),
+    last_name: safeDecryptCustomerData(row.last_name_encrypted),
   };
 }
 
@@ -1227,8 +1327,31 @@ export async function commitMrpRun(
       demand_quantity: string;
       shortage_quantity: string;
       recommended_action: string;
+      source_order_line_id: string | null;
     }>(
-      "select id, item_id, demand_quantity, shortage_quantity, recommended_action from mrp_run_lines where tenant_id = $1 and mrp_run_id = $2",
+      `
+        select
+          mrp_run_lines.id,
+          mrp_run_lines.item_id,
+          mrp_run_lines.demand_quantity,
+          mrp_run_lines.shortage_quantity,
+          mrp_run_lines.recommended_action,
+          source_line.source_order_line_id
+        from mrp_run_lines
+        join mrp_runs
+          on mrp_runs.id = mrp_run_lines.mrp_run_id
+          and mrp_runs.tenant_id = mrp_run_lines.tenant_id
+        left join lateral (
+          select (array_agg(operations_order_lines.id))[1] as source_order_line_id
+          from operations_order_lines
+          where operations_order_lines.tenant_id = mrp_run_lines.tenant_id
+            and operations_order_lines.operations_order_id = mrp_runs.operations_order_id
+            and operations_order_lines.item_id = mrp_run_lines.item_id
+            and operations_order_lines.supply_status <> 'cancelled'
+          having count(*) = 1
+        ) source_line on true
+        where mrp_run_lines.tenant_id = $1 and mrp_run_lines.mrp_run_id = $2
+      `,
       [tenantId, mrpRunId],
     );
 
@@ -1263,17 +1386,22 @@ export async function commitMrpRun(
         await tx.query(
           `
             insert into purchase_needs (
-              tenant_id, item_id, mrp_run_id, mrp_run_line_id, supplier_id, quantity, unit, status
+              tenant_id, item_id, mrp_run_id, mrp_run_line_id,
+              source_order_line_id, supplier_id, quantity, unit, status
             )
-            values ($1, $2, $3, $4, $5, $6, 'pcs', $7)
+            values ($1, $2, $3, $4, $5, $6, $7, 'pcs', $8)
             on conflict (tenant_id, mrp_run_line_id)
-            do update set supplier_id = coalesce(purchase_needs.supplier_id, excluded.supplier_id), updated_at = now()
+            do update set
+              supplier_id = coalesce(purchase_needs.supplier_id, excluded.supplier_id),
+              source_order_line_id = coalesce(purchase_needs.source_order_line_id, excluded.source_order_line_id),
+              updated_at = now()
           `,
           [
             tenantId,
             line.item_id,
             mrpRunId,
             line.id,
+            line.source_order_line_id,
             preferred.rows[0]?.supplier_id ?? null,
             line.shortage_quantity,
             preferred.rows[0]?.supplier_id ? "assigned" : "open",
@@ -3438,8 +3566,10 @@ export async function loadOperationsOrdersList(
           left join open_purchase_orders on open_purchase_orders.item_id = items.id
           where items.tenant_id = $1
         ),
-        item_procurement as (
+        procurement_context as (
           select
+            mrp_runs.operations_order_id,
+            purchase_needs.source_order_line_id,
             purchase_needs.item_id,
             count(*)::int as procurement_count,
             count(*) filter (where purchase_order_lines.id is null)::int as proposal_count,
@@ -3453,6 +3583,9 @@ export async function loadOperationsOrdersList(
                 or goods_receipt_lines.status = 'putaway_done'
             )::int as inventory_booked_count
           from purchase_needs
+          join mrp_runs
+            on mrp_runs.id = purchase_needs.mrp_run_id
+            and mrp_runs.tenant_id = purchase_needs.tenant_id
           left join purchase_order_lines
             on purchase_order_lines.purchase_need_id = purchase_needs.id
             and purchase_order_lines.tenant_id = purchase_needs.tenant_id
@@ -3467,13 +3600,7 @@ export async function loadOperationsOrdersList(
             and goods_receipts.tenant_id = goods_receipt_lines.tenant_id
           where purchase_needs.tenant_id = $1
             and purchase_needs.status <> 'cancelled'
-          group by purchase_needs.item_id
-        ),
-        item_receipts as (
-          select goods_receipt_lines.item_id, count(*)::int as receipt_count
-          from goods_receipt_lines
-          where goods_receipt_lines.tenant_id = $1
-          group by goods_receipt_lines.item_id
+          group by mrp_runs.operations_order_id, purchase_needs.source_order_line_id, purchase_needs.item_id
         ),
         item_production as (
           select item_id, count(*)::int as production_count
@@ -3501,6 +3628,9 @@ export async function loadOperationsOrdersList(
             operations_order_lines.item_id,
             operations_order_lines.quantity,
             operations_order_lines.supply_status,
+            operations_orders.status as order_status,
+            operations_orders.processed_at as order_processed_at,
+            operations_orders.created_at as order_created_at,
             coalesce(operations_order_lines.sku, items.sku) as sku,
             coalesce(operations_order_lines.title, items.title) as title,
             items.is_sellable,
@@ -3508,15 +3638,15 @@ export async function loadOperationsOrdersList(
             items.is_producible,
             coalesce(item_availability.available_quantity, 0) as available_quantity,
             coalesce(item_availability.planned_quantity, 0) as planned_quantity,
-            coalesce(item_procurement.proposal_count, 0) as proposal_count,
-            coalesce(item_procurement.po_created_count, 0) as po_created_count,
-            coalesce(item_procurement.po_sent_count, 0) as po_sent_count,
-            coalesce(item_procurement.po_acknowledged_count, 0) as po_acknowledged_count,
-            coalesce(item_procurement.receiving_qc_count, 0) as receiving_qc_count,
-            coalesce(item_procurement.putaway_pending_count, 0) as putaway_pending_count,
-            coalesce(item_procurement.inventory_booked_count, 0) as inventory_booked_count,
-            coalesce(item_procurement.procurement_count, 0) > 0
-              or coalesce(item_receipts.receipt_count, 0) > 0 as has_procurement,
+            coalesce(direct_line_procurement.proposal_count, 0) + coalesce(order_procurement.proposal_count, 0) + coalesce(fallback_procurement.proposal_count, 0) as proposal_count,
+            coalesce(direct_line_procurement.po_created_count, 0) + coalesce(order_procurement.po_created_count, 0) + coalesce(fallback_procurement.po_created_count, 0) as po_created_count,
+            coalesce(direct_line_procurement.po_sent_count, 0) + coalesce(order_procurement.po_sent_count, 0) + coalesce(fallback_procurement.po_sent_count, 0) as po_sent_count,
+            coalesce(direct_line_procurement.po_acknowledged_count, 0) + coalesce(order_procurement.po_acknowledged_count, 0) + coalesce(fallback_procurement.po_acknowledged_count, 0) as po_acknowledged_count,
+            coalesce(direct_line_procurement.receiving_qc_count, 0) + coalesce(order_procurement.receiving_qc_count, 0) + coalesce(fallback_procurement.receiving_qc_count, 0) as receiving_qc_count,
+            coalesce(direct_line_procurement.putaway_pending_count, 0) + coalesce(order_procurement.putaway_pending_count, 0) + coalesce(fallback_procurement.putaway_pending_count, 0) as putaway_pending_count,
+            coalesce(direct_line_procurement.inventory_booked_count, 0) + coalesce(order_procurement.inventory_booked_count, 0) + coalesce(fallback_procurement.inventory_booked_count, 0) as inventory_booked_count,
+            coalesce(fallback_procurement.procurement_count, 0) as fallback_procurement_count,
+            coalesce(direct_line_procurement.procurement_count, 0) + coalesce(order_procurement.procurement_count, 0) + coalesce(fallback_procurement.procurement_count, 0) > 0 as has_procurement,
             coalesce(item_production.production_count, 0) > 0 as has_production,
             coalesce(line_logistics.logistics_count, 0) > 0 as has_logistics,
             coalesce(line_logistics.shipment_open_count, 0) as shipment_open_count,
@@ -3524,32 +3654,66 @@ export async function loadOperationsOrdersList(
             coalesce(line_logistics.shipment_shipped_count, 0) as shipment_shipped_count,
             line_logistics.shipment_numbers
           from operations_order_lines
+          join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
           join items on items.id = operations_order_lines.item_id
           left join item_availability on item_availability.item_id = operations_order_lines.item_id
-          left join item_procurement on item_procurement.item_id = operations_order_lines.item_id
-          left join item_receipts on item_receipts.item_id = operations_order_lines.item_id
+          left join procurement_context direct_line_procurement
+            on direct_line_procurement.source_order_line_id = operations_order_lines.id
+          left join procurement_context order_procurement
+            on order_procurement.item_id = operations_order_lines.item_id
+            and order_procurement.source_order_line_id is null
+            and order_procurement.operations_order_id = operations_order_lines.operations_order_id
+          left join procurement_context fallback_procurement
+            on fallback_procurement.item_id = operations_order_lines.item_id
+            and fallback_procurement.source_order_line_id is null
+            and fallback_procurement.operations_order_id is null
           left join item_production on item_production.item_id = operations_order_lines.item_id
           left join line_logistics on line_logistics.operations_order_line_id = operations_order_lines.id
           where operations_order_lines.tenant_id = $1
         ),
-        line_decisions as (
+        line_allocations as (
           select
             line_context.*,
+            coalesce(
+              sum(
+                case
+                  when line_context.order_status in ('open', 'planned', 'in_progress')
+                    and line_context.supply_status <> 'cancelled'
+                  then line_context.quantity
+                  else 0
+                end
+              ) over (
+                partition by line_context.item_id
+                order by line_context.order_processed_at nulls last,
+                  line_context.order_created_at,
+                  line_context.id
+                rows between unbounded preceding and 1 preceding
+              ),
+              0
+            ) as prior_open_demand_quantity
+          from line_context
+        ),
+        line_decisions as (
+          select
+            line_allocations.*,
             (
-              not line_context.is_sellable
-              and not line_context.is_purchasable
-              and not line_context.is_producible
+              not line_allocations.is_sellable
+              and not line_allocations.is_purchasable
+              and not line_allocations.is_producible
             ) as master_data_missing,
             (
-              line_context.has_procurement
-              or line_context.has_production
-              or line_context.has_logistics
+              line_allocations.has_procurement
+              or line_allocations.has_production
+              or line_allocations.has_logistics
             ) as has_work,
             (
-              line_context.supply_status = 'reserved'
-              or line_context.available_quantity >= line_context.quantity
+              line_allocations.supply_status = 'reserved'
+              or greatest(
+                line_allocations.available_quantity - line_allocations.prior_open_demand_quantity,
+                0
+              ) >= line_allocations.quantity
             ) as stock_ready
-          from line_context
+          from line_allocations
         ),
         order_summary as (
           select
@@ -3575,6 +3739,7 @@ export async function loadOperationsOrdersList(
             coalesce(sum(line_decisions.receiving_qc_count), 0)::int as receiving_qc_count,
             coalesce(sum(line_decisions.putaway_pending_count), 0)::int as putaway_pending_count,
             coalesce(sum(line_decisions.inventory_booked_count), 0)::int as inventory_booked_count,
+            coalesce(sum(line_decisions.fallback_procurement_count), 0)::int as fallback_procurement_count,
             coalesce(sum(line_decisions.shipment_open_count), 0)::int as shipment_open_count,
             coalesce(sum(line_decisions.shipment_packed_count), 0)::int as shipment_packed_count,
             coalesce(sum(line_decisions.shipment_shipped_count), 0)::int as shipment_shipped_count,
@@ -3638,6 +3803,7 @@ export async function loadOperationsOrdersList(
           coalesce(order_summary.receiving_qc_count, 0)::int as receiving_qc_count,
           coalesce(order_summary.putaway_pending_count, 0)::int as putaway_pending_count,
           coalesce(order_summary.inventory_booked_count, 0)::int as inventory_booked_count,
+          coalesce(order_summary.fallback_procurement_count, 0)::int as fallback_procurement_count,
           coalesce(order_summary.shipment_open_count, 0)::int as shipment_open_count,
           coalesce(order_summary.shipment_packed_count, 0)::int as shipment_packed_count,
           coalesce(order_summary.shipment_shipped_count, 0)::int as shipment_shipped_count,
@@ -3655,6 +3821,15 @@ export async function loadOperationsOrdersList(
             else concat('Short ', trim(to_char(order_summary.planned_shortage_quantity, 'FM999999990.####')))
           end as stock_label,
           case
+            when (
+              operations_orders.status = 'closed'
+              or coalesce(order_summary.shipment_shipped_count, 0) > 0
+            )
+              and (
+                operations_orders.customer_name_encrypted is null
+                or operations_orders.customer_email_encrypted is null
+                or operations_orders.shipping_address_encrypted is null
+              ) then 'Shipment complete, address missing in Operations Kit'
             when operations_orders.status = 'closed'
               or coalesce(order_summary.shipment_shipped_count, 0) > 0 then 'Complete'
             when coalesce(order_summary.shipment_open_count, 0) > 0
@@ -3682,6 +3857,15 @@ export async function loadOperationsOrdersList(
             else 'Needs planning'
           end as operational_status,
           case
+            when (
+              operations_orders.status = 'closed'
+              or coalesce(order_summary.shipment_shipped_count, 0) > 0
+            )
+              and (
+                operations_orders.customer_name_encrypted is null
+                or operations_orders.customer_email_encrypted is null
+                or operations_orders.shipping_address_encrypted is null
+              ) then 'warning'
             when operations_orders.status = 'closed'
               or coalesce(order_summary.shipment_shipped_count, 0) > 0 then 'success'
             when coalesce(order_summary.shipment_open_count, 0) > 0
@@ -3708,6 +3892,16 @@ export async function loadOperationsOrdersList(
             else 'info'
           end as operational_status_tone,
           case
+            when (
+              operations_orders.status = 'closed'
+              or coalesce(order_summary.shipment_shipped_count, 0) > 0
+            )
+              and (
+                operations_orders.customer_name_encrypted is null
+                or operations_orders.customer_email_encrypted is null
+                or operations_orders.shipping_address_encrypted is null
+              )
+              then 'Shipment is complete, but Operations Kit is missing customer name, email or shipping address.'
             when operations_orders.status = 'closed'
               or coalesce(order_summary.shipment_shipped_count, 0) > 0
               then 'Shipment work is complete for this order.'
@@ -3730,13 +3924,29 @@ export async function loadOperationsOrdersList(
             when coalesce(order_summary.receiving_qc_count, 0) > 0
               then 'Goods are received and waiting for QC or inventory booking.'
             when coalesce(order_summary.po_acknowledged_count, 0) > 0
-              then 'Supplier acknowledged the Purchase Order. Create or open a goods receipt.'
+              then case
+                when coalesce(order_summary.fallback_procurement_count, 0) > 0
+                  then 'Supplier acknowledged the Purchase Order. This procurement context is item-level because no direct order-line link is available.'
+                else 'Supplier acknowledged the Purchase Order. Create or open a goods receipt.'
+              end
             when coalesce(order_summary.po_sent_count, 0) > 0
-              then 'Purchase Order was sent to the supplier.'
+              then case
+                when coalesce(order_summary.fallback_procurement_count, 0) > 0
+                  then 'Purchase Order was sent to the supplier. This procurement context is item-level because no direct order-line link is available.'
+                else 'Purchase Order was sent to the supplier.'
+              end
             when coalesce(order_summary.po_created_count, 0) > 0
-              then 'Purchase Order exists and is waiting for the next procurement step.'
+              then case
+                when coalesce(order_summary.fallback_procurement_count, 0) > 0
+                  then 'Purchase Order exists. This procurement context is item-level because no direct order-line link is available.'
+                else 'Purchase Order exists and is waiting for the next procurement step.'
+              end
             when coalesce(order_summary.proposal_count, 0) > 0
-              then 'Purchase proposal exists. Create a Purchase Order.'
+              then case
+                when coalesce(order_summary.fallback_procurement_count, 0) > 0
+                  then 'Purchase proposal exists. This procurement context is item-level because no direct order-line link is available.'
+                else 'Purchase proposal exists. Create a Purchase Order.'
+              end
             when coalesce(order_summary.review_lines, 0) > 0
               then 'At least one order line is missing operational product data.'
             when coalesce(order_summary.procurement_lines, 0) > 0
@@ -3790,7 +4000,9 @@ export async function loadOperationsOrdersList(
       [tenantId],
     )
   ).rows;
-  return rows.map((row) => decryptOrderRow(row as CustomerEncryptedRow));
+  return rows
+    .map((row) => decryptOrderRow(row as CustomerEncryptedRow))
+    .map(applyDecodedOrderDataQuality);
 }
 
 export async function loadOperationsOrderLinesList(
@@ -3957,6 +4169,30 @@ export async function loadOperationsOrderLineDetail(
         from boms
         where tenant_id = $1 and is_active
         group by parent_item_id
+      ),
+      all_line_allocations as (
+        select
+          operations_order_lines.id as order_line_id,
+          coalesce(
+            sum(
+              case
+                when operations_orders.status in ('open', 'planned', 'in_progress')
+                  and operations_order_lines.supply_status <> 'cancelled'
+                then operations_order_lines.quantity
+                else 0
+              end
+            ) over (
+              partition by operations_order_lines.item_id
+              order by operations_orders.processed_at nulls last,
+                operations_orders.created_at,
+                operations_order_lines.id
+              rows between unbounded preceding and 1 preceding
+            ),
+            0
+          ) as prior_open_demand_quantity
+        from operations_order_lines
+        join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+        where operations_order_lines.tenant_id = $1
       )
       select
         operations_order_lines.*,
@@ -3966,6 +4202,7 @@ export async function loadOperationsOrderLineDetail(
         operations_orders.customer_email,
         operations_orders.customer_name_encrypted,
         operations_orders.customer_email_encrypted,
+        operations_orders.shipping_address_encrypted,
         operations_orders.financial_status,
         operations_orders.fulfillment_status,
         operations_orders.processed_at,
@@ -3999,6 +4236,10 @@ export async function loadOperationsOrderLineDetail(
         coalesce(open_demand.open_order_quantity, 0) as open_order_quantity,
         coalesce(open_purchase_orders.ordered_quantity, 0) as ordered_quantity,
         coalesce(balances.available_quantity, 0) + coalesce(open_purchase_orders.ordered_quantity, 0) as planned_quantity,
+        greatest(
+          coalesce(balances.available_quantity, 0) - coalesce(all_line_allocations.prior_open_demand_quantity, 0),
+          0
+        ) as allocated_available_quantity,
         coalesce(active_boms.active_bom_count, 0) as active_bom_count
       from operations_order_lines
       join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
@@ -4007,6 +4248,7 @@ export async function loadOperationsOrderLineDetail(
       left join open_demand on open_demand.item_id = items.id
       left join open_purchase_orders on open_purchase_orders.item_id = items.id
       left join active_boms on active_boms.item_id = items.id
+      left join all_line_allocations on all_line_allocations.order_line_id = operations_order_lines.id
       left join supplier_items preferred
         on preferred.item_id = items.id
         and preferred.tenant_id = items.tenant_id
@@ -4030,6 +4272,12 @@ export async function loadOperationsOrderLineDetail(
         purchase_needs.status as purchase_need_status,
         purchase_needs.quantity,
         purchase_needs.unit,
+        case
+          when purchase_needs.source_order_line_id = $3 then 'order_line'
+          when mrp_runs.operations_order_id = $4 then 'order'
+          else 'item_fallback'
+        end as demand_link_scope,
+        purchase_needs.source_order_line_id,
         suppliers.name as supplier_name,
         purchase_orders.id as purchase_order_id,
         purchase_orders.display_number as purchase_order_number,
@@ -4038,15 +4286,35 @@ export async function loadOperationsOrderLineDetail(
         goods_receipts.receipt_number,
         goods_receipts.status as receipt_status
       from purchase_needs
+      join mrp_runs
+        on mrp_runs.id = purchase_needs.mrp_run_id
+        and mrp_runs.tenant_id = purchase_needs.tenant_id
       left join suppliers on suppliers.id = purchase_needs.supplier_id
       left join purchase_order_lines on purchase_order_lines.purchase_need_id = purchase_needs.id
       left join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
       left join goods_receipts on goods_receipts.purchase_order_id = purchase_orders.id
-      where purchase_needs.tenant_id = $1 and purchase_needs.item_id = $2
-      order by purchase_needs.created_at desc
+      where purchase_needs.tenant_id = $1
+        and purchase_needs.item_id = $2
+        and (
+          purchase_needs.source_order_line_id = $3
+          or (
+            purchase_needs.source_order_line_id is null
+            and mrp_runs.operations_order_id = $4
+          )
+          or (
+            purchase_needs.source_order_line_id is null
+            and mrp_runs.operations_order_id is null
+          )
+        )
+      order by case
+          when purchase_needs.source_order_line_id = $3 then 0
+          when mrp_runs.operations_order_id = $4 then 1
+          else 2
+        end,
+        purchase_needs.created_at desc
       limit 5
     `,
-    [tenantId, itemId],
+    [tenantId, itemId, lineId, lineRow.operations_order_id],
   );
 
   const receipts = await db.query(
@@ -4059,17 +4327,44 @@ export async function loadOperationsOrderLineDetail(
         goods_receipt_lines.received_quantity,
         goods_receipt_lines.accepted_quantity,
         goods_receipt_lines.rejected_quantity,
+        case
+          when purchase_needs.source_order_line_id = $3 then 'order_line'
+          when mrp_runs.operations_order_id = $4 then 'order'
+          else 'item_fallback'
+        end as demand_link_scope,
+        purchase_needs.source_order_line_id,
         purchase_orders.id as purchase_order_id,
         purchase_orders.display_number as purchase_order_number
       from goods_receipt_lines
       join goods_receipts on goods_receipts.id = goods_receipt_lines.goods_receipt_id
       join purchase_order_lines on purchase_order_lines.id = goods_receipt_lines.purchase_order_line_id
+      join purchase_needs on purchase_needs.id = purchase_order_lines.purchase_need_id
+      join mrp_runs
+        on mrp_runs.id = purchase_needs.mrp_run_id
+        and mrp_runs.tenant_id = purchase_needs.tenant_id
       join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
-      where goods_receipt_lines.tenant_id = $1 and goods_receipt_lines.item_id = $2
-      order by goods_receipts.received_at desc
+      where goods_receipt_lines.tenant_id = $1
+        and goods_receipt_lines.item_id = $2
+        and (
+          purchase_needs.source_order_line_id = $3
+          or (
+            purchase_needs.source_order_line_id is null
+            and mrp_runs.operations_order_id = $4
+          )
+          or (
+            purchase_needs.source_order_line_id is null
+            and mrp_runs.operations_order_id is null
+          )
+        )
+      order by case
+          when purchase_needs.source_order_line_id = $3 then 0
+          when mrp_runs.operations_order_id = $4 then 1
+          else 2
+        end,
+        goods_receipts.received_at desc
       limit 5
     `,
-    [tenantId, itemId],
+    [tenantId, itemId, lineId, lineRow.operations_order_id],
   );
 
   const inventoryMovements = await db.query(
@@ -4135,6 +4430,7 @@ export async function createPurchaseNeedForOrderLine(
   return withKitTransaction(db, async (tx) => {
     const lineResult = await tx.query<{
       id: string;
+      operations_order_id: string;
       item_id: string;
       quantity: string;
       unit: string;
@@ -4158,6 +4454,7 @@ export async function createPurchaseNeedForOrderLine(
         )
         select
           operations_order_lines.id,
+          operations_order_lines.operations_order_id,
           operations_order_lines.item_id,
           operations_order_lines.quantity,
           operations_order_lines.unit,
@@ -4205,12 +4502,15 @@ export async function createPurchaseNeedForOrderLine(
 
     const run = await tx.query<{ id: string }>(
       `
-        insert into mrp_runs (tenant_id, status, scenario_mode, summary, committed_at)
-        values ($1, 'committed', 'operations', $2, now())
+        insert into mrp_runs (
+          tenant_id, operations_order_id, status, scenario_mode, summary, committed_at
+        )
+        values ($1, $2, 'committed', 'operations', $3, now())
         returning id
       `,
       [
         tenantId,
+        line.operations_order_id,
         `Direct purchase need from ${line.order_name} / ${line.sku ?? line.item_sku}.`,
       ],
     );
@@ -4238,10 +4538,10 @@ export async function createPurchaseNeedForOrderLine(
     const need = await tx.query<{ id: string }>(
       `
         insert into purchase_needs (
-          tenant_id, item_id, mrp_run_id, mrp_run_line_id, supplier_id,
-          quantity, unit, status
+          tenant_id, item_id, mrp_run_id, mrp_run_line_id,
+          source_order_line_id, supplier_id, quantity, unit, status
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         returning id
       `,
       [
@@ -4249,6 +4549,7 @@ export async function createPurchaseNeedForOrderLine(
         line.item_id,
         run.rows[0].id,
         runLine.rows[0].id,
+        line.id,
         line.preferred_supplier_id,
         quantity,
         line.unit,
@@ -4565,6 +4866,30 @@ export async function loadOperationsOrderDetail(
         from boms
         where tenant_id = $1 and is_active
         group by parent_item_id
+      ),
+      all_line_allocations as (
+        select
+          operations_order_lines.id as order_line_id,
+          coalesce(
+            sum(
+              case
+                when operations_orders.status in ('open', 'planned', 'in_progress')
+                  and operations_order_lines.supply_status <> 'cancelled'
+                then operations_order_lines.quantity
+                else 0
+              end
+            ) over (
+              partition by operations_order_lines.item_id
+              order by operations_orders.processed_at nulls last,
+                operations_orders.created_at,
+                operations_order_lines.id
+              rows between unbounded preceding and 1 preceding
+            ),
+            0
+          ) as prior_open_demand_quantity
+        from operations_order_lines
+        join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+        where operations_order_lines.tenant_id = $1
       )
       select operations_order_lines.*, items.sku as item_sku, items.title as item_title,
         items.shopify_product_gid, items.shopify_variant_gid, items.product_handle,
@@ -4582,6 +4907,10 @@ export async function loadOperationsOrderDetail(
         coalesce(open_demand.open_order_quantity, 0) as open_order_quantity,
         coalesce(open_purchase_orders.ordered_quantity, 0) as ordered_quantity,
         coalesce(balances.available_quantity, 0) + coalesce(open_purchase_orders.ordered_quantity, 0) as planned_quantity,
+        greatest(
+          coalesce(balances.available_quantity, 0) - coalesce(all_line_allocations.prior_open_demand_quantity, 0),
+          0
+        ) as allocated_available_quantity,
         coalesce(active_boms.active_bom_count, 0) as active_bom_count
       from operations_order_lines
       join items on items.id = operations_order_lines.item_id
@@ -4589,6 +4918,7 @@ export async function loadOperationsOrderDetail(
       left join open_demand on open_demand.item_id = items.id
       left join open_purchase_orders on open_purchase_orders.item_id = items.id
       left join active_boms on active_boms.item_id = items.id
+      left join all_line_allocations on all_line_allocations.order_line_id = operations_order_lines.id
       left join supplier_items preferred
         on preferred.item_id = items.id
         and preferred.tenant_id = items.tenant_id
@@ -4606,6 +4936,12 @@ export async function loadOperationsOrderDetail(
         purchase_needs.status as purchase_need_status,
         purchase_needs.quantity,
         purchase_needs.unit,
+        case
+          when purchase_needs.source_order_line_id is not null then 'order_line'
+          when mrp_runs.operations_order_id = $2 then 'order'
+          else 'item_fallback'
+        end as demand_link_scope,
+        purchase_needs.source_order_line_id,
         suppliers.name as supplier_name,
         purchase_orders.id as purchase_order_id,
         purchase_orders.display_number as purchase_order_number,
@@ -4614,6 +4950,9 @@ export async function loadOperationsOrderDetail(
         goods_receipts.receipt_number,
         goods_receipts.status as receipt_status
       from purchase_needs
+      join mrp_runs
+        on mrp_runs.id = purchase_needs.mrp_run_id
+        and mrp_runs.tenant_id = purchase_needs.tenant_id
       left join suppliers on suppliers.id = purchase_needs.supplier_id
       left join purchase_order_lines on purchase_order_lines.purchase_need_id = purchase_needs.id
       left join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
@@ -4624,7 +4963,27 @@ export async function loadOperationsOrderDetail(
           from operations_order_lines
           where tenant_id = $1 and operations_order_id = $2
         )
-      order by purchase_needs.created_at desc
+        and (
+          purchase_needs.source_order_line_id in (
+            select id
+            from operations_order_lines
+            where tenant_id = $1 and operations_order_id = $2
+          )
+          or (
+            purchase_needs.source_order_line_id is null
+            and mrp_runs.operations_order_id = $2
+          )
+          or (
+            purchase_needs.source_order_line_id is null
+            and mrp_runs.operations_order_id is null
+          )
+        )
+      order by case
+          when purchase_needs.source_order_line_id is not null then 0
+          when mrp_runs.operations_order_id = $2 then 1
+          else 2
+        end,
+        purchase_needs.created_at desc
       limit 20
     `,
     [tenantId, orderId],
@@ -4640,11 +4999,21 @@ export async function loadOperationsOrderDetail(
         goods_receipt_lines.received_quantity,
         goods_receipt_lines.accepted_quantity,
         goods_receipt_lines.rejected_quantity,
+        case
+          when purchase_needs.source_order_line_id is not null then 'order_line'
+          when mrp_runs.operations_order_id = $2 then 'order'
+          else 'item_fallback'
+        end as demand_link_scope,
+        purchase_needs.source_order_line_id,
         purchase_orders.id as purchase_order_id,
         purchase_orders.display_number as purchase_order_number
       from goods_receipt_lines
       join goods_receipts on goods_receipts.id = goods_receipt_lines.goods_receipt_id
       join purchase_order_lines on purchase_order_lines.id = goods_receipt_lines.purchase_order_line_id
+      join purchase_needs on purchase_needs.id = purchase_order_lines.purchase_need_id
+      join mrp_runs
+        on mrp_runs.id = purchase_needs.mrp_run_id
+        and mrp_runs.tenant_id = purchase_needs.tenant_id
       join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
       where goods_receipt_lines.tenant_id = $1
         and goods_receipt_lines.item_id in (
@@ -4652,7 +5021,27 @@ export async function loadOperationsOrderDetail(
           from operations_order_lines
           where tenant_id = $1 and operations_order_id = $2
         )
-      order by goods_receipts.received_at desc
+        and (
+          purchase_needs.source_order_line_id in (
+            select id
+            from operations_order_lines
+            where tenant_id = $1 and operations_order_id = $2
+          )
+          or (
+            purchase_needs.source_order_line_id is null
+            and mrp_runs.operations_order_id = $2
+          )
+          or (
+            purchase_needs.source_order_line_id is null
+            and mrp_runs.operations_order_id is null
+          )
+        )
+      order by case
+          when purchase_needs.source_order_line_id is not null then 0
+          when mrp_runs.operations_order_id = $2 then 1
+          else 2
+        end,
+        goods_receipts.received_at desc
       limit 20
     `,
     [tenantId, orderId],
@@ -4978,9 +5367,25 @@ export async function loadPurchaseNeeds(db: QueryExecutor, tenantId: string) {
           supplier_items.unit_price as preferred_unit_price,
           supplier_items.currency_code as preferred_currency_code,
           purchase_order_lines.purchase_order_id,
-          purchase_orders.display_number as purchase_order_number
+          purchase_orders.display_number as purchase_order_number,
+          purchase_needs.source_order_line_id,
+          mrp_runs.operations_order_id as source_order_id,
+          operations_orders.order_name as source_order_name,
+          source_order_lines.sku as source_line_sku,
+          source_order_lines.title as source_line_title,
+          case
+            when purchase_needs.source_order_line_id is not null then 'order_line'
+            when mrp_runs.operations_order_id is not null then 'order'
+            else 'item_fallback'
+          end as demand_link_scope
         from purchase_needs
         join items on items.id = purchase_needs.item_id
+        join mrp_runs on mrp_runs.id = purchase_needs.mrp_run_id
+          and mrp_runs.tenant_id = purchase_needs.tenant_id
+        left join operations_orders on operations_orders.id = mrp_runs.operations_order_id
+        left join operations_order_lines source_order_lines
+          on source_order_lines.id = purchase_needs.source_order_line_id
+          and source_order_lines.tenant_id = purchase_needs.tenant_id
         left join suppliers on suppliers.id = purchase_needs.supplier_id
         left join supplier_items on supplier_items.item_id = items.id and supplier_items.tenant_id = items.tenant_id and supplier_items.is_preferred
         left join suppliers preferred on preferred.id = supplier_items.supplier_id
@@ -5336,11 +5741,18 @@ export async function createShippingOrdersFromOpenOperationsOrders(
 
     const created: string[] = [];
     const blockedOrders: string[] = [];
+    const orderSummaries = await loadOperationsOrdersList(tx, tenantId);
+    const summaryByOrderId = new Map(
+      orderSummaries.map((order: any) => [order.id, order]),
+    );
     for (const order of orders.rows) {
+      const decryptedOrder = decryptOrderRow(order);
+      const summary = summaryByOrderId.get(order.id) as any;
       if (
-        !order.customer_name_encrypted ||
-        !order.customer_email_encrypted ||
-        !order.shipping_address_encrypted
+        !decryptedOrder.customer_name ||
+        !decryptedOrder.customer_email ||
+        !hasUsableShippingAddress(decryptedOrder.shipping_address) ||
+        summary?.operational_status !== "Ready for logistics"
       ) {
         blockedOrders.push(order.order_name);
         continue;

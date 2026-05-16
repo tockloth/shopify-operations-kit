@@ -6,6 +6,7 @@ import { requireOperationsKitContext } from "../lib/app-context.server";
 import {
   backfillTestShippingAddressForOpenOrders,
   createShippingOrdersFromOpenOperationsOrders,
+  loadOperationsOrdersList,
   loadShippableOperationsOrders,
   loadShippingOrders,
   transitionShippingOrder,
@@ -18,6 +19,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     configured: true,
     shippableOrders: await loadShippableOperationsOrders(
+      context.pool,
+      context.ctx.tenantId,
+    ),
+    orderSummaries: await loadOperationsOrdersList(
       context.pool,
       context.ctx.tenantId,
     ),
@@ -80,20 +85,36 @@ export default function Logistics() {
   const formatAddress = (address?: any) =>
     address
       ? [
+          address.name,
           address.address1,
+          address.address2,
           address.city,
           address.zip,
+          address.provinceCode,
           address.countryCodeV2,
         ].filter(Boolean).join(", ")
       : "No address";
-  const blockingReason = (order: any) =>
-    [
+  const hasUsableShippingAddress = (address?: any) =>
+    Boolean(address?.address1 && address.city && address.countryCodeV2);
+  const summaryByOrderId = new Map(
+    ((data as any).orderSummaries ?? []).map((order: any) => [order.id, order]),
+  );
+  const blockingReason = (order: any) => {
+    const summary = summaryByOrderId.get(order.id) as any;
+    const missing = [
       order.customer_name ? null : "Missing customer name",
       order.customer_email ? null : "Missing customer email",
-      order.shipping_address ? null : "Missing shipping address",
+      hasUsableShippingAddress(order.shipping_address)
+        ? null
+        : "Missing shipping address",
     ]
-      .filter(Boolean)
-      .join(" · ");
+      .filter(Boolean);
+    if (missing.length > 0) return missing.join(" · ");
+    if (summary?.operational_status !== "Ready for logistics") {
+      return `Inventory not ready: ${summary?.operational_status ?? "Needs planning"}`;
+    }
+    return "";
+  };
 
   return (
     <s-page heading="Logistics">

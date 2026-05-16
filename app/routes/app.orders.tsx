@@ -16,11 +16,22 @@ import { authenticate } from "../shopify.server";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const context = await requireOperationsKitContext(request);
   if (!context.configured) return { configured: false, setupError: context.setupError };
+  const url = new URL(request.url);
+  const filters = {
+    query: url.searchParams.get("q")?.trim() ?? "",
+    fulfillment: url.searchParams.get("fulfillment") ?? "all",
+    payment: url.searchParams.get("payment") ?? "all",
+    addressMissing: url.searchParams.get("addressMissing") ?? "all",
+  };
+  const orders = await loadOperationsOrdersList(context.pool, context.ctx.tenantId);
+  const filteredOrders = filterOrders(orders, filters);
 
   return {
     configured: true,
     shopDomain: context.shopDomain,
-    orders: await loadOperationsOrdersList(context.pool, context.ctx.tenantId),
+    filters,
+    orders,
+    filteredOrders,
   };
 };
 
@@ -74,14 +85,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   try {
     const result = await syncShopifyOrders(context.pool, context.ctx.tenantId, admin);
-    const protectedDataMessage = !result.customerDataAvailable
-      ? " Customer name, email and shipping address were skipped because the current Shopify app installation does not include the required protected customer data access."
-      : !result.shippingAddressAvailable
-        ? " Customer name and email were synced. Shipping address was skipped because Address is not approved in Protected Customer Data."
+    const protectedDataMessage = result.protectedCustomerDataUnavailable
+      ? result.customerDataAvailable
+        ? result.customerDefaultAddressesStored > 0
+          ? " Shopify did not return order shipping addresses; customer default addresses were stored where available. Check Protected Customer Data access if checkout shipping addresses should be available."
+          : " Shopify did not return shipping addresses. Check Protected Customer Data access and app scopes."
+        : " Shopify did not return customer name, email, or shipping addresses. Check Protected Customer Data access and app scopes."
+      : result.shippingAddressesMissing > 0
+        ? ` ${result.shippingAddressesMissing} order(s) did not include a usable Shopify shipping address.`
         : "";
 
     return {
-      message: `${result.orders} Shopify order(s) and ${result.lines} line item(s) synced into Operations Kit.${protectedDataMessage}`,
+      message: `${result.orders} Shopify order(s) and ${result.lines} line item(s) synced into Operations Kit. ${result.shippingAddressesStored} shipping address(es) stored.${protectedDataMessage}`,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -106,21 +121,6 @@ function shopifyOrderUrl(shopDomain: string, legacyId?: string | null) {
   return `https://admin.shopify.com/store/${shop}/orders/${legacyId}`;
 }
 
-function statusTone(status?: string | null) {
-  if (status === "Review required") return "critical";
-  if (status === "Ready for logistics" || status === "Complete") return "success";
-  if (
-    status === "Needs planning" ||
-    status === "Purchase proposal ready" ||
-    status === "Putaway pending" ||
-    status === "Logistics blocked" ||
-    status === "Production in progress"
-  ) {
-    return "warning";
-  }
-  return "info";
-}
-
 function compactProducts(value?: string | null) {
   if (!value) return "No products";
   const products = value.split(" || ").filter(Boolean);
@@ -128,11 +128,65 @@ function compactProducts(value?: string | null) {
   return `${products.slice(0, 2).join(" · ")} · +${products.length - 2} more`;
 }
 
+function formatOrderDate(value?: string | null) {
+  if (!value) return "No date";
+  return new Intl.DateTimeFormat("en", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  }).format(new Date(value));
+}
+
+function filterOrders(orders: any[], filters: any) {
+  const query = String(filters.query ?? "").toLowerCase();
+  return orders.filter((order) => {
+    const searchable = [
+      order.order_name,
+      order.customer_name,
+      order.customer_email,
+      order.product_summary,
+      order.skus,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    if (query && !searchable.includes(query)) return false;
+    if (
+      filters.fulfillment !== "all" &&
+      String(order.fulfillment_status ?? "unfulfilled") !== filters.fulfillment
+    ) {
+      return false;
+    }
+    if (
+      filters.payment !== "all" &&
+      String(order.financial_status ?? "unknown") !== filters.payment
+    ) {
+      return false;
+    }
+    const missingAddress = Boolean(shippingBlockReason(order));
+    if (filters.addressMissing === "yes" && !missingAddress) return false;
+    if (filters.addressMissing === "no" && missingAddress) return false;
+    return true;
+  });
+}
+
+function uniqueValues(orders: any[], field: string, fallback: string) {
+  return Array.from(
+    new Set(
+      orders.map((order) => String(order[field] ?? fallback)).filter(Boolean),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+}
+
 function shippingBlockReason(order: any) {
   const missing = [
     order.customer_name ? null : "missing customer name",
     order.customer_email ? null : "missing customer email",
-    order.shipping_address ? null : "missing shipping address",
+    order.shipping_address?.address1 &&
+    order.shipping_address?.city &&
+    order.shipping_address?.countryCodeV2
+      ? null
+      : "missing shipping address",
   ].filter(Boolean);
 
   return missing.length > 0 ? missing.join(", ") : null;
@@ -146,6 +200,24 @@ export default function Orders() {
   }
 
   const orders = data.orders ?? [];
+  const filteredOrders = data.filteredOrders ?? orders;
+  const filters = data.filters ?? {
+    query: "",
+    fulfillment: "all",
+    payment: "all",
+    addressMissing: "all",
+  };
+  const hasActiveFilters =
+    filters.query ||
+    filters.fulfillment !== "all" ||
+    filters.payment !== "all" ||
+    filters.addressMissing !== "all";
+  const paymentStatuses = uniqueValues(orders as any[], "financial_status", "unknown");
+  const fulfillmentStatuses = uniqueValues(
+    orders as any[],
+    "fulfillment_status",
+    "unfulfilled",
+  );
   return (
     <s-page heading="Orders">
       <s-section>
@@ -157,22 +229,9 @@ export default function Orders() {
             </div>
           </div>
           <div className="kit-toolbar-actions">
-            <s-link href="/app/orders/new">Create manual order</s-link>
             <Form method="post">
               <input type="hidden" name="intent" value="sync" />
               <s-button variant="primary" type="submit">Sync Shopify orders</s-button>
-            </Form>
-            <Form method="post">
-              <input type="hidden" name="intent" value="runOperationsMrp" />
-              <s-button type="submit">Plan open orders</s-button>
-            </Form>
-            <Form method="post">
-              <input type="hidden" name="intent" value="createLogisticsWork" />
-              <s-button type="submit">Create logistics work</s-button>
-            </Form>
-            <Form method="post">
-              <input type="hidden" name="intent" value="consolidate" />
-              <s-button type="submit">Consolidate</s-button>
             </Form>
           </div>
         </div>
@@ -183,27 +242,52 @@ export default function Orders() {
         ) : null}
       </s-section>
 
-      <s-section heading="Operational status">
-        <DataTable
-          headings={[
-            "Review required",
-            "Needs planning",
-            "Purchase proposal ready",
-            "Receiving / QC",
-            "Ready for logistics",
-            "Complete",
-          ]}
-          rows={[
-            [
-              orders.filter((order: any) => order.operational_status === "Review required").length.toLocaleString(),
-              orders.filter((order: any) => order.operational_status === "Needs planning").length.toLocaleString(),
-              orders.filter((order: any) => order.operational_status === "Purchase proposal ready").length.toLocaleString(),
-              orders.filter((order: any) => order.operational_status === "Receiving / QC").length.toLocaleString(),
-              orders.filter((order: any) => order.operational_status === "Ready for logistics").length.toLocaleString(),
-              orders.filter((order: any) => order.operational_status === "Complete").length.toLocaleString(),
-            ],
-          ]}
-        />
+      <s-section>
+        <details open={Boolean(hasActiveFilters)}>
+          <summary>Filters</summary>
+          <Form method="get">
+            <div className="kit-filterbar">
+              <s-text-field
+                label="Search order, customer or product"
+                name="q"
+                value={filters.query}
+              />
+              <s-select label="Fulfillment" name="fulfillment" value={filters.fulfillment}>
+                <s-option value="all">All fulfillment statuses</s-option>
+                {fulfillmentStatuses.map((status) => (
+                  <s-option key={status} value={status}>
+                    {status}
+                  </s-option>
+                ))}
+              </s-select>
+              <s-select label="Payment" name="payment" value={filters.payment}>
+                <s-option value="all">All payment statuses</s-option>
+                {paymentStatuses.map((status) => (
+                  <s-option key={status} value={status}>
+                    {status}
+                  </s-option>
+                ))}
+              </s-select>
+              <s-select
+                label="Address missing"
+                name="addressMissing"
+                value={filters.addressMissing}
+              >
+                <s-option value="all">All orders</s-option>
+                <s-option value="yes">Address/name/email missing</s-option>
+                <s-option value="no">Shipping data ready</s-option>
+              </s-select>
+            </div>
+            <s-stack direction="inline" gap="small">
+              <s-button type="submit">Apply filters</s-button>
+              <s-link href="/app/orders">Clear filters</s-link>
+            </s-stack>
+          </Form>
+        </details>
+        <s-paragraph>
+          Showing {filteredOrders.length.toLocaleString()} of{" "}
+          {orders.length.toLocaleString()} order(s).
+        </s-paragraph>
       </s-section>
 
       <s-section heading="Orders work queue">
@@ -215,45 +299,45 @@ export default function Orders() {
           <DataTable
             headings={[
               "Order",
+              "Order date",
               "Customer",
-              "Shopify status",
-              "Lines / products",
-              "Operational work",
-              "Next",
+              "Products / quantities",
+              "Payment",
+              "Fulfillment",
+              "Address",
+              "Next action",
             ]}
-            rows={orders.map((order: any) => {
+            rows={filteredOrders.map((order: any) => {
               const lineCount = Number(order.line_count ?? 0);
+              const blockReason = shippingBlockReason(order);
 
               return {
                 id: order.id,
                 href: `/app/orders/${order.id}`,
                 cells: [
                   <strong>{order.order_name}</strong>,
+                  formatOrderDate(order.processed_at ?? order.created_at),
                   order.customer_name ?? "No customer",
-                  <s-stack direction="block" gap="small">
-                    <MoneylessBadge tone={order.financial_status === "PAID" ? "success" : "neutral"}>
-                      {order.financial_status ?? "unknown"}
-                    </MoneylessBadge>
-                    <MoneylessBadge tone={order.fulfillment_status === "FULFILLED" ? "success" : "warning"}>
-                      {order.fulfillment_status ?? "unfulfilled"}
-                    </MoneylessBadge>
-                  </s-stack>,
                   <s-stack direction="block" gap="small">
                     <s-text>
                       {lineCount.toLocaleString()} {lineCount === 1 ? "line" : "lines"}
                     </s-text>
                     <s-text>{compactProducts(order.product_summary ?? order.skus)}</s-text>
                   </s-stack>,
-                  <s-stack direction="block" gap="small">
-                    <MoneylessBadge tone={statusTone(order.operational_status)}>
-                      {order.operational_status ?? "In progress"}
-                    </MoneylessBadge>
-                    <s-text>
-                      {order.operational_status === "Logistics blocked"
-                        ? shippingBlockReason(order)
-                        : order.next_reason ?? "Review line decisions."}
-                    </s-text>
-                  </s-stack>,
+                  <MoneylessBadge tone={order.financial_status === "PAID" ? "success" : "neutral"}>
+                    {order.financial_status ?? "unknown"}
+                  </MoneylessBadge>,
+                  <MoneylessBadge tone={order.fulfillment_status === "FULFILLED" ? "success" : "warning"}>
+                    {order.fulfillment_status ?? "unfulfilled"}
+                  </MoneylessBadge>,
+                  blockReason ? (
+                    <s-stack direction="block" gap="small">
+                      <MoneylessBadge tone="warning">Missing</MoneylessBadge>
+                      <s-text>{blockReason}</s-text>
+                    </s-stack>
+                  ) : (
+                    <MoneylessBadge tone="success">Ready</MoneylessBadge>
+                  ),
                   <s-stack direction="block" gap="small">
                     <s-link href={order.next_action_href ?? `/app/orders/${order.id}`}>
                       {order.next_action_label ?? "Open order"}

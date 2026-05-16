@@ -1,0 +1,39 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Inventory</title><link rel="stylesheet" href="assets/blueprint.css"></head><body><header><h1>Inventory</h1><p>Stock Position, Ledger, Reservations und Incoming Supply</p></header><div class="layout"><nav><a class="" href="index.html">Start</a>
+<a class="" href="orders.html">01 Orders</a>
+<a class="" href="products.html">02 Products</a>
+<a class="" href="procurement.html">03 Procurement</a>
+<a class="" href="receiving.html">04 Receiving</a>
+<a class="active" href="inventory.html">05 Inventory</a>
+<a class="" href="logistics.html">06 Logistics</a>
+<a class="" href="customers.html">07 Customers</a>
+<a class="" href="suppliers.html">08 Suppliers</a>
+<a class="" href="bom-kitting.html">09 BOM / Kitting</a>
+<a class="" href="settings.html">10 Settings</a>
+<a class="" href="cross-cutting.html">11 Querschnitt</a>
+<a class="" href="implementation.html">12 Codex Umsetzung</a></nav><main>
+    <section class='card'><h2>Inventory</h2><div class='section-meta'><div class='field'><label>App-Bereich</label><div>Inventory</div></div><div class='field'><label>Codex-Quelle</label><div>specs/inventory.md + inventory.html</div></div><div class='field'><label>Abschnitte</label><div>Entitäten · Prozess · UI</div></div></div></section>
+    <section class='card'><h2>Entitäten</h2><table><tr><th>Entität</th><th>Attribute / Bedeutung</th><th>Regel</th></tr>
+<tr><td>InventoryMovement</td><td>Append-only Bewegungsledger mit item, location, quantity_delta, reserved_delta, source_type/source_id.</td><td>Bestand wird aus Bewegungen abgeleitet. Keine stille Korrektur.</td></tr>
+<tr><td>Stock position</td><td>On hand, reserved, available, QC hold je Item/Location.</td><td>Read Model, keine eigene Wahrheit.</td></tr>
+<tr><td>Reservation</td><td>Order-/Shipment-Bezug für reservierte Ware.</td><td>MVP teilweise, später dedizierter order-line allocation model.</td></tr>
+<tr><td>Incoming supply</td><td>Offene POs/Goods Receipts.</td><td>Zeigt Zulauf für Beschaffungsentscheidung.</td></tr>
+</table></section>
+    <section class='card'><h2>Prozess</h2><table><tr><th>Schritt</th><th>Prozessregel</th></tr>
+<tr><td>1. Bestand entsteht</td><td>Durch Putaway aus Receipt oder später Produktion/Kitting.</td></tr>
+<tr><td>2. Reservieren</td><td>Für Versand/Shipment; darf andere Orders nicht fälschlich ready machen.</td></tr>
+<tr><td>3. Ledger prüfen</td><td>Jede Bestandsänderung hat Quelle und Zeitpunkt.</td></tr>
+<tr><td>4. Adjustment später</td><td>Manuelle Korrekturen nur explizit und mit Audit/Permission.</td></tr>
+</table></section>
+    <section class='card'><h2>UI</h2><div class="wire"><div class="bar"><div><strong>Inventory — Stock and Ledger</strong><div class="small">/app/inventory</div></div><div class="toolbar"><span class="btn primary">Export ledger</span><span class="btn ">Adjustment later</span></div></div><div class="body"><div class="tabs"><div class="tab active">Stock Summary</div><div class="tab ">Ledger</div><div class="tab ">Reservations</div><div class="tab ">Adjustments later</div></div><div class="filters"><div class="input">Item</div><div class="input">Location</div><div class="input">Stock status</div><div class="input">Movement type</div><div class="input">Date</div></div><table><tr><th>Item</th><th>Location</th><th>On hand</th><th>Reserved</th><th>Available</th><th>QC hold</th><th>Last movement</th><th>Open</th></tr>
+<tr><td>Ski Wax</td><td>MAIN</td><td>3</td><td>1</td><td>2</td><td>0</td><td>Putaway today</td><td>Open item</td></tr>
+<tr><td>Snowboard</td><td>QC-HOLD</td><td>1</td><td>0</td><td>0</td><td>1</td><td>QC hold today</td><td>Open item</td></tr>
+</table></div></div><div class="wire"><div class="bar"><div><strong>Inventory Item Detail</strong><div class="small">/app/inventory/:itemId</div></div><div class="toolbar"><span class="btn primary">Back to Inventory</span><span class="btn ">Open Product</span><span class="btn ">Export ledger</span></div></div><div class="body"><div class="tabs"><div class="tab active">Stock position</div><div class="tab ">Ledger movements</div><div class="tab ">Reservations</div><div class="tab ">Procurement supply</div><div class="tab ">Events</div></div><table><tr><th>Location</th><th>On hand</th><th>Reserved</th><th>Available</th><th>QC hold</th><th>Last movement</th></tr>
+<tr><td>MAIN</td><td>3</td><td>1</td><td>2</td><td>0</td><td>Putaway today</td></tr>
+</table><table><tr><th>Date</th><th>Movement</th><th>Quantity delta</th><th>Reserved delta</th><th>Location</th><th>Source</th><th>Linked object</th></tr>
+<tr><td>May 18</td><td>putaway</td><td>+3</td><td>0</td><td>MAIN</td><td>GR-1007</td><td>Open Receipt</td></tr>
+</table><table><tr><th>Order</th><th>Line</th><th>Quantity</th><th>Status</th><th>Open order</th></tr>
+<tr><td>#1004</td><td>Ski Wax</td><td>1</td><td>reserved</td><td>Open order</td></tr>
+</table><table><tr><th>PO</th><th>Supplier</th><th>Quantity</th><th>Expected</th><th>Receipt status</th><th>Open PO</th></tr>
+<tr><td>PO-1008</td><td>Test Supplier</td><td>5</td><td>May 24</td><td>awaiting receipt</td><td>Open PO</td></tr>
+</table></div></div></section>
+    </main></div></body></html>

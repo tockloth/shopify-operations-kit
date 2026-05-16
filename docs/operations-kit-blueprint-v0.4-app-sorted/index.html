@@ -1,0 +1,33 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Operations Kit Blueprint v0.4</title><link rel="stylesheet" href="assets/blueprint.css"></head><body><header><h1>Operations Kit Blueprint v0.4</h1><p>Nach App-Bereichen sortiert: Orders, Products, Procurement, Receiving, Inventory, Logistics, Customers, Suppliers, BOM/Kitting, Settings</p></header><div class="layout"><nav><a class="active" href="index.html">Start</a>
+<a class="" href="orders.html">01 Orders</a>
+<a class="" href="products.html">02 Products</a>
+<a class="" href="procurement.html">03 Procurement</a>
+<a class="" href="receiving.html">04 Receiving</a>
+<a class="" href="inventory.html">05 Inventory</a>
+<a class="" href="logistics.html">06 Logistics</a>
+<a class="" href="customers.html">07 Customers</a>
+<a class="" href="suppliers.html">08 Suppliers</a>
+<a class="" href="bom-kitting.html">09 BOM / Kitting</a>
+<a class="" href="settings.html">10 Settings</a>
+<a class="" href="cross-cutting.html">11 Querschnitt</a>
+<a class="" href="implementation.html">12 Codex Umsetzung</a></nav><main>
+<section class="card"><h2>Operations Kit Blueprint v0.4 — nach App-Bereichen sortiert</h2>
+<p>Diese Version ersetzt die querschnittliche Sortierung durch eine Codex-freundliche Struktur: ein Bereich pro App-Modul. Jeder Bereich enthält immer dieselben drei Abschnitte: <strong>Entitäten</strong>, <strong>Prozess</strong>, <strong>UI</strong>.</p>
+<div class="callout"><strong>Arbeitsregel für Codex:</strong> Wenn an Orders gearbeitet wird, zuerst <code>specs/orders.md</code> und <code>orders.html</code> lesen. Wenn an Procurement gearbeitet wird, zuerst <code>specs/procurement.md</code> und <code>procurement.html</code> lesen. Keine verstreuten alten Dateien mehr als primäre Quelle verwenden.</div>
+</section>
+<section class="card"><h2>Modulreihenfolge</h2><table><tr><th>Reihenfolge</th><th>Modul</th><th>Primäre Datei</th><th>Zweck</th></tr>
+<tr><td>1</td><td>Orders</td><td>orders.html</td><td>Nachfrage und Orderstatus</td></tr>
+<tr><td>2</td><td>Products</td><td>products.html</td><td>Stammdaten und Shopify-Produkte</td></tr>
+<tr><td>3</td><td>Procurement</td><td>procurement.html</td><td>Purchase Needs und POs</td></tr>
+<tr><td>4</td><td>Receiving</td><td>receiving.html</td><td>Wareneingang/QC/Putaway</td></tr>
+<tr><td>5</td><td>Inventory</td><td>inventory.html</td><td>Bestand und Ledger</td></tr>
+<tr><td>6</td><td>Logistics</td><td>logistics.html</td><td>Versandbereitschaft und Shipments</td></tr>
+<tr><td>7</td><td>Customers</td><td>customers.html</td><td>Kunden-/Adresskontext</td></tr>
+<tr><td>8</td><td>Suppliers</td><td>suppliers.html</td><td>Lieferanten und Einkaufskonditionen</td></tr>
+<tr><td>9</td><td>BOM / Kitting</td><td>bom-kitting.html</td><td>Stücklisten und Kits</td></tr>
+<tr><td>10</td><td>Settings</td><td>settings.html</td><td>Workflow und Konfiguration</td></tr>
+<tr><td>11</td><td>Querschnitt</td><td>cross-cutting.html</td><td>Übergreifende Regeln</td></tr>
+<tr><td>12</td><td>Codex Umsetzung</td><td>implementation.html</td><td>Arbeitsmodus</td></tr>
+</table></section>
+<section class="card"><h2>Warum diese Sortierung?</h2><p>Die bisherige Spezifikation war fachlich hilfreich, aber für Codex zu verstreut: Entities hier, Status dort, Wireframes woanders. Diese Version bündelt pro App-Bereich genau das, was für Umsetzung und Review gebraucht wird.</p></section>
+</main></div></body></html>

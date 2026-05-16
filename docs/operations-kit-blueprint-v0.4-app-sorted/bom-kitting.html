@@ -1,0 +1,31 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BOM / Kitting</title><link rel="stylesheet" href="assets/blueprint.css"></head><body><header><h1>BOM / Kitting</h1><p>Stücklisten, Komponenten und spätere Kit-Builds</p></header><div class="layout"><nav><a class="" href="index.html">Start</a>
+<a class="" href="orders.html">01 Orders</a>
+<a class="" href="products.html">02 Products</a>
+<a class="" href="procurement.html">03 Procurement</a>
+<a class="" href="receiving.html">04 Receiving</a>
+<a class="" href="inventory.html">05 Inventory</a>
+<a class="" href="logistics.html">06 Logistics</a>
+<a class="" href="customers.html">07 Customers</a>
+<a class="" href="suppliers.html">08 Suppliers</a>
+<a class="active" href="bom-kitting.html">09 BOM / Kitting</a>
+<a class="" href="settings.html">10 Settings</a>
+<a class="" href="cross-cutting.html">11 Querschnitt</a>
+<a class="" href="implementation.html">12 Codex Umsetzung</a></nav><main>
+    <section class='card'><h2>BOM / Kitting</h2><div class='section-meta'><div class='field'><label>App-Bereich</label><div>BOM / Kitting</div></div><div class='field'><label>Codex-Quelle</label><div>specs/bom-kitting.md + bom-kitting.html</div></div><div class='field'><label>Abschnitte</label><div>Entitäten · Prozess · UI</div></div></div></section>
+    <section class='card'><h2>Entitäten</h2><table><tr><th>Entität</th><th>Attribute / Bedeutung</th><th>Regel</th></tr>
+<tr><td>BOM</td><td>Aktive Stückliste pro producible/kitted Product.</td><td>MVP: eine aktive BOM pro Produkt. Varianten später.</td></tr>
+<tr><td>BOMLine</td><td>Component, type, policy, quantity, unit, available stock.</td><td>Komponente kann selbst purchasable und lagerfähig sein.</td></tr>
+<tr><td>Kit build later</td><td>Build-Auftrag, component consumption, finished item stock.</td><td>Später; nicht Teil Trading Goods MVP.</td></tr>
+</table></section>
+    <section class='card'><h2>Prozess</h2><table><tr><th>Schritt</th><th>Prozessregel</th></tr>
+<tr><td>1. BOM anlegen</td><td>Für producible/kitted Product.</td></tr>
+<tr><td>2. Komponenten hinzufügen</td><td>Component + Quantity + Unit.</td></tr>
+<tr><td>3. Availability prüfen</td><td>Komponentenbedarf vs Bestand/Zulauf.</td></tr>
+<tr><td>4. Kitting später</td><td>Consume components → create finished item stock.</td></tr>
+</table></section>
+    <section class='card'><h2>UI</h2><div class="wire"><div class="bar"><div><strong>BOM / Kitting Detail</strong><div class="small">/app/boms?parentItemId=:itemId</div></div><div class="toolbar"><span class="btn primary">Back to Product</span><span class="btn ">Create active BOM</span><span class="btn ">Add component</span><span class="btn ">Save component</span><span class="btn ">Remove component</span></div></div><div class="body"><div class="tabs"><div class="tab active">BOM lines</div><div class="tab ">Availability</div><div class="tab ">Events</div><div class="tab ">Kitting later</div></div><table><tr><th>Component</th><th>Type</th><th>Policy</th><th>Quantity</th><th>Unit</th><th>Available stock</th><th>Edit</th><th>Remove</th></tr>
+<tr><td>COMP-A</td><td>component</td><td>buy</td><td>2</td><td>pcs</td><td>5</td><td>Edit</td><td>Remove</td></tr>
+</table><h4>Add/edit component panel</h4><div class="formgrid cols4"><div class="field"><label>Component select</label><div>COMP-A</div></div><div class="field"><label>Quantity</label><div>2</div></div><div class="field"><label>Unit</label><div>pcs</div></div><div class="field"><label>Actions</label><div>Save component · Cancel</div></div></div><table><tr><th>Component</th><th>Required qty</th><th>Available qty</th><th>Shortage</th><th>Procurement status</th></tr>
+<tr><td>COMP-A</td><td>2</td><td>5</td><td>0</td><td>covered</td></tr>
+</table><div class="formgrid cols1"><div class="field"><label>Kitting later</label><div>Required components, possible build qty, build qty, consume components, create finished item stock</div></div></div></div></div></section>
+    </main></div></body></html>

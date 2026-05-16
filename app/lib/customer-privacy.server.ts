@@ -2,17 +2,31 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes }
 
 const ALGORITHM = "aes-256-gcm";
 const VERSION = "v1";
+const DEVELOPMENT_CUSTOMER_DATA_KEY =
+  "operations-kit-development-customer-data-key";
 
 function secretMaterial() {
   return (
     process.env.OPERATIONS_KIT_CUSTOMER_DATA_KEY ||
     process.env.SHOPIFY_API_SECRET ||
-    "operations-kit-development-customer-data-key"
+    DEVELOPMENT_CUSTOMER_DATA_KEY
   );
 }
 
-function key() {
-  return createHash("sha256").update(secretMaterial()).digest();
+function key(material = secretMaterial()) {
+  return createHash("sha256").update(material).digest();
+}
+
+function decryptKeys() {
+  return Array.from(
+    new Set(
+      [
+        process.env.OPERATIONS_KIT_CUSTOMER_DATA_KEY,
+        process.env.SHOPIFY_API_SECRET,
+        DEVELOPMENT_CUSTOMER_DATA_KEY,
+      ].filter(Boolean) as string[],
+    ),
+  ).map((material) => key(material));
 }
 
 export function encryptCustomerData(value?: string | null) {
@@ -40,17 +54,37 @@ export function decryptCustomerData(value?: string | null) {
   const [version, iv, tag, encrypted] = value.split(":");
   if (version !== VERSION || !iv || !tag || !encrypted) return null;
 
-  const decipher = createDecipheriv(
-    ALGORITHM,
-    key(),
-    Buffer.from(iv, "base64url"),
-  );
-  decipher.setAuthTag(Buffer.from(tag, "base64url"));
+  let lastError: unknown = null;
+  for (const candidateKey of decryptKeys()) {
+    try {
+      const decipher = createDecipheriv(
+        ALGORITHM,
+        candidateKey,
+        Buffer.from(iv, "base64url"),
+      );
+      decipher.setAuthTag(Buffer.from(tag, "base64url"));
 
-  return Buffer.concat([
-    decipher.update(Buffer.from(encrypted, "base64url")),
-    decipher.final(),
-  ]).toString("utf8");
+      return Buffer.concat([
+        decipher.update(Buffer.from(encrypted, "base64url")),
+        decipher.final(),
+      ]).toString("utf8");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Unable to decrypt customer data.");
+}
+
+export function safeDecryptCustomerData(value?: string | null) {
+  if (!value) return null;
+  try {
+    return decryptCustomerData(value);
+  } catch {
+    return null;
+  }
 }
 
 export function hashCustomerLookup(...parts: Array<string | null | undefined>) {
