@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Operations Kit Blueprint</title>
+<link rel="stylesheet" href="assets/blueprint.css">
+</head>
+<body>
+<header><h1>Operations Kit Blueprint</h1><p>Shopify-native Operations Backbone für Excel-ablösende Händlerprozesse</p></header>
+<div class="layout">
+<nav><a class="active" href="index.html">Start</a>
+<a class="" href="01-product-vision.html">01 Produktvision</a>
+<a class="" href="02-process-map.html">02 Prozesslandkarte</a>
+<a class="" href="03-entities.html">03 Entitäten & Attribute</a>
+<a class="" href="04-status-models.html">04 Statusmodelle</a>
+<a class="" href="05-ui-pages.html">05 Page Ownership</a>
+<a class="" href="06-test-scenarios.html">06 Test-Szenarien</a>
+<a class="" href="07-roadmap.html">07 Roadmap</a>
+<a class="" href="08-codex-working-mode.html">08 Codex-Arbeitsmodus</a>
+<a class="" href="09-ui-wireframes.html">09 UI Wireframes</a>
+<a class="" href="10-ui-patterns.html">10 UI Patterns</a>
+<a class="" href="11-page-specs.html">11 Page Specs</a>
+<a class="" href="12-implementation-backlog.html">12 Implementierungs-Backlog</a>
+<a class="" href="13-configuration.html">13 optionale Prozessschritte</a>
+<a class="" href="14-data-quality.html">14 Datenqualität & Sync</a>
+<a class="" href="15-detail-ui-wireframes.html">15 Detail UI Wireframes</a>
+<a class="" href="16-blueprint-compliance-tests.html">16 Blueprint Compliance Tests</a></nav>
+<main>
+<section class="card">
+  <h2>Operations Kit MVP Blueprint v0.3</h2>
+  <p><strong>Ziel:</strong> Eine Shopify-App, die kleinen Händlern die Excel-Organisation für Beschaffung, Wareneingang, Lager, Kitting und Versand ersetzt.</p>
+  <div class="callout">
+    <strong>Produktkern:</strong> Shopify bleibt Sales Channel und Source of Truth für Storefront, Checkout, Orders, Kunden und Shop-Produkte. Operations Kit wird das einfache Operations-Backoffice: es sagt, was zu bestellen, zu empfangen, zu prüfen, einzulagern und zu versenden ist.
+  </div>
+</section>
+
+<section class="card">
+  <h2>Die Arbeitsweise der App</h2>
+  <div class="flow"><span>Arbeitsliste</span><span>Filter wie Excel</span><span>Zeile öffnen</span><span>Detailansicht</span><span>Nächste Aktion</span><span>Audit Trail</span></div>
+  <p>Jeder Bereich startet mit einer Tabelle. Alle wichtigen Spalten sind filterbar. Aus der Tabelle springt man in eine Einzelansicht. Dort gibt es eine Toolbar oben, Status, Datenbereiche, Tabs und klar benannte Aktionen.</p>
+</section>
+
+<section class="card">
+  <h2>MVP Module</h2>
+  <table>
+    <tr><th>Modul</th><th>Zweck</th><th>Ergebnis im MVP</th></tr>
+    <tr><td>Products</td><td>Operations-Stammdaten für Shopify-Produkte</td><td>sellable/purchasable/producible, Supplier, Lead Time, QC, BOM</td></tr>
+    <tr><td>Orders</td><td>Shopify Demand Work Queue</td><td>Produkt, Menge, Prozessstatus, Next Action</td></tr>
+    <tr><td>Procurement</td><td>Beschaffungen organisieren</td><td>Purchase Needs, POs, Wareneingangskontext</td></tr>
+    <tr><td>Receiving/QC</td><td>Lieferung prüfen und annehmen</td><td>Goods Receipt, QC, Putaway / Einlagerung</td></tr>
+    <tr><td>Inventory</td><td>Bestand und Bewegungen</td><td>Ledger-basierter Bestand und Stock History</td></tr>
+    <tr><td>Logistics</td><td>Versand vorbereiten</td><td>Ready-to-Ship Queue, Shipment-Erzeugung</td></tr>
+    <tr><td>Kitting/BOM</td><td>Sets aus Komponenten</td><td>Kit-BOM, Komponentenbeschaffung, später Kit Build</td></tr>
+    <tr><td>Customers</td><td>Kunden-/Adresskontext</td><td>Read-only Kunden- und Adresssicht, Datenschutz</td></tr>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Leitprinzipien für Implementierung</h2>
+  <ul>
+    <li>Master Data Seiten enthalten keine operativen Ausführungsaktionen.</li>
+    <li>Operative Aktionen gehören auf Detailseiten des jeweiligen Prozesses.</li>
+    <li>Jede Work Queue hat Filter wie Excel, Saved Views später.</li>
+    <li>Jede Detailseite hat oben eine Toolbar: Back, Save/Cancel oder primäre Prozessaktionen.</li>
+    <li>Jede Aktion schreibt ein Event / Audit Record.</li>
+    <li>Optionale Prozessschritte dürfen übersprungen werden, aber nur über Settings, nicht durch UI-Zufall.</li>
+  </ul>
+</section>
+<section class="card">
+  <h2>Implementation Source of Truth</h2>
+  <table>
+    <tr><th>Question</th><th>Blueprint source</th></tr>
+    <tr><td>What does the app need to do?</td><td>01 Product Vision, 02 Process Map, 06 Test Scenarios</td></tr>
+    <tr><td>Which entity owns which data?</td><td>03 Entities & Attributes, 05 Page Ownership</td></tr>
+    <tr><td>Which page owns which action?</td><td>05 Page Ownership, 11 Page Specs, 15 Detail UI Wireframes</td></tr>
+    <tr><td>Which UI must be implemented?</td><td>09 UI Wireframes, 10 UI Patterns, 11 Page Specs, 15 Detail UI Wireframes</td></tr>
+    <tr><td>Which tests prove compliance?</td><td>06 Test Scenarios, 16 Blueprint Compliance Tests</td></tr>
+    <tr><td>How should Codex implement future slices?</td><td>08 Codex Working Mode and the final mapping table rule</td></tr>
+  </table>
+</section>
+</main>
+</div>
+</body></html>

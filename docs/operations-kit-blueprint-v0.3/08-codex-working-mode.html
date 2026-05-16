@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>08 Codex-Arbeitsmodus</title>
+<link rel="stylesheet" href="assets/blueprint.css">
+</head>
+<body>
+<header><h1>08 Codex-Arbeitsmodus</h1><p>Wie Codex kontrolliert und fachlich gebunden arbeiten soll</p></header>
+<div class="layout">
+<nav><a class="" href="index.html">Start</a>
+<a class="" href="01-product-vision.html">01 Produktvision</a>
+<a class="" href="02-process-map.html">02 Prozesslandkarte</a>
+<a class="" href="03-entities.html">03 Entitäten & Attribute</a>
+<a class="" href="04-status-models.html">04 Statusmodelle</a>
+<a class="" href="05-ui-pages.html">05 Page Ownership</a>
+<a class="" href="06-test-scenarios.html">06 Test-Szenarien</a>
+<a class="" href="07-roadmap.html">07 Roadmap</a>
+<a class="active" href="08-codex-working-mode.html">08 Codex-Arbeitsmodus</a>
+<a class="" href="09-ui-wireframes.html">09 UI Wireframes</a>
+<a class="" href="10-ui-patterns.html">10 UI Patterns</a>
+<a class="" href="11-page-specs.html">11 Page Specs</a>
+<a class="" href="12-implementation-backlog.html">12 Implementierungs-Backlog</a>
+<a class="" href="13-configuration.html">13 optionale Prozessschritte</a>
+<a class="" href="14-data-quality.html">14 Datenqualität & Sync</a>
+<a class="" href="15-detail-ui-wireframes.html">15 Detail UI Wireframes</a>
+<a class="" href="16-blueprint-compliance-tests.html">16 Blueprint Compliance Tests</a></nav>
+<main>
+<section class="card">
+<h2>Codex-Regeln</h2>
+<div class="callout danger"><strong>Codex darf keine neue Fachlogik erfinden.</strong> Jeder Implementierungsprompt referenziert Prozess, Entität, Status oder UI-Spezifikation aus diesem Blueprint.</div>
+<table>
+<tr><th>Regel</th><th>Begründung</th></tr>
+<tr><td>Roadmap step als erste Zeile</td><td>Kontext sofort klar</td></tr>
+<tr><td>Keine Aktionen auf falschen Seiten</td><td>Page Ownership bleibt stabil</td></tr>
+<tr><td>Keine neuen Status ohne Statusmodell-Update</td><td>Vermeidet "Procurement in progress" überall</td></tr>
+<tr><td>Jede Tabelle: Filter und Detail-Link</td><td>Excel-Ablösung</td></tr>
+<tr><td>Jede Detailseite: Toolbar oben</td><td>UI-Konsistenz</td></tr>
+<tr><td>Tests vor Final Report</td><td>Regressionen verhindern</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h2>Blueprint-driven Implementation Rule</h2>
+<p>Every future Codex implementation step must be traceable to exact Blueprint sections and must finish with a mapping table. If a requested behavior is not in the Blueprint, Codex must either stop and ask for a Blueprint update or explicitly document the gap before coding.</p>
+<table>
+<tr><th>Future prompt must include</th><th>Purpose</th></tr>
+<tr><td>Roadmap step</td><td>Names the implementation slice and prevents continuation of stale plans.</td></tr>
+<tr><td>Blueprint source files</td><td>Exact HTML files Codex must inspect before coding.</td></tr>
+<tr><td>Exact Blueprint sections</td><td>Page spec, detail wireframe, status model, entity and test scenario references.</td></tr>
+<tr><td>Implementation goal</td><td>Specific user outcome and page behavior.</td></tr>
+<tr><td>Allowed implementation scope</td><td>Routes/helpers/tests/files allowed to change.</td></tr>
+<tr><td>Forbidden files/features</td><td>Prevents adjacent ERP feature drift.</td></tr>
+<tr><td>Expected files to inspect</td><td>Current app files that implement the area.</td></tr>
+<tr><td>Expected UI changes</td><td>Toolbar, tabs, tables, fields, buttons, empty and blocked states.</td></tr>
+<tr><td>Expected behavior changes</td><td>Read/write logic, status derivation, idempotency or no behavior change.</td></tr>
+<tr><td>Expected tests/checks</td><td>Typecheck, lint, build, DB-backed tests, browser retest where relevant.</td></tr>
+<tr><td>Browser retest path</td><td>Exact path a human or browser automation should verify.</td></tr>
+<tr><td>Final Blueprint mapping table</td><td>Blueprint requirement | Implemented file | Status | Notes.</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h2>Before Coding Summary</h2>
+<p>Before editing files, Codex must summarize:</p>
+<table>
+<tr><th>Required summary item</th><th>Example</th></tr>
+<tr><td>Which Blueprint sections apply</td><td>11 Page Specs: Procurement; 15 Detail UI: Purchase Order Detail; 04 Status Models: PO lifecycle.</td></tr>
+<tr><td>Which current files implement that area</td><td>app/routes/app.procurement.tsx, app/routes/app.procurement_.$purchaseOrderId.tsx, app/lib/operations-kit.server.ts.</td></tr>
+<tr><td>What gap exists</td><td>PO line value is not shown; duplicate Open Receipt links exist.</td></tr>
+<tr><td>How the change will close the gap</td><td>Add unit price/value columns and remove duplicate link without changing PO lifecycle logic.</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h2>After Coding Summary</h2>
+<p>After coding, Codex must summarize:</p>
+<table>
+<tr><th>Required summary item</th><th>Purpose</th></tr>
+<tr><td>What changed</td><td>Concrete files and UI/behavior changes.</td></tr>
+<tr><td>What did not change</td><td>Explicitly names forbidden scope that stayed untouched.</td></tr>
+<tr><td>Which tests prove compliance</td><td>Automated and browser/manual checks tied to Blueprint sections.</td></tr>
+<tr><td>What remains inconsistent with the Blueprint</td><td>Known gaps and deferred implementation.</td></tr>
+<tr><td>Blueprint mapping table</td><td>Blueprint requirement | Implemented file | Status | Notes.</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h2>Prompt-Template</h2>
+<pre>Roadmap step: [Blueprint section] — [objective]
+
+Implement exactly according to:
+- Blueprint source files:
+  - docs/operations-kit-blueprint-v0.3/03-entities.html
+  - docs/operations-kit-blueprint-v0.3/04-status-models.html
+  - docs/operations-kit-blueprint-v0.3/10-ui-patterns.html
+  - docs/operations-kit-blueprint-v0.3/11-page-specs.html
+  - docs/operations-kit-blueprint-v0.3/15-detail-ui-wireframes.html
+  - docs/operations-kit-blueprint-v0.3/16-blueprint-compliance-tests.html
+- Exact Blueprint sections: ...
+- Entity ownership: ...
+- Status model: ...
+- Page spec: ...
+- Detail wireframe: ...
+- Compliance scenario: ...
+
+Do not:
+- invent new status
+- move actions to other pages
+- add adjacent features
+
+Before coding summarize:
+- applicable Blueprint sections
+- current files that implement the area
+- gap
+- planned closure
+
+Run checks:
+- npm run typecheck
+- npm run lint
+- npm run build
+- DB-backed tests
+- browser retest path
+
+Final report:
+- files changed
+- Blueprint requirement | Implemented file | Status | Notes
+- behavior changed
+- behavior not changed
+- tests run
+- remaining Blueprint gaps
+- browser retest path</pre>
+</section>
+</main>
+</div>
+</body></html>

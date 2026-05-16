@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>04 Statusmodelle</title>
+<link rel="stylesheet" href="assets/blueprint.css">
+</head>
+<body>
+<header><h1>04 Statusmodelle</h1><p>Status, Next Actions und optionale Prozessabkürzungen</p></header>
+<div class="layout">
+<nav><a class="" href="index.html">Start</a>
+<a class="" href="01-product-vision.html">01 Produktvision</a>
+<a class="" href="02-process-map.html">02 Prozesslandkarte</a>
+<a class="" href="03-entities.html">03 Entitäten & Attribute</a>
+<a class="active" href="04-status-models.html">04 Statusmodelle</a>
+<a class="" href="05-ui-pages.html">05 Page Ownership</a>
+<a class="" href="06-test-scenarios.html">06 Test-Szenarien</a>
+<a class="" href="07-roadmap.html">07 Roadmap</a>
+<a class="" href="08-codex-working-mode.html">08 Codex-Arbeitsmodus</a>
+<a class="" href="09-ui-wireframes.html">09 UI Wireframes</a>
+<a class="" href="10-ui-patterns.html">10 UI Patterns</a>
+<a class="" href="11-page-specs.html">11 Page Specs</a>
+<a class="" href="12-implementation-backlog.html">12 Implementierungs-Backlog</a>
+<a class="" href="13-configuration.html">13 optionale Prozessschritte</a>
+<a class="" href="14-data-quality.html">14 Datenqualität & Sync</a>
+<a class="" href="15-detail-ui-wireframes.html">15 Detail UI Wireframes</a>
+<a class="" href="16-blueprint-compliance-tests.html">16 Blueprint Compliance Tests</a></nav>
+<main>
+<section class="card"><h2>Statusmodelle und optionale Schritte</h2>
+<p>Status dürfen nicht pro Seite neu erfunden werden. Optionale Schritte werden durch Settings übersprungen, nicht durch zufälliges Fehlen von Buttons.</p></section>
+
+<section class="card">
+<h3>Purchase Need</h3>
+<table>
+<tr><th>Status</th><th>Bedeutung</th><th>Nächste Aktion</th><th>Optional?</th></tr>
+<tr><td>needs_supplier</td><td>Bedarf ohne Lieferant</td><td>Supplier assign</td><td>kann automatisch sein, wenn Preferred Supplier existiert</td></tr>
+<tr><td>ready_for_po</td><td>Lieferant gesetzt</td><td>PO erstellen</td><td>nein</td></tr>
+<tr><td>converted_to_po</td><td>PO wurde erstellt</td><td>PO öffnen</td><td>nein</td></tr>
+<tr><td>cancelled</td><td>Bedarf storniert</td><td>keine</td><td>ja</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h3>Purchase Order</h3>
+<table>
+<tr><th>Status</th><th>Bedeutung</th><th>Nächste Aktion</th><th>Kann deaktiviert werden?</th></tr>
+<tr><td>draft</td><td>PO erstellt, noch nicht freigegeben</td><td>Approve oder Send</td><td>Approval kann deaktiviert werden</td></tr>
+<tr><td>approved</td><td>freigegeben</td><td>Send to supplier</td><td>ja, wenn Approval aus</td></tr>
+<tr><td>sent</td><td>an Lieferant gesendet</td><td>Supplier acknowledged</td><td>Acknowledgement optional</td></tr>
+<tr><td>acknowledged</td><td>Lieferant bestätigt</td><td>Create Goods Receipt</td><td>ja, wenn kein Acknowledgement</td></tr>
+<tr><td>closed</td><td>vollständig eingelagert</td><td>View Inventory / Payable</td><td>nein</td></tr>
+<tr><td>cancelled</td><td>storniert</td><td>keine</td><td>ja</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h3>Goods Receipt / QC / Putaway</h3>
+<table>
+<tr><th>Status</th><th>Bedeutung</th><th>Nächste Aktion</th><th>Optionale Abkürzung</th></tr>
+<tr><td>posted</td><td>Wareneingang gebucht</td><td>QC oder Putaway</td><td>QC kann produktabhängig aus sein</td></tr>
+<tr><td>qc_required</td><td>Ware in QC-Hold</td><td>Complete QC</td><td>optional</td></tr>
+<tr><td>putaway_pending</td><td>angenommene Ware wartet auf Einlagerung</td><td>Put away to inventory</td><td>kann automatisch sein bei Ein-Lager-Ort</td></tr>
+<tr><td>closed</td><td>Bestand in MAIN gebucht</td><td>Inventory / Logistics</td><td>nein</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h3>Order operational status</h3>
+<table>
+<tr><th>Status</th><th>Herleitung</th><th>Next Action</th></tr>
+<tr><td>Needs planning</td><td>Order Lines existieren, aber keine Needs/Work</td><td>Open Procurement / refresh needs</td></tr>
+<tr><td>Purchase proposal ready</td><td>Purchase Need existiert</td><td>Create PO</td></tr>
+<tr><td>Purchase Order created</td><td>PO draft/approved existiert</td><td>Open PO</td></tr>
+<tr><td>Sent to supplier</td><td>PO sent</td><td>Acknowledge supplier</td></tr>
+<tr><td>Awaiting receipt</td><td>PO acknowledged</td><td>Create/open Receipt</td></tr>
+<tr><td>Receiving / QC</td><td>Receipt posted/qc_required</td><td>Complete QC</td></tr>
+<tr><td>Putaway pending</td><td>Accepted receipt line</td><td>Put away to inventory</td></tr>
+<tr><td>Ready for logistics</td><td>Bestand verfügbar/reserviert und Adresse vorhanden</td><td>Create shipment</td></tr>
+<tr><td>Logistics blocked</td><td>Bestand da, aber Name/E-Mail/Adresse fehlt</td><td>Backfill/test address oder Kundendaten prüfen</td></tr>
+<tr><td>Shipment created</td><td>Shipping Order open</td><td>Pick/Pack/Ship</td></tr>
+<tr><td>Complete</td><td>Shipment shipped oder Order closed</td><td>Archive/View</td></tr>
+</table>
+</section>
+</main>
+</div>
+</body></html>

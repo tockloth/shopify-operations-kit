@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>05 UI Pages</title>
+<link rel="stylesheet" href="assets/blueprint.css">
+</head>
+<body>
+<header><h1>05 UI Pages</h1><p>Welche Seite wofür zuständig ist</p></header>
+<div class="layout">
+<nav><a class="" href="index.html">Start</a>
+<a class="" href="01-product-vision.html">01 Produktvision</a>
+<a class="" href="02-process-map.html">02 Prozesslandkarte</a>
+<a class="" href="03-entities.html">03 Entitäten & Attribute</a>
+<a class="" href="04-status-models.html">04 Statusmodelle</a>
+<a class="active" href="05-ui-pages.html">05 Page Ownership</a>
+<a class="" href="06-test-scenarios.html">06 Test-Szenarien</a>
+<a class="" href="07-roadmap.html">07 Roadmap</a>
+<a class="" href="08-codex-working-mode.html">08 Codex-Arbeitsmodus</a>
+<a class="" href="09-ui-wireframes.html">09 UI Wireframes</a>
+<a class="" href="10-ui-patterns.html">10 UI Patterns</a>
+<a class="" href="11-page-specs.html">11 Page Specs</a>
+<a class="" href="12-implementation-backlog.html">12 Implementierungs-Backlog</a>
+<a class="" href="13-configuration.html">13 optionale Prozessschritte</a>
+<a class="" href="14-data-quality.html">14 Datenqualität & Sync</a>
+<a class="" href="15-detail-ui-wireframes.html">15 Detail UI Wireframes</a>
+<a class="" href="16-blueprint-compliance-tests.html">16 Blueprint Compliance Tests</a></nav>
+<main>
+<section class="card">
+<h2>Page Ownership Matrix</h2>
+<table>
+<tr><th>Seite</th><th>Typ</th><th>Zweck</th><th>Darf Aktionen</th><th>Darf nicht</th></tr>
+<tr><td>Products</td><td>Master Data List</td><td>Artikel/Shop-Produkte verwalten</td><td>Sync Products, Product öffnen, Filter</td><td>PO, QC, Shipment ausführen</td></tr>
+<tr><td>Product Detail</td><td>Master Data Form</td><td>Operations-Stammdaten pflegen</td><td>Save, Cancel, Open BOM</td><td>MRP Run, PO erstellen, QC</td></tr>
+<tr><td>Suppliers</td><td>Master Data List</td><td>Lieferanten und Einkaufsbereitschaft sehen</td><td>New supplier, Supplier öffnen, Filter</td><td>Wareneingang/QC/Putaway ausführen</td></tr>
+<tr><td>Supplier Detail</td><td>Master Data Form</td><td>Lieferantenkopf und Lieferartikel pflegen</td><td>Save, Cancel, Deactivate supplier, Product öffnen</td><td>Purchase Need erzeugen, Wareneingang buchen</td></tr>
+<tr><td>BOM/Kitting</td><td>Master Data / Assembly</td><td>Kit-Komponenten pflegen</td><td>BOM anlegen, Komponenten editieren</td><td>Procurement/Production automatisch starten</td></tr>
+<tr><td>Orders</td><td>Demand Work Queue</td><td>Bestellungen und Status sehen</td><td>Sync Orders, Refresh Planning, Detail öffnen</td><td>PO Lifecycle ausführen</td></tr>
+<tr><td>Order Detail</td><td>Demand Detail</td><td>Order-Lage erklären</td><td>Order Lines öffnen, Next Area öffnen</td><td>Wareneingang/QC ausführen</td></tr>
+<tr><td>Order Line Detail</td><td>Decision Detail</td><td>Entscheidung und verknüpfte Arbeit pro Bestellzeile erklären</td><td>Open Product, Open Procurement/Logistics</td><td>PO, QC, Putaway, Shipment direkt ausführen</td></tr>
+<tr><td>Procurement</td><td>Work Queue</td><td>Needs, POs, Receipts organisieren</td><td>Supplier assign, Create PO, PO öffnen</td><td>QC/Putaway ausführen</td></tr>
+<tr><td>Purchase Need Handling</td><td>Inline Detail / später Detail</td><td>Lieferant zuweisen und Need in PO umwandeln</td><td>Assign supplier, Create Purchase Order, Cancel need</td><td>Receive goods, QC, Putaway, Shipment</td></tr>
+<tr><td>PO Detail</td><td>Process Detail</td><td>PO Lifecycle</td><td>Approve, Send, Acknowledge, Create Receipt</td><td>Bestand buchen</td></tr>
+<tr><td>Receiving</td><td>Work Queue</td><td>Wareneingänge bearbeiten</td><td>Receipt öffnen</td><td>PO Approval</td></tr>
+<tr><td>Receipt Detail</td><td>Process Detail</td><td>QC und Einlagerung</td><td>Complete QC, Putaway</td><td>PO Send/Acknowledge</td></tr>
+<tr><td>Inventory</td><td>Ledger View</td><td>Bestand und Bewegungen</td><td>später Adjustment</td><td>Beschaffung/Versand steuern</td></tr>
+<tr><td>Inventory Item Detail</td><td>Ledger Detail</td><td>Bestand, Bewegungen, Reservierungen und Zulauf pro Artikel erklären</td><td>Open Product, Export ledger, related records öffnen</td><td>PO/Receipt/Shipment erzeugen</td></tr>
+<tr><td>Logistics</td><td>Work Queue</td><td>Versand vorbereiten</td><td>Create shipment, später Pick/Pack/Ship</td><td>Inventory manuell fälschen</td></tr>
+<tr><td>Shipment Detail</td><td>Process Detail später</td><td>Shipment-Kopf, Zeilen, Adresse und Versandstatus führen</td><td>Mark packed, Mark shipped, Cancel shipment</td><td>Shopify fulfillment writeback im MVP, Procurement/Receiving ändern</td></tr>
+<tr><td>Customers</td><td>Reference/Privacy</td><td>Kunden/Adressen/Orders</td><td>Detail, Redaction, Test Backfill dev</td><td>Shopify Kundendaten überschreiben</td></tr>
+<tr><td>Customer Detail</td><td>Read-only Reference Detail</td><td>Kunde, Adresse/Order-Shipping, Orders und Privacy prüfen</td><td>Open order, Redact, Test address dev</td><td>volle Kundendaten bearbeiten, Shopify Writeback</td></tr>
+<tr><td>Settings</td><td>Configuration</td><td>Rollen, optionale Schritte, Testdaten</td><td>Workflow settings, seed/test actions</td><td>operative Prozessaktionen</td></tr>
+</table>
+</section>
+</main>
+</div>
+</body></html>

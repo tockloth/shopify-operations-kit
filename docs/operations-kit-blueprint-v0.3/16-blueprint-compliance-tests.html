@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>16 Blueprint Compliance Tests</title>
+<link rel="stylesheet" href="assets/blueprint.css">
+</head>
+<body>
+<header><h1>16 Blueprint Compliance Tests</h1><p>Wie Implementierungen gegen den Blueprint geprüft werden</p></header>
+<div class="layout">
+<nav><a class="" href="index.html">Start</a>
+<a class="" href="01-product-vision.html">01 Produktvision</a>
+<a class="" href="02-process-map.html">02 Prozesslandkarte</a>
+<a class="" href="03-entities.html">03 Entitäten & Attribute</a>
+<a class="" href="04-status-models.html">04 Statusmodelle</a>
+<a class="" href="05-ui-pages.html">05 Page Ownership</a>
+<a class="" href="06-test-scenarios.html">06 Test-Szenarien</a>
+<a class="" href="07-roadmap.html">07 Roadmap</a>
+<a class="" href="08-codex-working-mode.html">08 Codex-Arbeitsmodus</a>
+<a class="" href="09-ui-wireframes.html">09 UI Wireframes</a>
+<a class="" href="10-ui-patterns.html">10 UI Patterns</a>
+<a class="" href="11-page-specs.html">11 Page Specs</a>
+<a class="" href="12-implementation-backlog.html">12 Implementierungs-Backlog</a>
+<a class="" href="13-configuration.html">13 optionale Prozessschritte</a>
+<a class="" href="14-data-quality.html">14 Datenqualität & Sync</a>
+<a class="" href="15-detail-ui-wireframes.html">15 Detail UI Wireframes</a>
+<a class="active" href="16-blueprint-compliance-tests.html">16 Blueprint Compliance Tests</a></nav>
+<main>
+<section class="card">
+  <h2>Purpose</h2>
+  <p>Every implementation slice must prove that it still matches the Blueprint. Compliance uses static UI checks, DB-backed process tests, browser retest scenarios and final report mapping back to the exact Blueprint section.</p>
+  <div class="callout"><strong>Minimum final report mapping:</strong> Blueprint requirement | Implemented file | Status | Notes.</div>
+</section>
+
+<section class="card">
+<h2>A. Static UI Compliance Checks</h2>
+<table>
+<tr><th>Check</th><th>Expected result</th><th>Blueprint reference</th><th>Suggested method</th></tr>
+<tr><td>Every work queue has a toolbar</td><td>Products, Suppliers, Customers, Orders, Procurement, Receiving, Inventory, Logistics, BOM all show explicit toolbar labels.</td><td>10 UI Patterns, 11 Page Specs</td><td>Browser DOM/screenshot check or component test.</td></tr>
+<tr><td>No cryptic one-letter buttons</td><td>No visible buttons labelled only S, N, E, B, C, A, R, P or O unless the letter is a real domain value.</td><td>09 UI Wireframes, 10 UI Patterns</td><td>Static text scan plus browser check.</td></tr>
+<tr><td>Every major table has filters</td><td>Filter controls exist for status, text, date, number, boolean and relation fields where applicable.</td><td>10 UI Patterns</td><td>Browser check for filter row.</td></tr>
+<tr><td>Every major table has next action</td><td>Work queue tables include a Next action column or equivalent primary action.</td><td>11 Page Specs</td><td>Static/component assertion.</td></tr>
+<tr><td>Product Detail has Save and Cancel</td><td>One visible product-level Save and one Cancel; no process execution buttons.</td><td>15 Product Detail</td><td>Browser check.</td></tr>
+<tr><td>Page ownership is respected</td><td>Procurement does not execute QC; Receipt Detail owns QC/Putaway; Inventory does not create POs; Logistics does not modify procurement.</td><td>05 Page Ownership, 15 Detail UI Wireframes</td><td>Static route/action inspection.</td></tr>
+<tr><td>Detail pages have back links</td><td>PO, Receipt, Customer, Order, Inventory Item, Shipment and BOM detail show route-appropriate Back links.</td><td>15 Detail UI Wireframes</td><td>Browser navigation check.</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h2>B. Process Compliance Checks</h2>
+<table>
+<tr><th>Scenario</th><th>Expected DB/process result</th><th>Relevant pages</th><th>Blueprint reference</th></tr>
+<tr><td>Shopify order with zero stock</td><td>Order sync creates operations order/lines; planning creates purchase need for shortage.</td><td>Orders, Procurement</td><td>02 Process Map, 04 Status Models, 11 Page Specs</td></tr>
+<tr><td>Customer quantity 3</td><td>purchase_need.quantity = 3 and purchase_order_line.quantity = 3 when stock is zero and MOQ/order multiple is 1.</td><td>Orders, Procurement, PO Detail</td><td>06 Test Scenarios, 15 Purchase Need Handling</td></tr>
+<tr><td>PO lifecycle</td><td>PO advances draft → approved/sent → acknowledged according to workflow switches; buttons only appear when valid.</td><td>Purchase Order Detail</td><td>04 Status Models, 13 Configuration</td></tr>
+<tr><td>Goods receipt with QC policy</td><td>Receipt creates QC required or putaway-ready state depending item/config policy.</td><td>Receiving, Receipt Detail</td><td>13 Configuration, 15 Receipt Detail</td></tr>
+<tr><td>Accepted QC putaway</td><td>Put away to inventory books accepted quantity once and updates stock ledger.</td><td>Receipt Detail, Inventory</td><td>04 Status Models, 15 Inventory Item Detail</td></tr>
+<tr><td>Order logistics-ready</td><td>Order becomes ready when stock is available/reserved and customer name/email/shipping address exist.</td><td>Orders, Logistics</td><td>14 Data Quality, 15 Logistics Work Queue</td></tr>
+<tr><td>Order logistics-blocked</td><td>Missing name, email or shipping address blocks shipment and shows exact reason.</td><td>Orders, Customer Detail, Logistics</td><td>14 Data Quality, 15 Customer Detail</td></tr>
+<tr><td>Shipment creation</td><td>Shipment can be created only from a logistics-ready order; no Shopify fulfillment writeback in MVP.</td><td>Logistics, Shipment Detail later</td><td>15 Shipment Detail</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h2>C. Data Quality Checks</h2>
+<table>
+<tr><th>Condition</th><th>Expected blocker</th><th>Page that must show it</th><th>Test expectation</th></tr>
+<tr><td>Purchasable product without supplier</td><td>Procurement blocked: supplier missing.</td><td>Product Detail, Procurement</td><td>Create PO unavailable until supplier assigned.</td></tr>
+<tr><td>Producible product without BOM</td><td>BOM missing / production blocked.</td><td>Product Detail, BOM / Kitting</td><td>Open BOM editor or Create active BOM shown.</td></tr>
+<tr><td>Customer/order without shipping address</td><td>Logistics blocked: missing shipping address.</td><td>Order Detail, Customer Detail, Logistics</td><td>Create shipment unavailable.</td></tr>
+<tr><td>Draft/archived Shopify product</td><td>Not shown as On shop.</td><td>Products, Product Detail</td><td>Products on shop filter excludes it.</td></tr>
+<tr><td>Stale Shopify product missing from latest sync</td><td>Not currently sellable/on shop if sync can detect stale state.</td><td>Products, Product Detail</td><td>Visibility label is Stale / Not on shop.</td></tr>
+<tr><td>BOM without components</td><td>Active BOM with no components warning.</td><td>Product Detail, BOM / Kitting</td><td>Kitting/production blocked.</td></tr>
+<tr><td>Receipt rejected quantity</td><td>Rejected stock is not booked to available inventory.</td><td>Receipt Detail, Inventory</td><td>Only accepted quantity is put away.</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h2>D. Browser Retest Scenarios</h2>
+<table>
+<tr><th>Name</th><th>Browser path</th><th>Expected UI outcome</th><th>Relevant Blueprint sections</th></tr>
+<tr><td>Trading goods happy path</td><td>Storefront order → Orders → Sync Shopify orders → Procurement → PO Detail → Receiving → Receipt Detail → Inventory → Logistics</td><td>Each page shows exact next action; quantities and values match customer demand; shipment can be created.</td><td>06, 11, 15, 16</td></tr>
+<tr><td>Missing supplier</td><td>Products → Product Detail without supplier → Orders planning → Procurement</td><td>Product and Procurement show supplier blocker; Create Purchase Order unavailable.</td><td>14, 15 Product Detail, 15 Purchase Need Handling</td></tr>
+<tr><td>Missing address</td><td>Orders → Order Detail → Logistics</td><td>Missing name/email/address reason is explicit; Backfill test address appears only in development.</td><td>14, 15 Customer Detail, 15 Logistics</td></tr>
+<tr><td>QC rejected</td><td>PO Detail → Create Goods Receipt → Receipt Detail → Complete QC with rejected quantity</td><td>Rejected quantity does not become available stock; event is visible.</td><td>15 Receipt Detail, 15 Inventory Item Detail</td></tr>
+<tr><td>Putaway skipped/automatic if configured</td><td>Settings → set Putaway automatic → Receipt Detail</td><td>Button/status changes according to configuration; inventory booking still auditable.</td><td>13 Configuration</td></tr>
+<tr><td>BOM missing component</td><td>Product Detail → mark producible → BOM / Kitting</td><td>Missing BOM/component blocker; Create component product link if no components exist.</td><td>15 Product Detail, 15 BOM / Kitting</td></tr>
+<tr><td>Kitting build later</td><td>BOM / Kitting → Kitting later tab</td><td>Future-only sections are labelled later and do not execute production unless roadmap enables.</td><td>15 BOM / Kitting</td></tr>
+<tr><td>Product sync hygiene</td><td>Products → Sync Shopify products → Products on shop filter → Product Detail</td><td>Draft/archived/stale products are not On shop; operational roles remain separate.</td><td>14 Data Quality, 11 Products</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h2>E. Future Automated Test Mapping</h2>
+<table>
+<tr><th>Scenario</th><th>Expected DB-backed test</th><th>Expected UI/browser check</th><th>Relevant app page</th></tr>
+<tr><td>Trading goods happy path</td><td>Seed tenant/item/supplier/order; assert purchase need, PO, receipt, QC, putaway, inventory, shipment states.</td><td>Walk visible pages and verify next-action labels.</td><td>Orders, Procurement, Receiving, Inventory, Logistics</td></tr>
+<tr><td>Missing supplier</td><td>Purchasable item without preferred supplier blocks PO creation.</td><td>Procurement row shows Assign supplier.</td><td>Product Detail, Procurement</td></tr>
+<tr><td>Missing address</td><td>Order without encrypted shipping address is blocked; after dev backfill, ready.</td><td>Logistics shows blocker then Create shipment.</td><td>Order Detail, Logistics</td></tr>
+<tr><td>QC rejected</td><td>Accepted quantity only is booked; rejected quantity recorded.</td><td>Receipt Detail shows accepted/rejected and inventory outcome.</td><td>Receipt Detail, Inventory</td></tr>
+<tr><td>BOM component editor</td><td>Create active BOM idempotently; add/update/delete component line.</td><td>BOM table one row per component and Product Detail count updates.</td><td>Product Detail, BOM / Kitting</td></tr>
+<tr><td>Product sync hygiene</td><td>ACTIVE appears On shop; DRAFT/ARCHIVED/stale does not.</td><td>Products filter and Product Detail Shopify status agree.</td><td>Products, Product Detail</td></tr>
+<tr><td>Navigation active state</td><td>Helper maps nested paths to one active area.</td><td>Sidebar highlights correct section while browsing nested routes.</td><td>App shell</td></tr>
+</table>
+</section>
+</main>
+</div>
+</body></html>

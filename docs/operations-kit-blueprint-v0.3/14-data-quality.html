@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>14 Datenqualität & Sync</title>
+<link rel="stylesheet" href="assets/blueprint.css">
+</head>
+<body>
+<header><h1>14 Datenqualität & Sync</h1><p>Shopify-Sync, Adressen, historische Daten und Ledger-Regeln</p></header>
+<div class="layout">
+<nav><a class="" href="index.html">Start</a>
+<a class="" href="01-product-vision.html">01 Produktvision</a>
+<a class="" href="02-process-map.html">02 Prozesslandkarte</a>
+<a class="" href="03-entities.html">03 Entitäten & Attribute</a>
+<a class="" href="04-status-models.html">04 Statusmodelle</a>
+<a class="" href="05-ui-pages.html">05 Page Ownership</a>
+<a class="" href="06-test-scenarios.html">06 Test-Szenarien</a>
+<a class="" href="07-roadmap.html">07 Roadmap</a>
+<a class="" href="08-codex-working-mode.html">08 Codex-Arbeitsmodus</a>
+<a class="" href="09-ui-wireframes.html">09 UI Wireframes</a>
+<a class="" href="10-ui-patterns.html">10 UI Patterns</a>
+<a class="" href="11-page-specs.html">11 Page Specs</a>
+<a class="" href="12-implementation-backlog.html">12 Implementierungs-Backlog</a>
+<a class="" href="13-configuration.html">13 optionale Prozessschritte</a>
+<a class="active" href="14-data-quality.html">14 Datenqualität & Sync</a>
+<a class="" href="15-detail-ui-wireframes.html">15 Detail UI Wireframes</a>
+<a class="" href="16-blueprint-compliance-tests.html">16 Blueprint Compliance Tests</a></nav>
+<main>
+<section class="card">
+<h2>Datenqualität & Sync</h2>
+<table>
+<tr><th>Quelle</th><th>Regel</th><th>UI-Anzeige</th></tr>
+<tr><td>Shopify Products</td><td>ACTIVE + published/on store = On shop</td><td>On shop / Draft / Archived / Missing / Not published</td></tr>
+<tr><td>Shopify Orders</td><td>Sync erzeugt Operations Orders</td><td>Orders Work Queue</td></tr>
+<tr><td>Customer address</td><td>Order shipping address ist wichtiger als Customer Default</td><td>Address present yes/no</td></tr>
+<tr><td>Historic products</td><td>nie löschen</td><td>Stale/Missing, nicht On shop</td></tr>
+<tr><td>Inventory</td><td>Bestand aus Ledger</td><td>Stock Summary und Ledger</td></tr>
+<tr><td>Manual test data</td><td>nur local/dev</td><td>klar als Test Backfill markieren</td></tr>
+</table>
+</section>
+<section class="card">
+<h2>Invarianten</h2>
+<ul>
+<li>Keine Bestandsänderung ohne InventoryMovement.</li>
+<li>Keine neuen Operations-Demands aus Produkten, die nicht On shop + sellable sind.</li>
+<li>Keine Shipment-Erzeugung ohne Versandadresse.</li>
+<li>Keine PO ohne Lieferant.</li>
+<li>Keine QC, wenn QC-Schritt deaktiviert oder Produkt nicht QC-pflichtig ist.</li>
+<li>Keine Produktlöschung, wenn historische Orders existieren könnten.</li>
+</ul>
+</section>
+</main>
+</div>
+</body></html>

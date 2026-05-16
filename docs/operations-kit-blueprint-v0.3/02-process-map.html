@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>02 Prozesslandkarte</title>
+<link rel="stylesheet" href="assets/blueprint.css">
+</head>
+<body>
+<header><h1>02 Prozesslandkarte</h1><p>Vom Shopify-Auftrag zur Beschaffung, Einlagerung und Lieferung</p></header>
+<div class="layout">
+<nav><a class="" href="index.html">Start</a>
+<a class="" href="01-product-vision.html">01 Produktvision</a>
+<a class="active" href="02-process-map.html">02 Prozesslandkarte</a>
+<a class="" href="03-entities.html">03 Entitäten & Attribute</a>
+<a class="" href="04-status-models.html">04 Statusmodelle</a>
+<a class="" href="05-ui-pages.html">05 Page Ownership</a>
+<a class="" href="06-test-scenarios.html">06 Test-Szenarien</a>
+<a class="" href="07-roadmap.html">07 Roadmap</a>
+<a class="" href="08-codex-working-mode.html">08 Codex-Arbeitsmodus</a>
+<a class="" href="09-ui-wireframes.html">09 UI Wireframes</a>
+<a class="" href="10-ui-patterns.html">10 UI Patterns</a>
+<a class="" href="11-page-specs.html">11 Page Specs</a>
+<a class="" href="12-implementation-backlog.html">12 Implementierungs-Backlog</a>
+<a class="" href="13-configuration.html">13 optionale Prozessschritte</a>
+<a class="" href="14-data-quality.html">14 Datenqualität & Sync</a>
+<a class="" href="15-detail-ui-wireframes.html">15 Detail UI Wireframes</a>
+<a class="" href="16-blueprint-compliance-tests.html">16 Blueprint Compliance Tests</a></nav>
+<main>
+<section class="card">
+<h2>Trading Goods Flow</h2>
+<div class="flow"><span>Shopify Order</span><span>Operations Order</span><span>Stock Check</span><span>Purchase Need</span><span>Purchase Order</span><span>Supplier Acknowledgement</span><span>Goods Receipt</span><span>QC optional</span><span>Putaway</span><span>Inventory</span><span>Logistics</span><span>Shipment</span></div>
+<table>
+<tr><th>Schritt</th><th>Input</th><th>Output</th><th>Status</th><th>UI</th><th>Optionale Abkürzung</th></tr>
+<tr><td>Order Sync</td><td>Shopify Order</td><td>Operations Order + Lines</td><td>Needs planning</td><td>Orders</td><td>nein</td></tr>
+<tr><td>Planning</td><td>Order Line + Stock + Item Master</td><td>Purchase Need oder Ready from Stock</td><td>Purchase proposal ready</td><td>Orders/Procurement</td><td>Auto-refresh möglich</td></tr>
+<tr><td>Supplier Assignment</td><td>Purchase Need</td><td>Need ready for PO</td><td>Ready for PO</td><td>Procurement</td><td>automatisch bei Preferred Supplier</td></tr>
+<tr><td>PO Creation</td><td>Ready Purchase Need</td><td>Purchase Order</td><td>PO created</td><td>Procurement / PO Detail</td><td>Batch Create später</td></tr>
+<tr><td>Approval</td><td>PO draft</td><td>Approved PO</td><td>Approved</td><td>PO Detail</td><td>kann deaktiviert werden</td></tr>
+<tr><td>Send</td><td>Approved PO</td><td>Sent PO</td><td>Sent to supplier</td><td>PO Detail</td><td>Chef kann direkt senden</td></tr>
+<tr><td>Acknowledge</td><td>Sent PO</td><td>Acknowledged PO</td><td>Awaiting receipt</td><td>PO Detail</td><td>optional, wenn nicht benötigt</td></tr>
+<tr><td>Goods Receipt</td><td>Acknowledged PO</td><td>Goods Receipt</td><td>Receiving / QC</td><td>Receiving / Receipt Detail</td><td>kann "receive all" werden</td></tr>
+<tr><td>QC</td><td>Receipt Lines</td><td>accepted/rejected quantities</td><td>Putaway pending oder rejected</td><td>Receipt Detail</td><td>produktabhängig deaktivierbar</td></tr>
+<tr><td>Putaway</td><td>Accepted quantity</td><td>Inventory Movement MAIN</td><td>Inventory booked</td><td>Receipt Detail / Inventory</td><td>bei Ein-Lager-Ort automatisch möglich</td></tr>
+<tr><td>Logistics</td><td>Ready stock + address</td><td>Shipping Order</td><td>Shipment created</td><td>Logistics</td><td>später Shopify Fulfillment writeback</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h2>Kitting Flow</h2>
+<div class="flow"><span>Kit Product</span><span>BOM Components</span><span>Component Availability</span><span>Build Kit</span><span>Consume Components</span><span>Finished Kit Stock</span><span>Ship Kit</span></div>
+<table>
+<tr><th>Schritt</th><th>Input</th><th>Output</th><th>UI</th><th>MVP</th></tr>
+<tr><td>BOM pflegen</td><td>Kit Product + Components</td><td>BOM Lines</td><td>BOM / Product Detail</td><td>ja</td></tr>
+<tr><td>Kit-Verfügbarkeit berechnen</td><td>Component stock / BOM</td><td>Kit availability</td><td>Products / Orders</td><td>ja, einfach</td></tr>
+<tr><td>Build Kit</td><td>Components</td><td>Inventory movements consume/output</td><td>Kitting Detail</td><td>Phase 2</td></tr>
+<tr><td>Trace Kit</td><td>Component lots</td><td>Kit lot</td><td>Traceability</td><td>später</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h2>Quote-to-Order Flow später</h2>
+<div class="flow"><span>Quote Request</span><span>Quote Lines</span><span>Availability / Cost</span><span>Approval</span><span>Customer Accepts</span><span>Shopify Draft Order</span><span>Operations Demand</span></div>
+<p>Quote Approval ergibt erst Sinn, wenn Produkte, Kosten, Verfügbarkeit, Buy/Make und später Kitting/Labels mit dem Backbone verbunden sind.</p>
+</section>
+</main>
+</div>
+</body></html>

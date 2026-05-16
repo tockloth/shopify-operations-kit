@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>07 Roadmap</title>
+<link rel="stylesheet" href="assets/blueprint.css">
+</head>
+<body>
+<header><h1>07 Roadmap</h1><p>Technischer und fachlicher Bauplan nach MVP-Schnitten</p></header>
+<div class="layout">
+<nav><a class="" href="index.html">Start</a>
+<a class="" href="01-product-vision.html">01 Produktvision</a>
+<a class="" href="02-process-map.html">02 Prozesslandkarte</a>
+<a class="" href="03-entities.html">03 Entitäten & Attribute</a>
+<a class="" href="04-status-models.html">04 Statusmodelle</a>
+<a class="" href="05-ui-pages.html">05 Page Ownership</a>
+<a class="" href="06-test-scenarios.html">06 Test-Szenarien</a>
+<a class="active" href="07-roadmap.html">07 Roadmap</a>
+<a class="" href="08-codex-working-mode.html">08 Codex-Arbeitsmodus</a>
+<a class="" href="09-ui-wireframes.html">09 UI Wireframes</a>
+<a class="" href="10-ui-patterns.html">10 UI Patterns</a>
+<a class="" href="11-page-specs.html">11 Page Specs</a>
+<a class="" href="12-implementation-backlog.html">12 Implementierungs-Backlog</a>
+<a class="" href="13-configuration.html">13 optionale Prozessschritte</a>
+<a class="" href="14-data-quality.html">14 Datenqualität & Sync</a>
+<a class="" href="15-detail-ui-wireframes.html">15 Detail UI Wireframes</a>
+<a class="" href="16-blueprint-compliance-tests.html">16 Blueprint Compliance Tests</a></nav>
+<main>
+<section class="card">
+<h2>Phasen</h2>
+<table>
+<tr><th>Phase</th><th>Ziel</th><th>Definition of Done</th></tr>
+<tr><td>1 Trading Goods Backbone</td><td>Shopify Order → Einkauf → Wareneingang → Bestand → Versand</td><td>Scenario A/B laufen ohne manuelle Datenreparatur</td></tr>
+<tr><td>2 Work Queue Konsolidierung</td><td>Orders/Procurement/Receiving/Logistics als echte Arbeitslisten</td><td>jede Queue hat Filter, Status, Next Action, keine falschen Aktionen</td></tr>
+<tr><td>3 Kitting</td><td>Kits aus Komponenten planen und bauen</td><td>Kit availability und Build Kit funktionieren</td></tr>
+<tr><td>4 Rollen & Aufgaben</td><td>Mitarbeiter übernehmen Teilaufgaben</td><td>Rollen, Task Ownership, Audit Trail</td></tr>
+<tr><td>5 Labels / QR / Traceability</td><td>Identifizierbare Einheiten, Chargen, QR</td><td>Scan zeigt Produkt, Charge, Lagerort, Auftrag</td></tr>
+<tr><td>6 Quote-to-Order</td><td>Angebote als echter Operations-Input</td><td>Quote erzeugt Shopify Draft Order und Operations Demand</td></tr>
+<tr><td>7 DATEV Export</td><td>Buchungsdatenexport</td><td>Wareneinkauf/Bestand/COGS/Versand exportierbar</td></tr>
+</table>
+</section>
+<section class="card">
+<h2>Was nicht in den MVP gehört</h2>
+<ul>
+<li>Vollständige Finanzbuchhaltung</li>
+<li>Produktionsplanung mit Maschinen/Arbeitsplänen</li>
+<li>Mehrlager-Optimierung</li>
+<li>Komplexe Rollenmatrix</li>
+<li>Vollständiger Shopify Fulfillment Writeback</li>
+<li>Lot/Serial/QR vor stabilem Ledger</li>
+</ul>
+</section>
+</main>
+</div>
+</body></html>

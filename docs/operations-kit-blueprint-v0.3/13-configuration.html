@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>13 Optionale Prozessschritte</title>
+<link rel="stylesheet" href="assets/blueprint.css">
+</head>
+<body>
+<header><h1>13 Optionale Prozessschritte</h1><p>Workflow switches, defaults and UI/status impact</p></header>
+<div class="layout">
+<nav><a class="" href="index.html">Start</a>
+<a class="" href="01-product-vision.html">01 Produktvision</a>
+<a class="" href="02-process-map.html">02 Prozesslandkarte</a>
+<a class="" href="03-entities.html">03 Entitäten & Attribute</a>
+<a class="" href="04-status-models.html">04 Statusmodelle</a>
+<a class="" href="05-ui-pages.html">05 Page Ownership</a>
+<a class="" href="06-test-scenarios.html">06 Test-Szenarien</a>
+<a class="" href="07-roadmap.html">07 Roadmap</a>
+<a class="" href="08-codex-working-mode.html">08 Codex-Arbeitsmodus</a>
+<a class="" href="09-ui-wireframes.html">09 UI Wireframes</a>
+<a class="" href="10-ui-patterns.html">10 UI Patterns</a>
+<a class="" href="11-page-specs.html">11 Page Specs</a>
+<a class="" href="12-implementation-backlog.html">12 Implementierungs-Backlog</a>
+<a class="active" href="13-configuration.html">13 optionale Prozessschritte</a>
+<a class="" href="14-data-quality.html">14 Datenqualität & Sync</a>
+<a class="" href="15-detail-ui-wireframes.html">15 Detail UI Wireframes</a>
+<a class="" href="16-blueprint-compliance-tests.html">16 Blueprint Compliance Tests</a></nav>
+<main>
+<section class="card">
+<h2>Configuration Principle</h2>
+<p>Small merchants can skip steps only through explicit Settings, not because buttons are hidden randomly. Every switch must define its default, affected pages, affected statuses, affected buttons and test expectation.</p>
+</section>
+
+<section class="card">
+<h2>Workflow Switches</h2>
+<table>
+<tr><th>Switch</th><th>Options</th><th>Default MVP</th><th>Reason</th><th>Affected pages</th><th>Affected statuses</th><th>Affected buttons</th><th>Test expectation</th></tr>
+<tr><td>PO approval required</td><td>on / off</td><td>off</td><td>Owner-operated MVP shops should move from purchase proposal to supplier communication quickly.</td><td>Procurement, Purchase Order Detail, Settings</td><td>draft, approved, sent</td><td>If off: Send to supplier is available from draft. If on: Approve must happen before Send to supplier.</td><td>Toggle changes PO toolbar sequence without changing PO quantities or lines.</td></tr>
+<tr><td>Supplier acknowledgement required</td><td>on / off</td><td>off</td><td>MVP test flow should allow receiving after sent if the merchant does not track acknowledgements.</td><td>Purchase Order Detail, Procurement, Receiving</td><td>sent, acknowledged, awaiting receipt</td><td>If on: Create Goods Receipt disabled until Mark supplier acknowledged. If off: Create Goods Receipt available after sent.</td><td>Receiving availability follows switch.</td></tr>
+<tr><td>Receiving required before inventory</td><td>on / off</td><td>on</td><td>Inventory should be ledger-backed and auditable.</td><td>Purchase Order Detail, Receiving, Receipt Detail, Inventory</td><td>awaiting receipt, receiving, putaway pending, inventory booked</td><td>If on: inventory booking only through Receipt Detail. If off later: direct inventory booking needs explicit audit event.</td><td>No stock appears without receipt/putaway when on.</td></tr>
+<tr><td>QC policy</td><td>by product / always / never</td><td>by product</td><td>Different products need different inspection rules; product master data already owns QC flags.</td><td>Product Detail, Receiving, Receipt Detail, Settings</td><td>QC required, QC completed, putaway pending</td><td>Complete QC appears when policy requires QC. If never: Put away to inventory appears after receiving.</td><td>Receipt Detail UI and status follow item/config policy.</td></tr>
+<tr><td>Putaway mode</td><td>manual / automatic after QC</td><td>manual</td><td>Manual putaway makes stock booking explicit and testable.</td><td>Receipt Detail, Receiving, Inventory, Settings</td><td>putaway pending, inventory booked</td><td>If manual: Put away to inventory button required. If automatic: QC completion books accepted stock and logs event.</td><td>Inventory movement is created once in both modes.</td></tr>
+<tr><td>Shipping address strictness</td><td>strict / relaxed draft</td><td>strict</td><td>Shipment should not be created without a usable address in MVP.</td><td>Orders, Customer Detail, Logistics, Settings</td><td>logistics blocked, ready for logistics, shipment draft</td><td>If strict: Create shipment blocked without name/email/address. If relaxed later: Create internal shipment draft but show address blocker.</td><td>Missing address blocks shipment under strict mode.</td></tr>
+<tr><td>Shipment packing required</td><td>on / off</td><td>off</td><td>MVP focuses on shipment readiness, not warehouse pick/pack execution.</td><td>Logistics, Shipment Detail, Settings</td><td>shipment created, packed, shipped</td><td>If off: Mark shipped can follow Create shipment. If on: Mark packed required before Mark shipped.</td><td>Shipment toolbar changes according to switch.</td></tr>
+<tr><td>Payment/payables visibility</td><td>visible / hidden</td><td>visible read-only</td><td>Trading-goods flow benefits from PO/receipt value visibility, but no payment execution in MVP.</td><td>Procurement, Purchase Order Detail, Receiving, Settings</td><td>payment open, payment hidden</td><td>If hidden: no Payable section. If visible: show amount/status read-only.</td><td>Visibility changes do not create payment/accounting logic.</td></tr>
+<tr><td>Kitting build approval</td><td>off / required later</td><td>off</td><td>Kitting build execution is a later feature; BOM editing is master data only in MVP.</td><td>BOM / Kitting, Product Detail, Settings</td><td>BOM ready, build approval required later</td><td>If required later: Create kit build needs approval before component consumption.</td><td>No production/kitting execution appears until roadmap enables it.</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h2>Role Impact Later</h2>
+<table>
+<tr><th>Role</th><th>May do</th><th>Cannot do by default</th></tr>
+<tr><td>Owner/Admin</td><td>Settings, all master data, all process actions.</td><td>Nothing within tenant, except Shopify writeback gated by explicit feature.</td></tr>
+<tr><td>Procurement</td><td>Purchase needs, supplier assignment, PO lifecycle, suppliers.</td><td>QC, putaway, shipment writeback.</td></tr>
+<tr><td>Receiving</td><td>Goods Receipt and QC results where allowed.</td><td>PO approval, supplier master data unless granted.</td></tr>
+<tr><td>Warehouse</td><td>Putaway, inventory visibility, later picking.</td><td>Supplier/PO decisions.</td></tr>
+<tr><td>Shipping</td><td>Shipment creation, packing/shipping later.</td><td>Procurement, receiving, inventory adjustment.</td></tr>
+<tr><td>Finance</td><td>Payables visibility, exports later.</td><td>Operational stock/process mutations.</td></tr>
+</table>
+</section>
+</main>
+</div>
+</body></html>

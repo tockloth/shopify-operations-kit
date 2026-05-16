@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>10 UI Patterns</title>
+<link rel="stylesheet" href="assets/blueprint.css">
+</head>
+<body>
+<header><h1>10 UI Patterns</h1><p>Wiederverwendbare UI-Regeln für alle Seiten</p></header>
+<div class="layout">
+<nav><a class="" href="index.html">Start</a>
+<a class="" href="01-product-vision.html">01 Produktvision</a>
+<a class="" href="02-process-map.html">02 Prozesslandkarte</a>
+<a class="" href="03-entities.html">03 Entitäten & Attribute</a>
+<a class="" href="04-status-models.html">04 Statusmodelle</a>
+<a class="" href="05-ui-pages.html">05 Page Ownership</a>
+<a class="" href="06-test-scenarios.html">06 Test-Szenarien</a>
+<a class="" href="07-roadmap.html">07 Roadmap</a>
+<a class="" href="08-codex-working-mode.html">08 Codex-Arbeitsmodus</a>
+<a class="" href="09-ui-wireframes.html">09 UI Wireframes</a>
+<a class="active" href="10-ui-patterns.html">10 UI Patterns</a>
+<a class="" href="11-page-specs.html">11 Page Specs</a>
+<a class="" href="12-implementation-backlog.html">12 Implementierungs-Backlog</a>
+<a class="" href="13-configuration.html">13 optionale Prozessschritte</a>
+<a class="" href="14-data-quality.html">14 Datenqualität & Sync</a>
+<a class="" href="15-detail-ui-wireframes.html">15 Detail UI Wireframes</a>
+<a class="" href="16-blueprint-compliance-tests.html">16 Blueprint Compliance Tests</a></nav>
+<main>
+<section class="card">
+<h2>UI Patterns</h2>
+<p>These patterns are implementation rules. If a future page cannot follow one of them, the implementation prompt must state why and update the Blueprint first.</p>
+</section>
+
+<section class="card">
+<h3>Work Queue Page Pattern</h3>
+<table>
+<tr><th>Area</th><th>Required behavior</th></tr>
+<tr><td>Toolbar</td><td>Explicit labels only: Sync Shopify orders, Refresh planning, Refresh purchasing needs, Export, Saved views later. No one-letter buttons.</td></tr>
+<tr><td>Purpose</td><td>Prioritize work and show next action. A work queue may open a detail page, but should not execute actions that belong to another process detail.</td></tr>
+<tr><td>Filters</td><td>Every major table column must be filterable with the standard filter types below.</td></tr>
+<tr><td>Table</td><td>Reference, status, core entity, quantity/value, blocker reason, next action, open detail.</td></tr>
+<tr><td>Rows</td><td>Compact rows; row click opens detail. Inline forms are allowed only if they remain compact and are owned by that page.</td></tr>
+<tr><td>Next action</td><td>Exactly one primary next action per row or section. Secondary links are allowed only when they open related records.</td></tr>
+<tr><td>Saved views</td><td>Later feature. Reserve UI language: Open, Blocked, Due, Mine, Completed, Products on shop, Needs supplier.</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h3>Detail Page Pattern</h3>
+<table>
+<tr><th>Area</th><th>Required behavior</th></tr>
+<tr><td>Toolbar top</td><td>Back link plus either Save/Cancel for master data or lifecycle actions for process details. Button labels must include the object/action subject.</td></tr>
+<tr><td>Summary</td><td>Reference, status, counterparty/customer/supplier, important quantities, blocker reason, next action.</td></tr>
+<tr><td>Tabs</td><td>Use Header, Lines, Related work, Receipts, Inventory outcome, Address, Events as applicable.</td></tr>
+<tr><td>Forms</td><td>Forms are compact and scoped. Master Data pages use one page-level Save where practical. Process forms save exactly one process step.</td></tr>
+<tr><td>Next Action Panel</td><td>One primary action + reason + target. Never show generic "Open" without object name.</td></tr>
+<tr><td>Events</td><td>Every mutation should create an audit/event record once the event model exists.</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h3>Master Data Form Pattern</h3>
+<table>
+<tr><th>Rule</th><th>Implementation detail</th></tr>
+<tr><td>Owns attributes</td><td>Product owns item type, sellable, purchasable, producible, supplier policy, QC policy, BOM summary. Supplier owns supplier header and supplier-item terms. Customer is read-only in MVP.</td></tr>
+<tr><td>Does not execute operations</td><td>No MRP run, no PO creation, no receipt, no QC, no putaway, no shipment creation on master data pages.</td></tr>
+<tr><td>Layout</td><td>Compact grids, tables and summary rows. Avoid tall single-column forms for small numeric fields.</td></tr>
+<tr><td>Blocked states</td><td>Show master data blockers where they are caused: missing supplier on Product, missing BOM on Product/BOM, missing address on Customer/Order.</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h3>Process Detail Pattern</h3>
+<table>
+<tr><th>Process detail</th><th>Owned actions</th><th>Forbidden actions</th></tr>
+<tr><td>Purchase Order Detail</td><td>Approve, Send to supplier, Mark supplier acknowledged, Create Goods Receipt, Cancel PO.</td><td>Complete QC, Put away, Create shipment.</td></tr>
+<tr><td>Receipt Detail</td><td>Complete QC, Put away to inventory.</td><td>Create PO, Send to supplier, Create shipment.</td></tr>
+<tr><td>Shipment Detail</td><td>Mark packed, Mark shipped, Cancel shipment.</td><td>Procurement, receiving, inventory correction, Shopify fulfillment writeback in MVP.</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h3>Excel-like Table Filter Pattern</h3>
+<table>
+<tr><th>Filter type</th><th>Use for</th><th>Example</th></tr>
+<tr><td>Text contains</td><td>SKU, title, order number, PO number, customer email, supplier name.</td><td>SKU contains WAX.</td></tr>
+<tr><td>Status dropdown</td><td>Operational status, PO status, receipt status, QC status, shipment status.</td><td>Ready for PO, Awaiting receipt.</td></tr>
+<tr><td>Date range</td><td>Order date, expected date, received date, shipped date, updated date.</td><td>Expected delivery before today.</td></tr>
+<tr><td>Number min/max</td><td>Quantity, available stock, line value, lead time, MOQ.</td><td>Quantity greater than 0.</td></tr>
+<tr><td>Boolean yes/no</td><td>Address present, supplier assigned, BOM active, QC required, on shop.</td><td>Address present = no.</td></tr>
+<tr><td>Relation dropdown</td><td>Supplier, customer, product, item type, location.</td><td>Supplier = Test Trading Supplier.</td></tr>
+<tr><td>Missing-data filter</td><td>Supplier missing, address missing, BOM missing, Shopify status missing, price missing.</td><td>Show products missing BOM.</td></tr>
+</table>
+<p class="small">Applies to Products, Suppliers, Customers, Orders, Procurement, Receiving, Inventory, Logistics and BOM / Kitting. Every work queue must include Clear filters. Saved views are later unless already implemented.</p>
+</section>
+
+<section class="card">
+<h3>Toolbar Pattern</h3>
+<table>
+<tr><th>Context</th><th>Allowed labels</th><th>Forbidden labels</th></tr>
+<tr><td>Master data detail</td><td>Back to Products, Save, Cancel, Back to Suppliers, Deactivate supplier.</td><td>S, C, Back, Open without object.</td></tr>
+<tr><td>Orders</td><td>Sync Shopify orders, Refresh planning, Open order, Open in Shopify.</td><td>R, O, generic Sync.</td></tr>
+<tr><td>Procurement</td><td>Refresh purchasing needs, Create Purchase Order, Approve, Send to supplier, Mark supplier acknowledged.</td><td>Acknowledge without subject, Create without object.</td></tr>
+<tr><td>Receiving</td><td>Create Goods Receipt, Complete QC, Put away to inventory, Back to Receiving, Back to Procurement.</td><td>Post receipt somewhere, Put away without inventory context.</td></tr>
+<tr><td>Logistics</td><td>Create shipment, Open shipment, Backfill test address (development only).</td><td>Ship without local-only/Shopify-writeback distinction.</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h3>Blocked, Empty, Status and Event Patterns</h3>
+<table>
+<tr><th>Pattern</th><th>Required behavior</th></tr>
+<tr><td>Blocked State</td><td>Use a warning/critical badge, exact reason, owner page and next action. Example: Missing supplier → Open Product Detail.</td></tr>
+<tr><td>Empty State</td><td>Tell the user what data is missing and which existing action creates it. Example: Sync Shopify orders to create operational demand.</td></tr>
+<tr><td>Status Badge</td><td>Use domain status labels from 04 Status Models. Do not collapse all work to "in progress" when precise status exists.</td></tr>
+<tr><td>Audit/Event timeline</td><td>Show event type, actor, timestamp, linked object and short message. Event timeline is read-only on detail pages.</td></tr>
+<tr><td>Data quality blocker</td><td>Never hide a blocker in a paragraph. It must be visible in summary, table row and detail section where relevant.</td></tr>
+</table>
+</section>
+</main>
+</div>
+</body></html>

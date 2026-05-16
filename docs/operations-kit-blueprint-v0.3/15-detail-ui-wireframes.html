@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>15 Detail UI Wireframes</title>
+<link rel="stylesheet" href="assets/blueprint.css">
+</head>
+<body>
+<header><h1>15 Detail UI Wireframes</h1><p>Visual page layouts for single-record/detail screens</p></header>
+<div class="layout">
+<nav><a class="" href="index.html">Start</a>
+<a class="" href="01-product-vision.html">01 Produktvision</a>
+<a class="" href="02-process-map.html">02 Prozesslandkarte</a>
+<a class="" href="03-entities.html">03 Entitäten & Attribute</a>
+<a class="" href="04-status-models.html">04 Statusmodelle</a>
+<a class="" href="05-ui-pages.html">05 Page Ownership</a>
+<a class="" href="06-test-scenarios.html">06 Test-Szenarien</a>
+<a class="" href="07-roadmap.html">07 Roadmap</a>
+<a class="" href="08-codex-working-mode.html">08 Codex-Arbeitsmodus</a>
+<a class="" href="09-ui-wireframes.html">09 UI Wireframes</a>
+<a class="" href="10-ui-patterns.html">10 UI Patterns</a>
+<a class="" href="11-page-specs.html">11 Page Specs</a>
+<a class="" href="12-implementation-backlog.html">12 Implementierungs-Backlog</a>
+<a class="" href="13-configuration.html">13 optionale Prozessschritte</a>
+<a class="" href="14-data-quality.html">14 Datenqualität & Sync</a>
+<a class="active" href="15-detail-ui-wireframes.html">15 Detail UI Wireframes</a>
+<a class="" href="16-blueprint-compliance-tests.html">16 Blueprint Compliance Tests</a></nav>
+<main>
+<section class="card">
+  <h2>How to Read These Wireframes</h2>
+  <p>This page is visual. It shows page shape, density, toolbar placement, tabs, summary blocks, forms, tables, next actions and blockers. The implementation contracts remain in <code>11-page-specs.html</code>.</p>
+  <div class="callout">A future implementation should match the structure shown here unless the prompt explicitly updates the Blueprint first.</div>
+</section>
+
+<section class="card">
+<h2>Product Detail — Master Data Form</h2>
+<div class="wf-page">
+  <div class="wf-header">
+    <div><div class="wf-title">Product Detail</div><div class="wf-route">Route: /app/items/:itemId</div></div>
+    <div class="wf-toolbar"><span class="btn">Back to Products</span><span class="btn primary">Save</span><span class="btn">Cancel</span></div>
+  </div>
+  <div class="wf-body">
+    <div class="wf-panel">
+      <h4>Product master data summary</h4>
+      <div class="wf-summary">
+        <div class="wf-field"><label>Product</label><div>Snowboard / SKU 4769...</div></div>
+        <div class="wf-field"><label>Shopify status</label><div><span class="badge ok">On shop</span></div></div>
+        <div class="wf-field"><label>Shopify context</label><div>Product + Variant synced</div></div>
+        <div class="wf-field"><label>Item type</label><div>product</div></div>
+        <div class="wf-field"><label>Operational roles</label><div>sellable, purchasable</div></div>
+        <div class="wf-field"><label>Review state</label><div><span class="badge ok">Ready</span></div></div>
+        <div class="wf-field"><label>Policy</label><div>Buy</div></div>
+        <div class="wf-field"><label>Lead time</label><div>7 days</div></div>
+        <div class="wf-field"><label>Standard order qty</label><div>1</div></div>
+        <div class="wf-field"><label>Minimum stock</label><div>0</div></div>
+      </div>
+      <div class="wf-grid-2"><div class="wf-field"><label>Standard production qty</label><div>1</div></div><div class="wf-field"><label>Owner</label><div>Shopify SKU/title read-only when Shopify-owned</div></div></div>
+    </div>
+    <div class="wf-panel">
+      <h4>Operational classification</h4>
+      <div class="wf-grid-4">
+        <div class="wf-field"><label>Item type select</label><div>product ▾</div></div>
+        <div class="wf-check">Sellable</div>
+        <div class="wf-check">Purchasable</div>
+        <div class="wf-check">Producible</div>
+      </div>
+    </div>
+    <div class="wf-panel">
+      <h4>Purchasing settings</h4>
+      <div class="wf-grid-5">
+        <div class="wf-field"><label>Preferred supplier</label><div>Test Trading Supplier ▾</div></div>
+        <div class="wf-field"><label>Supplier SKU</label><div>4769-SUP</div></div>
+        <div class="wf-check">Preferred</div>
+        <div class="wf-field"><label>Lead time</label><div>7</div></div>
+        <div class="wf-field"><label>Standard order qty</label><div>1</div></div>
+        <div class="wf-field"><label>Standard production qty</label><div>1</div></div>
+        <div class="wf-field"><label>Minimum stock</label><div>0</div></div>
+        <div class="wf-field"><label>Supplier MOQ</label><div>1</div></div>
+        <div class="wf-field"><label>Supplier price</label><div>0.00</div></div>
+        <div class="wf-field"><label>Currency</label><div>EUR</div></div>
+      </div>
+    </div>
+    <div class="wf-panel">
+      <h4>QC</h4>
+      <div class="wf-grid-2"><div class="wf-check">QC required on receiving</div><div class="wf-check">QC required after production</div></div>
+    </div>
+    <div class="wf-panel">
+      <h4>BOM read-only summary</h4>
+      <div class="wf-grid-3"><div class="wf-field"><label>Active BOM</label><div>Yes</div></div><div class="wf-field"><label>Component count</label><div>2</div></div><div class="wf-field"><label>Action</label><div>Open BOM editor</div></div></div>
+      <table class="wf-table"><tr><th>Component</th><th>Type</th><th>Policy</th><th>Quantity</th><th>Unit</th><th>Available stock</th></tr><tr><td>COMP-A</td><td>component</td><td>buy</td><td>2</td><td>pcs</td><td>5</td></tr><tr><td>PACK</td><td>raw material</td><td>buy</td><td>1</td><td>pcs</td><td>10</td></tr></table>
+      <div class="wf-note">No Usage section. No MRP. No PO creation. No QC execution.</div>
+    </div>
+  </div>
+</div>
+</section>
+
+<section class="card">
+<h2>Supplier Detail</h2>
+<div class="wf-page">
+  <div class="wf-header"><div><div class="wf-title">Supplier Detail</div><div class="wf-route">Route: /app/suppliers/:supplierId</div></div><div class="wf-toolbar"><span class="btn">Back to Suppliers</span><span class="btn primary">Save</span><span class="btn">Cancel</span><span class="btn danger">Deactivate supplier</span></div></div>
+  <div class="wf-body">
+    <div class="wf-tabs"><div class="wf-tab active">Header</div><div class="wf-tab">Supplied products</div><div class="wf-tab">Purchase Orders</div><div class="wf-tab">Events</div></div>
+    <div class="wf-panel"><h4>Header form</h4><div class="wf-grid-3"><div class="wf-field"><label>Supplier name</label><div>Test Trading Supplier</div></div><div class="wf-field"><label>Email</label><div>orders@supplier.example</div></div><div class="wf-field"><label>Status</label><div>active ▾</div></div><div class="wf-field"><label>Default currency</label><div>EUR</div></div><div class="wf-field"><label>Notes</label><div>Preferred trading goods supplier</div></div><div class="wf-check">Active</div></div></div>
+    <div class="wf-panel"><h4>Supplied products</h4><table class="wf-table"><tr><th>Product</th><th>Supplier SKU</th><th>Preferred</th><th>Price</th><th>MOQ</th><th>Lead time</th><th>Active</th><th>Open product</th></tr><tr><td>Ski Wax</td><td>WAX-SUP</td><td>yes</td><td>0 EUR</td><td>1</td><td>7 days</td><td>yes</td><td>Open product</td></tr></table></div>
+    <div class="wf-panel"><h4>Purchase Orders</h4><table class="wf-table"><tr><th>PO</th><th>Status</th><th>Expected date</th><th>Total value</th><th>Open Purchase Order</th></tr><tr><td>PO-1007</td><td>awaiting receipt</td><td>May 20</td><td>30 EUR</td><td>Open Purchase Order</td></tr></table></div>
+  </div>
+</div>
+</section>
+
+<section class="card">
+<h2>Customer Detail</h2>
+<div class="wf-page">
+  <div class="wf-header"><div><div class="wf-title">Customer Detail</div><div class="wf-route">Route: /app/customers/:customerId</div></div><div class="wf-toolbar"><span class="btn">Back to Customers</span><span class="btn">Sync Shopify customers</span><span class="btn danger">Redact customer data</span><span class="btn">Add test address (development only)</span></div></div>
+  <div class="wf-body">
+    <div class="wf-tabs"><div class="wf-tab active">Header</div><div class="wf-tab">Addresses</div><div class="wf-tab">Orders</div><div class="wf-tab">Privacy / Events</div></div>
+    <div class="wf-panel"><h4>Header</h4><div class="wf-grid-3"><div class="wf-field"><label>Customer name</label><div>Jörn Voigt</div></div><div class="wf-field"><label>Email</label><div>voigtjo@gmail.com</div></div><div class="wf-field"><label>Phone</label><div>No phone</div></div><div class="wf-field"><label>Shopify customer ID</label><div>gid://shopify/Customer/...</div></div><div class="wf-field"><label>Privacy status</label><div><span class="badge ok">Encrypted</span></div></div><div class="wf-field"><label>Address completeness</label><div><span class="badge warn">Order address missing</span></div></div></div></div>
+    <div class="wf-panel"><h4>Addresses</h4><table class="wf-table"><tr><th>Type</th><th>Name</th><th>Street</th><th>City</th><th>Country</th><th>Postal code</th><th>Complete?</th><th>Source</th></tr><tr><td>Shipping</td><td>Jörn Voigt</td><td>123 Test St</td><td>Washington</td><td>US</td><td>20340</td><td>yes</td><td>Shopify order</td></tr></table></div>
+    <div class="wf-panel"><h4>Orders</h4><table class="wf-table"><tr><th>Order</th><th>Date</th><th>Products</th><th>Fulfillment</th><th>Operations status</th><th>Address present</th><th>Open order</th></tr><tr><td>#1004</td><td>May 14</td><td>1 × Ski Wax</td><td>unfulfilled</td><td>Ready for logistics</td><td>yes</td><td>Open order</td></tr></table></div>
+  </div>
+</div>
+</section>
+
+<section class="card">
+<h2>Order Detail</h2>
+<div class="wf-page">
+  <div class="wf-header"><div><div class="wf-title">Order Detail</div><div class="wf-route">Route: /app/orders/:orderId</div></div><div class="wf-toolbar"><span class="btn">Back to Orders</span><span class="btn">Open in Shopify</span><span class="btn primary">Refresh planning</span></div></div>
+  <div class="wf-body">
+    <div class="wf-tabs"><div class="wf-tab active">Summary</div><div class="wf-tab">Lines</div><div class="wf-tab">Related work</div><div class="wf-tab">Events</div></div>
+    <div class="wf-panel"><h4>Summary</h4><div class="wf-summary"><div class="wf-field"><label>Order number</label><div>#1004</div></div><div class="wf-field"><label>Customer</label><div>Jörn Voigt</div></div><div class="wf-field"><label>Payment</label><div>paid</div></div><div class="wf-field"><label>Fulfillment</label><div>unfulfilled</div></div><div class="wf-field"><label>Address readiness</label><div><span class="badge ok">Ready</span></div></div><div class="wf-field"><label>Operations status</label><div>Purchase proposal ready</div></div><div class="wf-field"><label>Next action</label><div>Open Procurement</div></div></div></div>
+    <div class="wf-next-action"><strong>Next action:</strong> Open Procurement because one line has a purchase need ready for PO.</div>
+    <div class="wf-panel"><h4>Lines</h4><table class="wf-table"><tr><th>Line item</th><th>SKU/title</th><th>Customer quantity</th><th>Available stock</th><th>Shortage</th><th>Decision</th><th>Linked need / PO / receipt / shipment</th><th>Open line</th></tr><tr><td>Line 1</td><td>WAX Ski Wax</td><td>3</td><td>0</td><td>3</td><td>Needs procurement</td><td>Need-104</td><td>Open line</td></tr></table></div>
+    <div class="wf-panel"><h4>Related work</h4><div class="wf-grid-4"><div class="wf-field"><label>Purchase needs</label><div>Need-104</div></div><div class="wf-field"><label>Purchase orders</label><div>PO-1007</div></div><div class="wf-field"><label>Receipts</label><div>GR-1007</div></div><div class="wf-field"><label>Shipments</label><div>Not created</div></div></div></div>
+  </div>
+</div>
+</section>
+
+<section class="card">
+<h2>Order Line Detail</h2>
+<div class="wf-page">
+  <div class="wf-header"><div><div class="wf-title">Order Line Detail</div><div class="wf-route">Route: /app/order-lines/:lineId</div></div><div class="wf-toolbar"><span class="btn">Back to Order</span><span class="btn">Open Product</span><span class="btn primary">Open Procurement or Logistics</span></div></div>
+  <div class="wf-body">
+    <div class="wf-grid-3"><div class="wf-panel"><h4>Line summary</h4><div class="wf-field"><label>Ordered</label><div>3 × WAX Ski Wax</div></div><div class="wf-field"><label>Customer</label><div>Jörn Voigt</div></div></div><div class="wf-panel"><h4>Decision explanation</h4><div class="wf-field"><label>Decision</label><div>Needs procurement</div></div><div class="wf-field"><label>Reason</label><div>Available stock is 0, shortage is 3.</div></div><div class="wf-field"><label>Target page</label><div>Procurement</div></div></div><div class="wf-blocker"><strong>Blocking data:</strong> Supplier missing or address missing appears here with exact owner page.</div></div>
+    <div class="wf-grid-4"><div class="wf-panel"><h4>Inventory availability</h4><div class="wf-field"><label>On hand / reserved / available</label><div>0 / 0 / 0</div></div></div><div class="wf-panel"><h4>Procurement context</h4><div class="wf-field"><label>Need / PO</label><div>Need-104 / PO-1007</div></div></div><div class="wf-panel"><h4>Receiving context</h4><div class="wf-field"><label>Receipt / QC</label><div>GR-1007 / pending</div></div></div><div class="wf-panel"><h4>Logistics context</h4><div class="wf-field"><label>Shipment</label><div>Not ready</div></div></div></div>
+    <div class="wf-next-action"><strong>Next action:</strong> Open Procurement to create or open the Purchase Order.</div>
+  </div>
+</div>
+</section>
+
+<section class="card">
+<h2>Procurement Work Queue and Purchase Need Handling</h2>
+<div class="wf-page">
+  <div class="wf-header"><div><div class="wf-title">Procurement</div><div class="wf-route">Route: /app/procurement</div></div><div class="wf-toolbar"><span class="btn primary">Refresh purchasing needs</span><span class="btn">Export</span><span class="btn">Saved views later</span></div></div>
+  <div class="wf-body">
+    <div class="wf-tabs"><div class="wf-tab active">Purchase Needs</div><div class="wf-tab">Purchase Orders</div><div class="wf-tab">Goods Receipts</div><div class="wf-tab">Completed</div></div>
+    <div class="filters"><div class="input">Status</div><div class="input">Supplier</div><div class="input">Product</div><div class="input">Source order</div><div class="input">Expected date</div><div class="input">Price missing</div></div>
+    <table class="wf-table"><tr><th>Reference</th><th>Status</th><th>Source order</th><th>Product</th><th>Quantity</th><th>Supplier</th><th>Unit price</th><th>Line value</th><th>Expected</th><th>Next action</th></tr><tr><td>Need-104</td><td>Ready for PO</td><td>#1004</td><td>Ski Wax</td><td>3</td><td>Test Trading Supplier</td><td>10 EUR</td><td>30 EUR</td><td>May 20</td><td>Create Purchase Order</td></tr></table>
+    <div class="wf-panel"><h4>Inline supplier assignment / create PO panel</h4><div class="wf-grid-3"><div class="wf-field"><label>Supplier select</label><div>Test Trading Supplier ▾</div></div><div class="wf-field"><label>Expected date</label><div>2026-05-20</div></div><div class="wf-field"><label>Action</label><div>Create Purchase Order</div></div></div><div class="wf-note">Purchase Need has no separate detail page in MVP.</div></div>
+  </div>
+</div>
+</section>
+
+<section class="card">
+<h2>Purchase Order Detail</h2>
+<div class="wf-page">
+  <div class="wf-header"><div><div class="wf-title">Purchase Order Detail</div><div class="wf-route">Route: /app/procurement/:purchaseOrderId</div></div><div class="wf-toolbar"><span class="btn">Back to Procurement</span><span class="btn primary">Approve</span><span class="btn">Send to supplier</span><span class="btn">Mark supplier acknowledged</span><span class="btn">Create Goods Receipt</span><span class="btn danger">Cancel PO</span></div></div>
+  <div class="wf-body">
+    <div class="wf-tabs"><div class="wf-tab active">Header</div><div class="wf-tab">Lines</div><div class="wf-tab">Receipts</div><div class="wf-tab">Events</div></div>
+    <div class="wf-summary"><div class="wf-field"><label>PO number</label><div>PO-1007</div></div><div class="wf-field"><label>Supplier</label><div>Test Trading Supplier</div></div><div class="wf-field"><label>Status</label><div>sent</div></div><div class="wf-field"><label>Expected date</label><div>May 20</div></div><div class="wf-field"><label>Total value</label><div>30 EUR</div></div><div class="wf-field"><label>Lifecycle state</label><div>Awaiting acknowledgement</div></div></div>
+    <div class="wf-panel"><h4>Lines</h4><table class="wf-table"><tr><th>Product</th><th>Quantity</th><th>Unit</th><th>Unit price</th><th>Line value</th><th>Expected date</th><th>Status</th></tr><tr><td>Ski Wax</td><td>3</td><td>pcs</td><td>10 EUR</td><td>30 EUR</td><td>May 20</td><td>ordered</td></tr></table></div>
+    <div class="wf-panel"><h4>Receipts</h4><table class="wf-table"><tr><th>Receipt</th><th>Status</th><th>Received date</th><th>QC</th><th>Putaway</th><th>Open Receipt</th></tr><tr><td>GR-1007</td><td>receiving</td><td>May 18</td><td>required</td><td>pending</td><td>Open Receipt</td></tr></table></div>
+  </div>
+</div>
+</section>
+
+<section class="card">
+<h2>Receiving Work Queue</h2>
+<div class="wf-page">
+  <div class="wf-header"><div><div class="wf-title">Receiving</div><div class="wf-route">Route: /app/receiving</div></div><div class="wf-toolbar"><span class="btn">Back to Procurement</span><span class="btn primary">Refresh</span><span class="btn">Export</span></div></div>
+  <div class="wf-body">
+    <div class="wf-tabs"><div class="wf-tab active">Expected / Awaiting receipt</div><div class="wf-tab">Received / QC required</div><div class="wf-tab">Putaway pending</div><div class="wf-tab">Completed</div></div>
+    <div class="filters"><div class="input">Receipt status</div><div class="input">Supplier</div><div class="input">PO</div><div class="input">QC status</div><div class="input">Expected/received date</div></div>
+    <table class="wf-table"><tr><th>Receipt</th><th>PO</th><th>Supplier</th><th>Products</th><th>Received quantity</th><th>QC status</th><th>Putaway status</th><th>Next action</th></tr><tr><td>GR-1007</td><td>PO-1007</td><td>Test Trading Supplier</td><td>Ski Wax</td><td>3</td><td>QC required</td><td>pending</td><td>Open Receipt</td></tr></table>
+  </div>
+</div>
+</section>
+
+<section class="card">
+<h2>Receipt Detail</h2>
+<div class="wf-page">
+  <div class="wf-header"><div><div class="wf-title">Receipt Detail</div><div class="wf-route">Route: /app/receiving/:receiptId</div></div><div class="wf-toolbar"><span class="btn">Back to Receiving</span><span class="btn">Back to Procurement</span><span class="btn">Back to Purchase Order</span><span class="btn primary">Complete QC</span><span class="btn">Put away to inventory</span></div></div>
+  <div class="wf-body">
+    <div class="wf-tabs"><div class="wf-tab active">Header</div><div class="wf-tab">Lines / QC</div><div class="wf-tab">Putaway</div><div class="wf-tab">Inventory outcome</div><div class="wf-tab">Events</div></div>
+    <div class="wf-summary"><div class="wf-field"><label>Receipt number</label><div>GR-1007</div></div><div class="wf-field"><label>PO</label><div>PO-1007</div></div><div class="wf-field"><label>Supplier</label><div>Test Trading Supplier</div></div><div class="wf-field"><label>Status</label><div>Receiving / QC</div></div><div class="wf-field"><label>Received date</label><div>May 18</div></div><div class="wf-field"><label>Next action</label><div>Complete QC</div></div></div>
+    <div class="wf-panel"><h4>Lines / QC</h4><table class="wf-table"><tr><th>Item</th><th>Received</th><th>Accepted</th><th>Rejected</th><th>QC result</th><th>Putaway status</th></tr><tr><td>Ski Wax</td><td>3</td><td>3</td><td>0</td><td>accepted</td><td>pending</td></tr></table></div>
+    <div class="wf-grid-2"><div class="wf-panel"><h4>QC form</h4><div class="wf-grid-3"><div class="wf-field"><label>Accepted quantity</label><div>3</div></div><div class="wf-field"><label>Rejected quantity</label><div>0</div></div><div class="wf-field"><label>Notes</label><div>Looks good</div></div></div><div class="btn primary">Complete QC</div></div><div class="wf-panel"><h4>Putaway form</h4><div class="wf-grid-2"><div class="wf-field"><label>Accepted quantity</label><div>3</div></div><div class="wf-field"><label>Target location</label><div>MAIN ▾</div></div></div><div class="btn">Put away to inventory</div></div></div>
+    <div class="wf-panel"><h4>Inventory outcome</h4><table class="wf-table"><tr><th>Item</th><th>Quantity</th><th>Movement</th><th>Location</th><th>Source</th></tr><tr><td>Ski Wax</td><td>+3</td><td>putaway</td><td>MAIN</td><td>GR-1007</td></tr></table></div>
+  </div>
+</div>
+</section>
+
+<section class="card">
+<h2>Inventory Item Detail</h2>
+<div class="wf-page">
+  <div class="wf-header"><div><div class="wf-title">Inventory Item Detail</div><div class="wf-route">Route: /app/inventory/:itemId</div></div><div class="wf-toolbar"><span class="btn">Back to Inventory</span><span class="btn">Open Product</span><span class="btn primary">Export ledger</span></div></div>
+  <div class="wf-body">
+    <div class="wf-tabs"><div class="wf-tab active">Stock position</div><div class="wf-tab">Ledger movements</div><div class="wf-tab">Reservations</div><div class="wf-tab">Procurement supply</div><div class="wf-tab">Events</div></div>
+    <div class="wf-panel"><h4>Stock position</h4><table class="wf-table"><tr><th>Location</th><th>On hand</th><th>Reserved</th><th>Available</th><th>QC hold</th><th>Last movement</th></tr><tr><td>MAIN</td><td>3</td><td>1</td><td>2</td><td>0</td><td>Putaway today</td></tr></table></div>
+    <div class="wf-panel"><h4>Ledger movements</h4><table class="wf-table"><tr><th>Date</th><th>Movement</th><th>Quantity delta</th><th>Reserved delta</th><th>Location</th><th>Source</th><th>Linked object</th></tr><tr><td>May 18</td><td>putaway</td><td>+3</td><td>0</td><td>MAIN</td><td>GR-1007</td><td>Open Receipt</td></tr></table></div>
+    <div class="wf-grid-2"><div class="wf-panel"><h4>Reservations</h4><table class="wf-table"><tr><th>Order</th><th>Line</th><th>Quantity</th><th>Status</th><th>Open order</th></tr><tr><td>#1004</td><td>Ski Wax</td><td>1</td><td>reserved</td><td>Open order</td></tr></table></div><div class="wf-panel"><h4>Incoming supply</h4><table class="wf-table"><tr><th>PO</th><th>Supplier</th><th>Quantity</th><th>Expected</th><th>Receipt status</th><th>Open PO</th></tr><tr><td>PO-1008</td><td>Test Supplier</td><td>5</td><td>May 24</td><td>awaiting receipt</td><td>Open PO</td></tr></table></div></div>
+  </div>
+</div>
+</section>
+
+<section class="card">
+<h2>Logistics Work Queue and Shipment Detail</h2>
+<div class="wf-page">
+  <div class="wf-header"><div><div class="wf-title">Logistics Work Queue</div><div class="wf-route">Route: /app/logistics</div></div><div class="wf-toolbar"><span class="btn primary">Create shipment</span><span class="btn">Backfill test address (development only)</span><span class="btn">Export</span></div></div>
+  <div class="wf-body">
+    <div class="wf-tabs"><div class="wf-tab active">Ready</div><div class="wf-tab">Blocked</div><div class="wf-tab">Shipments</div><div class="wf-tab">Completed</div></div>
+    <table class="wf-table"><tr><th>Order</th><th>Customer</th><th>Products / quantities</th><th>Address status</th><th>Inventory status</th><th>Shipment status</th><th>Next action</th></tr><tr><td>#1004</td><td>Jörn Voigt</td><td>1 × Ski Wax</td><td>present</td><td>ready</td><td>not created</td><td>Create shipment</td></tr><tr><td>#1005</td><td>No customer</td><td>1 × Snowboard</td><td>missing</td><td>ready</td><td>blocked</td><td>Backfill test address</td></tr></table>
+  </div>
+</div>
+<div class="wf-page">
+  <div class="wf-header"><div><div class="wf-title">Shipment Detail</div><div class="wf-route">Target route: /app/logistics/:shipmentId</div></div><div class="wf-toolbar"><span class="btn">Back to Logistics</span><span class="btn primary">Mark packed</span><span class="btn">Mark shipped</span><span class="btn danger">Cancel shipment</span></div></div>
+  <div class="wf-body">
+    <div class="wf-tabs"><div class="wf-tab active">Header</div><div class="wf-tab">Lines</div><div class="wf-tab">Address</div><div class="wf-tab">Events</div></div>
+    <div class="wf-summary"><div class="wf-field"><label>Shipment number</label><div>SHIP-1004</div></div><div class="wf-field"><label>Order</label><div>#1004</div></div><div class="wf-field"><label>Customer</label><div>Jörn Voigt</div></div><div class="wf-field"><label>Status</label><div>created</div></div><div class="wf-field"><label>Created date</label><div>May 18</div></div></div>
+    <div class="wf-grid-2"><div class="wf-panel"><h4>Lines</h4><table class="wf-table"><tr><th>Product</th><th>Quantity</th><th>Picked</th><th>Packed</th><th>Shipped</th></tr><tr><td>Ski Wax</td><td>1</td><td>yes</td><td>no</td><td>no</td></tr></table></div><div class="wf-panel"><h4>Address</h4><table class="wf-table"><tr><th>Name</th><th>Street</th><th>City</th><th>Country</th><th>Postal code</th><th>Complete?</th></tr><tr><td>Jörn Voigt</td><td>123 Test St</td><td>Washington</td><td>US</td><td>20340</td><td>yes</td></tr></table></div></div>
+  </div>
+</div>
+</section>
+
+<section class="card">
+<h2>BOM / Kitting Detail</h2>
+<div class="wf-page">
+  <div class="wf-header"><div><div class="wf-title">BOM / Kitting Detail</div><div class="wf-route">Route: /app/boms?parentItemId=:itemId</div></div><div class="wf-toolbar"><span class="btn">Back to Product</span><span class="btn">Create active BOM</span><span class="btn primary">Add component</span><span class="btn">Save component</span><span class="btn danger">Remove component</span></div></div>
+  <div class="wf-body">
+    <div class="wf-tabs"><div class="wf-tab active">BOM lines</div><div class="wf-tab">Availability</div><div class="wf-tab">Events</div><div class="wf-tab">Kitting later</div></div>
+    <div class="wf-panel"><h4>BOM lines</h4><table class="wf-table"><tr><th>Component</th><th>Type</th><th>Policy</th><th>Quantity</th><th>Unit</th><th>Available stock</th><th>Edit</th><th>Remove</th></tr><tr><td>COMP-A</td><td>component</td><td>buy</td><td>2</td><td>pcs</td><td>5</td><td>Edit</td><td>Remove</td></tr></table></div>
+    <div class="wf-panel"><h4>Add/edit component panel</h4><div class="wf-grid-4"><div class="wf-field"><label>Component select</label><div>COMP-A ▾</div></div><div class="wf-field"><label>Quantity</label><div>2</div></div><div class="wf-field"><label>Unit</label><div>pcs</div></div><div class="wf-field"><label>Actions</label><div>Save component · Cancel</div></div></div></div>
+    <div class="wf-grid-2"><div class="wf-panel"><h4>Availability</h4><table class="wf-table"><tr><th>Component</th><th>Required quantity</th><th>Available quantity</th><th>Shortage</th><th>Procurement status</th></tr><tr><td>COMP-A</td><td>2</td><td>5</td><td>0</td><td>covered</td></tr></table></div><div class="wf-panel"><h4>Kitting later</h4><div class="wf-field"><label>Build inputs</label><div>Required components, possible build quantity, build quantity, consume components, create finished item stock.</div></div></div></div>
+  </div>
+</div>
+</section>
+
+<section class="card">
+<h2>Settings</h2>
+<div class="wf-page">
+  <div class="wf-header"><div><div class="wf-title">Settings</div><div class="wf-route">Route: /app/settings</div></div><div class="wf-toolbar"><span class="btn primary">Save settings</span><span class="btn">Cancel</span><span class="btn">Seed local test data (development only)</span></div></div>
+  <div class="wf-body">
+    <div class="wf-tabs"><div class="wf-tab active">Workflow</div><div class="wf-tab">Privacy</div><div class="wf-tab">Users later</div><div class="wf-tab">Test data</div></div>
+    <div class="wf-panel"><h4>Workflow form</h4><div class="wf-grid-3"><div class="wf-check">PO approval required</div><div class="wf-check">Supplier acknowledgement required</div><div class="wf-check">Receiving required before inventory</div><div class="wf-field"><label>QC policy</label><div>by product ▾</div></div><div class="wf-field"><label>Putaway mode</label><div>manual ▾</div></div><div class="wf-field"><label>Shipping address strictness</label><div>strict ▾</div></div><div class="wf-check">Shipment packing required</div><div class="wf-check">Payment/payables visibility</div><div class="wf-check">Kitting build approval later</div></div></div>
+    <div class="wf-panel"><h4>Test data</h4><div class="wf-grid-4"><div class="wf-field"><label>Action</label><div>Seed suppliers</div></div><div class="wf-field"><label>Action</label><div>Seed component products</div></div><div class="wf-field"><label>Action</label><div>Backfill test addresses</div></div><div class="wf-field"><label>Later</label><div>Reset local test scenario</div></div></div></div>
+  </div>
+</div>
+</section>
+</main>
+</div>
+</body></html>

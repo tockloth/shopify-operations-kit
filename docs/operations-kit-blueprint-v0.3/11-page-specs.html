@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>11 Page Specs</title>
+<link rel="stylesheet" href="assets/blueprint.css">
+</head>
+<body>
+<header><h1>11 Page Specs</h1><p>Implementation contracts for every Operations Kit page</p></header>
+<div class="layout">
+<nav><a class="" href="index.html">Start</a>
+<a class="" href="01-product-vision.html">01 Produktvision</a>
+<a class="" href="02-process-map.html">02 Prozesslandkarte</a>
+<a class="" href="03-entities.html">03 Entitäten & Attribute</a>
+<a class="" href="04-status-models.html">04 Statusmodelle</a>
+<a class="" href="05-ui-pages.html">05 Page Ownership</a>
+<a class="" href="06-test-scenarios.html">06 Test-Szenarien</a>
+<a class="" href="07-roadmap.html">07 Roadmap</a>
+<a class="" href="08-codex-working-mode.html">08 Codex-Arbeitsmodus</a>
+<a class="" href="09-ui-wireframes.html">09 UI Wireframes</a>
+<a class="" href="10-ui-patterns.html">10 UI Patterns</a>
+<a class="active" href="11-page-specs.html">11 Page Specs</a>
+<a class="" href="12-implementation-backlog.html">12 Implementierungs-Backlog</a>
+<a class="" href="13-configuration.html">13 optionale Prozessschritte</a>
+<a class="" href="14-data-quality.html">14 Datenqualität & Sync</a>
+<a class="" href="15-detail-ui-wireframes.html">15 Detail UI Wireframes</a>
+<a class="" href="16-blueprint-compliance-tests.html">16 Blueprint Compliance Tests</a></nav>
+<main>
+<section class="card">
+<h2>Page Spec Contract Format</h2>
+<p>Each page spec is an implementation contract. A future implementation prompt must reference the exact page name and the relevant detail wireframe section from page 15.</p>
+<table>
+<tr><th>Required fields</th><td>Route, Page type, Purpose, Toolbar buttons, Tabs, Primary table columns, Filter columns, Detail sections, Forms, Allowed actions, Forbidden actions, Empty states, Blocked states, Navigation targets, Required data, Required status logic, Tests/checks, Open questions.</td></tr>
+</table>
+</section>
+
+<section class="card"><h2>Products</h2>
+<table>
+<tr><th>Route</th><td>/app/items</td></tr>
+<tr><th>Page type</th><td>Master Data Work Queue</td></tr>
+<tr><th>Purpose</th><td>List Shopify-backed products and Operations items with operational role, shop visibility and master-data blockers.</td></tr>
+<tr><th>Toolbar buttons</th><td>Sync Shopify products, New product, Export, Saved views later.</td></tr>
+<tr><th>Tabs/views</th><td>All products, Products on shop, Needs supplier, Producible missing BOM, Operations items, Stale/Not on shop.</td></tr>
+<tr><th>Primary table columns</th><td>Product, SKU/title, Shopify status, Type, Roles, Supplier, Stock, BOM, Data quality, Next action.</td></tr>
+<tr><th>Filter columns</th><td>text SKU/title, Shopify status, item type, sellable, purchasable, producible, supplier, BOM missing, on shop, stale, stock min/max.</td></tr>
+<tr><th>Allowed actions</th><td>Open product, Sync Shopify products, New Operations item, Export.</td></tr>
+<tr><th>Forbidden actions</th><td>Run MRP, create PO, receive goods, put away, create shipment.</td></tr>
+<tr><th>Empty states</th><td>No products: Sync Shopify products or create Operations item.</td></tr>
+<tr><th>Blocked states</th><td>Missing supplier, missing BOM, draft/archived/stale Shopify product.</td></tr>
+<tr><th>Navigation targets</th><td>Product Detail, Suppliers, BOM / Kitting.</td></tr>
+<tr><th>Required data</th><td>items, supplier_items, suppliers, boms, inventory summary, Shopify product sync status.</td></tr>
+<tr><th>Required status logic</th><td>Products on shop requires active Shopify status and not stale/not archived. Operational role remains separate from shop visibility.</td></tr>
+<tr><th>Tests/checks</th><td>Products on shop excludes DRAFT/ARCHIVED/stale; missing supplier/BOM filters work; no operational execution buttons.</td></tr>
+<tr><th>Open questions</th><td>Publication/channel visibility if Shopify API signal is available.</td></tr>
+</table></section>
+
+<section class="card"><h2>Product Detail</h2>
+<table>
+<tr><th>Route</th><td>/app/items/:itemId</td></tr>
+<tr><th>Page type</th><td>Master Data Form</td></tr>
+<tr><th>Purpose</th><td>Maintain operational master data for one item.</td></tr>
+<tr><th>Toolbar buttons</th><td>Back to Products, Save, Cancel.</td></tr>
+<tr><th>Tabs</th><td>Master data, BOM summary, Shopify sync, Events later.</td></tr>
+<tr><th>Detail sections</th><td>Product master data summary, Operational classification, Purchasing settings, QC, BOM read-only summary, Shopify status/sync state.</td></tr>
+<tr><th>Forms</th><td>Classification, purchasing settings, QC policy. One visible Save for the product-level form.</td></tr>
+<tr><th>Allowed actions</th><td>Save master data, Cancel, Open BOM editor, Back to Products.</td></tr>
+<tr><th>Forbidden actions</th><td>Run MRP, create purchase need/PO, receive, QC, putaway, shipment creation, Shopify writeback.</td></tr>
+<tr><th>Blocked states</th><td>Purchasable without supplier, producible without BOM, active BOM with no components, Shopify not on shop.</td></tr>
+<tr><th>Required data</th><td>item, supplier_items, suppliers, active BOM, BOM lines, Shopify status, inventory summary.</td></tr>
+<tr><th>Required status logic</th><td>Planning policy derived from purchasable/producible/sellable flags unless explicit policy exists.</td></tr>
+<tr><th>Tests/checks</th><td>Save all editable fields; BOM table read-only; usage section does not dominate; no operational actions.</td></tr>
+<tr><th>Open questions</th><td>Whether customer-specific product restrictions are needed later.</td></tr>
+</table></section>
+
+<section class="card"><h2>Suppliers</h2>
+<table>
+<tr><th>Route</th><td>/app/suppliers</td></tr>
+<tr><th>Page type</th><td>Master Data Work Queue</td></tr>
+<tr><th>Purpose</th><td>List supplier master data and purchasing readiness.</td></tr>
+<tr><th>Toolbar buttons</th><td>New supplier, Export, Saved views later.</td></tr>
+<tr><th>Primary table columns</th><td>Supplier, email, status, supplied products, preferred products, open POs, next action.</td></tr>
+<tr><th>Filter columns</th><td>supplier text, active yes/no, preferred yes/no, product relation, open PO count, missing email.</td></tr>
+<tr><th>Allowed actions</th><td>Open supplier, New supplier.</td></tr>
+<tr><th>Forbidden actions</th><td>Create purchase need from supplier list, receive goods, QC.</td></tr>
+<tr><th>Empty states</th><td>No suppliers: Create supplier before assigning purchasing settings.</td></tr>
+<tr><th>Navigation targets</th><td>Supplier Detail, Product Detail, Procurement.</td></tr>
+<tr><th>Tests/checks</th><td>Supplier links open detail; inactive suppliers are visually clear.</td></tr>
+<tr><th>Open questions</th><td>Supplier contact/person model later.</td></tr>
+</table></section>
+
+<section class="card"><h2>Supplier Detail</h2>
+<table>
+<tr><th>Route</th><td>/app/suppliers/:supplierId</td></tr>
+<tr><th>Page type</th><td>Master Data Detail</td></tr>
+<tr><th>Purpose</th><td>Maintain supplier header and supplied product terms.</td></tr>
+<tr><th>Toolbar buttons</th><td>Back to Suppliers, Save, Cancel, Deactivate supplier.</td></tr>
+<tr><th>Tabs</th><td>Header, Supplied products, Purchase Orders, Events.</td></tr>
+<tr><th>Forms</th><td>supplier name, email, status, default currency, notes, active flag.</td></tr>
+<tr><th>Primary table columns</th><td>Supplied products: product, supplier SKU, preferred, price, MOQ, lead time, active, Open product.</td></tr>
+<tr><th>Filter columns</th><td>product, preferred, active, missing supplier SKU, missing price, lead time range.</td></tr>
+<tr><th>Allowed actions</th><td>Save supplier, Deactivate supplier, Open product, Open Purchase Order.</td></tr>
+<tr><th>Forbidden actions</th><td>Receive goods, Complete QC, Put away, Create shipment.</td></tr>
+<tr><th>Blocked states</th><td>Inactive supplier, no supplied products, missing terms.</td></tr>
+<tr><th>Tests/checks</th><td>Supplier saves header; supplied products table links to Product Detail.</td></tr>
+<tr><th>Open questions</th><td>Multiple supplier contacts later.</td></tr>
+</table></section>
+
+<section class="card"><h2>Customers</h2>
+<table>
+<tr><th>Route</th><td>/app/customers</td></tr>
+<tr><th>Page type</th><td>Reference Work Queue</td></tr>
+<tr><th>Purpose</th><td>List synced Shopify customers and privacy/address readiness context.</td></tr>
+<tr><th>Toolbar buttons</th><td>Sync Shopify customers, Export, Saved views later.</td></tr>
+<tr><th>Primary table columns</th><td>Customer, email, Shopify id, orders, amount spent, address readiness, privacy status, Open customer.</td></tr>
+<tr><th>Filter columns</th><td>customer text, email text, privacy status, address present yes/no, order count min/max.</td></tr>
+<tr><th>Allowed actions</th><td>Open customer, Sync Shopify customers, Redact if permitted.</td></tr>
+<tr><th>Forbidden actions</th><td>Edit customer identity in MVP, modify orders, create shipment from list.</td></tr>
+<tr><th>Empty states</th><td>No customers: Sync Shopify orders/customers.</td></tr>
+<tr><th>Blocked states</th><td>Redacted customer, missing order shipping address.</td></tr>
+<tr><th>Tests/checks</th><td>Customer list links to Customer Detail; no raw encrypted values.</td></tr>
+<tr><th>Open questions</th><td>Dedicated customer editor is out of MVP.</td></tr>
+</table></section>
+
+<section class="card"><h2>Customer Detail</h2>
+<table>
+<tr><th>Route</th><td>/app/customers/:customerId</td></tr>
+<tr><th>Page type</th><td>Read-only Reference Detail</td></tr>
+<tr><th>Purpose</th><td>Inspect customer, addresses/order shipping readiness, related orders and privacy state.</td></tr>
+<tr><th>Toolbar buttons</th><td>Back to Customers, Sync Shopify customers, Redact customer data, Add test address development only.</td></tr>
+<tr><th>Tabs</th><td>Header, Addresses, Orders, Privacy / Events.</td></tr>
+<tr><th>Detail sections</th><td>Customer summary, Address/shipping readiness, Related orders, Privacy.</td></tr>
+<tr><th>Primary table columns</th><td>Orders: order, date, products, fulfillment, operations status, shipping address present, Open order.</td></tr>
+<tr><th>Allowed actions</th><td>Open order, Redact, development-only test address/backfill if configured.</td></tr>
+<tr><th>Forbidden actions</th><td>Full customer editing, Shopify writeback, shipment creation.</td></tr>
+<tr><th>Blocked states</th><td>No address stored, order shipping address missing, protected customer data unavailable.</td></tr>
+<tr><th>Required data</th><td>operation_customers, operations_orders linked by Shopify id/customer lookup hash/email where safe.</td></tr>
+<tr><th>Tests/checks</th><td>Detail opens; related orders link; address blocker visible; privacy redaction respected.</td></tr>
+<tr><th>Open questions</th><td>Historic redacted record linkage may be unavailable.</td></tr>
+</table></section>
+
+<section class="card"><h2>Orders</h2>
+<table>
+<tr><th>Route</th><td>/app/orders</td></tr>
+<tr><th>Page type</th><td>Demand Work Queue</td></tr>
+<tr><th>Purpose</th><td>Show Shopify orders, ordered products/quantities, operational status and next action.</td></tr>
+<tr><th>Toolbar buttons</th><td>Create manual order if implemented, Sync Shopify orders, Refresh planning, Create logistics work, Consolidate if implemented.</td></tr>
+<tr><th>Primary table columns</th><td>Order, customer, payment, fulfillment, products/quantities, line count, operational status, blocker/next reason, next action.</td></tr>
+<tr><th>Filter columns</th><td>order text, customer, product, payment status, fulfillment status, operational status, address missing, date range.</td></tr>
+<tr><th>Allowed actions</th><td>Open order, Sync Shopify orders, Refresh planning, Open Procurement, Open Logistics.</td></tr>
+<tr><th>Forbidden actions</th><td>Create PO directly, Complete QC, Put away, Shopify fulfillment writeback.</td></tr>
+<tr><th>Empty states</th><td>Sync Shopify orders to create operational demand.</td></tr>
+<tr><th>Blocked states</th><td>Review master data, missing supplier, missing BOM, missing customer/shipping address, insufficient stock.</td></tr>
+<tr><th>Required status logic</th><td>Precise derived order status from order lines, purchase needs, POs, receipts, inventory, shipping and address readiness.</td></tr>
+<tr><th>Tests/checks</th><td>Product/quantity visible; status transitions from Needs planning through logistics; blocked reason explicit.</td></tr>
+<tr><th>Open questions</th><td>Manual order creation scope.</td></tr>
+</table></section>
+
+<section class="card"><h2>Order Detail</h2>
+<table>
+<tr><th>Route</th><td>/app/orders/:orderId</td></tr>
+<tr><th>Page type</th><td>Demand Detail</td></tr>
+<tr><th>Purpose</th><td>Explain order demand, line decisions, related work and next action.</td></tr>
+<tr><th>Toolbar buttons</th><td>Back to Orders, Open in Shopify, Refresh planning.</td></tr>
+<tr><th>Tabs</th><td>Summary, Lines, Related work, Events.</td></tr>
+<tr><th>Detail sections</th><td>Order summary, Customer/shipping, Operational status, Lines, Procurement, Receiving, Logistics, Events.</td></tr>
+<tr><th>Primary table columns</th><td>Lines: line item, SKU/title, quantity, available stock, shortage, decision, linked need/PO/receipt/shipment, Open line.</td></tr>
+<tr><th>Allowed actions</th><td>Open line, Open Product, Open Procurement, Open Receipt, Open Logistics.</td></tr>
+<tr><th>Forbidden actions</th><td>Execute PO lifecycle, QC, putaway, shipment packing.</td></tr>
+<tr><th>Tests/checks</th><td>Customer/shipping section shows readiness; related work links; derived status matches line/work state.</td></tr>
+<tr><th>Open questions</th><td>Whether events timeline is MVP or later.</td></tr>
+</table></section>
+
+<section class="card"><h2>Order Line Detail</h2>
+<table>
+<tr><th>Route</th><td>/app/order-lines/:lineId</td></tr>
+<tr><th>Page type</th><td>Decision Explanation Detail</td></tr>
+<tr><th>Purpose</th><td>Explain why a line is ready, needs procurement, needs production or needs review.</td></tr>
+<tr><th>Toolbar buttons</th><td>Back to Order, Open Product, Open Procurement or Logistics depending status.</td></tr>
+<tr><th>Detail sections</th><td>Line summary, Decision explanation, Inventory availability, Procurement context, Receiving context, Logistics context, Next action.</td></tr>
+<tr><th>Allowed actions</th><td>Open related records only.</td></tr>
+<tr><th>Forbidden actions</th><td>Create PO, Complete QC, Put away, Create shipment.</td></tr>
+<tr><th>Tests/checks</th><td>Decision reason and shortage visible; links route correctly.</td></tr>
+<tr><th>Open questions</th><td>Future production line context.</td></tr>
+</table></section>
+
+<section class="card"><h2>Procurement</h2>
+<table>
+<tr><th>Route</th><td>/app/procurement</td></tr>
+<tr><th>Page type</th><td>Procurement Work Queue</td></tr>
+<tr><th>Purpose</th><td>Manage purchase needs and purchase orders through supplier acknowledgement and receipt readiness.</td></tr>
+<tr><th>Toolbar buttons</th><td>Refresh purchasing needs, Export, Saved views later.</td></tr>
+<tr><th>Tabs</th><td>Purchase Needs, Purchase Orders, Goods Receipts, Completed.</td></tr>
+<tr><th>Primary table columns</th><td>Reference, status, source order, product, quantity, supplier, unit price, line value, expected date, next action.</td></tr>
+<tr><th>Filter columns</th><td>status, supplier, product, source order, quantity min/max, price missing, expected date, overdue.</td></tr>
+<tr><th>Allowed actions</th><td>Assign supplier, Create Purchase Order, Open Purchase Order, Open Receipt.</td></tr>
+<tr><th>Forbidden actions</th><td>Complete QC, Put away, Create shipment, inventory adjustment.</td></tr>
+<tr><th>Empty states</th><td>No purchase needs: Sync orders and refresh planning.</td></tr>
+<tr><th>Blocked states</th><td>No supplier, missing price, PO already exists, receipt pending.</td></tr>
+<tr><th>Required status logic</th><td>Need supplier, Ready for PO, PO created, Sent, Acknowledged, Awaiting receipt, Receiving/QC, Putaway pending, Received/put away.</td></tr>
+<tr><th>Tests/checks</th><td>Planning idempotent; quantity follows shortage; no duplicate Open PO links; values visible.</td></tr>
+<tr><th>Open questions</th><td>Whether purchase need gets separate detail later.</td></tr>
+</table></section>
+
+<section class="card"><h2>Purchase Need Handling</h2>
+<table>
+<tr><th>Route</th><td>MVP: /app/procurement, Purchase Needs tab. Optional future: /app/procurement/needs/:needId.</td></tr>
+<tr><th>Page type</th><td>Inline Need Detail / compact editor</td></tr>
+<tr><th>Purpose</th><td>Assign supplier and convert shortage into a Purchase Order.</td></tr>
+<tr><th>Toolbar buttons</th><td>Assign supplier, Create Purchase Order, Cancel need where supported.</td></tr>
+<tr><th>Forms</th><td>supplier, supplier item, expected date, note if supported.</td></tr>
+<tr><th>Allowed actions</th><td>Assign supplier, Create Purchase Order, Open source order line, Open product.</td></tr>
+<tr><th>Forbidden actions</th><td>Receive goods, QC, putaway, shipment.</td></tr>
+<tr><th>Required data</th><td>purchase_needs, source order line, item, supplier_items, suppliers.</td></tr>
+<tr><th>Tests/checks</th><td>No supplier blocks Create PO; Create PO creates line quantity equal to need quantity.</td></tr>
+<tr><th>Open questions</th><td>Separate need detail not MVP unless complexity grows.</td></tr>
+</table></section>
+
+<section class="card"><h2>Purchase Order Detail</h2>
+<table>
+<tr><th>Route</th><td>/app/procurement/:purchaseOrderId</td></tr>
+<tr><th>Page type</th><td>Process Detail</td></tr>
+<tr><th>Purpose</th><td>Own PO lifecycle from draft/approval through supplier acknowledgement and goods receipt creation.</td></tr>
+<tr><th>Toolbar buttons</th><td>Back to Procurement, Approve, Send to supplier, Mark supplier acknowledged, Create Goods Receipt, Cancel PO.</td></tr>
+<tr><th>Tabs</th><td>Header, Lines, Receipts, Events.</td></tr>
+<tr><th>Primary table columns</th><td>Lines: product, quantity, unit, unit price, line value, expected date, status. Receipts: receipt, status, received date, QC, putaway, Open Receipt.</td></tr>
+<tr><th>Allowed actions</th><td>Approve, Send to supplier, Mark supplier acknowledged, Create Goods Receipt, Open Receipt.</td></tr>
+<tr><th>Forbidden actions</th><td>Complete QC, Put away, Create shipment.</td></tr>
+<tr><th>Required status logic</th><td>Button availability follows workflow switches and PO status.</td></tr>
+<tr><th>Tests/checks</th><td>Unit price/line value displayed; lifecycle transitions; Create Goods Receipt idempotent where required.</td></tr>
+<tr><th>Open questions</th><td>Supplier document/email integration later.</td></tr>
+</table></section>
+
+<section class="card"><h2>Receiving</h2>
+<table>
+<tr><th>Route</th><td>/app/receiving</td></tr>
+<tr><th>Page type</th><td>Receiving Work Queue</td></tr>
+<tr><th>Purpose</th><td>Show expected, received, QC-required and putaway-pending goods receipts.</td></tr>
+<tr><th>Toolbar buttons</th><td>Back to Procurement, Refresh, Export.</td></tr>
+<tr><th>Tabs</th><td>Expected / Awaiting receipt, Received / QC required, Putaway pending, Completed.</td></tr>
+<tr><th>Primary table columns</th><td>Receipt, PO, supplier, products, received quantity, QC status, putaway status, next action.</td></tr>
+<tr><th>Filter columns</th><td>receipt status, PO, supplier, product, QC required, putaway status, received date.</td></tr>
+<tr><th>Allowed actions</th><td>Open Receipt, Open Purchase Order.</td></tr>
+<tr><th>Forbidden actions</th><td>Inline QC/putaway if it hides context or bypasses Receipt Detail.</td></tr>
+<tr><th>Tests/checks</th><td>Receipt appears under correct tab; next action opens Receipt Detail.</td></tr>
+<tr><th>Open questions</th><td>Whether barcode/mobile receiving appears later.</td></tr>
+</table></section>
+
+<section class="card"><h2>Receipt Detail</h2>
+<table>
+<tr><th>Route</th><td>/app/receiving/:receiptId</td></tr>
+<tr><th>Page type</th><td>Process Detail</td></tr>
+<tr><th>Purpose</th><td>Own QC and Putaway / Einlagerung for accepted goods.</td></tr>
+<tr><th>Toolbar buttons</th><td>Back to Receiving, Back to Procurement, Back to Purchase Order, Complete QC, Put away to inventory.</td></tr>
+<tr><th>Tabs</th><td>Header, Lines / QC, Putaway, Inventory outcome, Events.</td></tr>
+<tr><th>Forms</th><td>QC accepted quantity, rejected quantity, notes; Putaway accepted quantity, target location.</td></tr>
+<tr><th>Allowed actions</th><td>Complete QC, Put away to inventory, Open PO, Open inventory item.</td></tr>
+<tr><th>Forbidden actions</th><td>Create PO, send PO, create shipment.</td></tr>
+<tr><th>Blocked states</th><td>QC required before putaway, accepted quantity zero, already put away.</td></tr>
+<tr><th>Tests/checks</th><td>Putaway books inventory once; rejected quantity not available; label explains inventory booking.</td></tr>
+<tr><th>Open questions</th><td>Rejected goods disposition later.</td></tr>
+</table></section>
+
+<section class="card"><h2>Inventory</h2>
+<table>
+<tr><th>Route</th><td>/app/inventory</td></tr>
+<tr><th>Page type</th><td>Ledger Work Queue / Stock Visibility</td></tr>
+<tr><th>Purpose</th><td>Show stock position and movement visibility without bypassing process ownership.</td></tr>
+<tr><th>Toolbar buttons</th><td>Export, Adjustment later if explicitly implemented.</td></tr>
+<tr><th>Tabs</th><td>Stock Summary, Ledger, Reservations, Adjustments later.</td></tr>
+<tr><th>Primary table columns</th><td>Item, location, on hand, reserved, available, QC hold, last movement, Open item.</td></tr>
+<tr><th>Filter columns</th><td>item, location, stock status, movement type, date, source, available min/max.</td></tr>
+<tr><th>Allowed actions</th><td>Open inventory item, Open Product, Export ledger.</td></tr>
+<tr><th>Forbidden actions</th><td>Create PO, receive goods, put away except from Receipt Detail, create shipment.</td></tr>
+<tr><th>Tests/checks</th><td>Stock reflects movements; filters work; no process execution from inventory list.</td></tr>
+<tr><th>Open questions</th><td>Manual adjustments with approval later.</td></tr>
+</table></section>
+
+<section class="card"><h2>Inventory Item Detail</h2>
+<table>
+<tr><th>Route</th><td>/app/inventory/:itemId</td></tr>
+<tr><th>Page type</th><td>Ledger Detail</td></tr>
+<tr><th>Purpose</th><td>Explain stock position, movements, reservations and incoming supply for one item.</td></tr>
+<tr><th>Toolbar buttons</th><td>Back to Inventory, Open Product, Export ledger.</td></tr>
+<tr><th>Tabs</th><td>Stock position, Ledger movements, Reservations, Procurement supply, Events.</td></tr>
+<tr><th>Primary table columns</th><td>Stock by location; ledger date/type/source/location/quantity delta/reserved delta/balance; reservations order/line/quantity/status; incoming POs.</td></tr>
+<tr><th>Allowed actions</th><td>Open Product, Open Order, Open PO/Receipt, Export.</td></tr>
+<tr><th>Forbidden actions</th><td>Direct process mutations in MVP.</td></tr>
+<tr><th>Tests/checks</th><td>Movement calculations and reservations visible.</td></tr>
+<tr><th>Open questions</th><td>Adjustment process later.</td></tr>
+</table></section>
+
+<section class="card"><h2>Logistics</h2>
+<table>
+<tr><th>Route</th><td>/app/logistics</td></tr>
+<tr><th>Page type</th><td>Shipping Work Queue</td></tr>
+<tr><th>Purpose</th><td>Show orders ready or blocked for shipment and create local shipment work.</td></tr>
+<tr><th>Toolbar buttons</th><td>Create shipment, Backfill test address development only, Export.</td></tr>
+<tr><th>Tabs</th><td>Ready, Blocked, Shipments, Completed.</td></tr>
+<tr><th>Primary table columns</th><td>Order, customer, products/quantities, address status, inventory status, shipment status, next action.</td></tr>
+<tr><th>Filter columns</th><td>status, missing address, customer, order, product, shipment status, created date.</td></tr>
+<tr><th>Allowed actions</th><td>Create shipment, Open shipment, Open order, Backfill test address development only.</td></tr>
+<tr><th>Forbidden actions</th><td>Procurement, receiving, QC, putaway, Shopify fulfillment writeback.</td></tr>
+<tr><th>Blocked states</th><td>Missing customer name, missing customer email, missing shipping address, insufficient inventory.</td></tr>
+<tr><th>Tests/checks</th><td>Blocked reason explicit; Create shipment only when ready; dev backfill local only.</td></tr>
+<tr><th>Open questions</th><td>Carrier/rate integration later.</td></tr>
+</table></section>
+
+<section class="card"><h2>Shipment Detail</h2>
+<table>
+<tr><th>Route</th><td>Target MVP route: /app/logistics/:shipmentId</td></tr>
+<tr><th>Page type</th><td>Process Detail</td></tr>
+<tr><th>Purpose</th><td>Show shipment header, lines, address and lifecycle.</td></tr>
+<tr><th>Toolbar buttons</th><td>Back to Logistics, Mark packed, Mark shipped, Cancel shipment.</td></tr>
+<tr><th>Tabs</th><td>Header, Lines, Address, Events.</td></tr>
+<tr><th>Allowed actions</th><td>Mark packed, Mark shipped, Cancel shipment.</td></tr>
+<tr><th>Forbidden actions</th><td>Shopify fulfillment writeback in MVP, procurement/receiving/inventory corrections.</td></tr>
+<tr><th>Tests/checks</th><td>Shipment opens from Logistics and status transitions locally only.</td></tr>
+<tr><th>Open questions</th><td>Actual carrier labels and Shopify fulfillment later.</td></tr>
+</table></section>
+
+<section class="card"><h2>BOM / Kitting</h2>
+<table>
+<tr><th>Route</th><td>/app/boms and /app/boms?parentItemId=:itemId</td></tr>
+<tr><th>Page type</th><td>Master Data / Kit Structure</td></tr>
+<tr><th>Purpose</th><td>Maintain active BOM and component quantities for producible/kitted products.</td></tr>
+<tr><th>Toolbar buttons</th><td>Back to Product, Create active BOM, Add component, Save component, Remove component, Export later.</td></tr>
+<tr><th>Tabs</th><td>BOM lines, Availability, Events, Kitting later.</td></tr>
+<tr><th>Primary table columns</th><td>Component, type, policy, quantity, unit, available stock, Edit, Remove.</td></tr>
+<tr><th>Filter columns</th><td>parent product, component, type, purchasable, producible, stock status, missing component.</td></tr>
+<tr><th>Allowed actions</th><td>Create active BOM idempotently, add component, update quantity, remove component, open product.</td></tr>
+<tr><th>Forbidden actions</th><td>Run MRP inside contextual product BOM, create PO, execute production, putaway.</td></tr>
+<tr><th>Empty states</th><td>No active BOM: Create active BOM. No components: Add components. No available components: Create component product.</td></tr>
+<tr><th>Tests/checks</th><td>Component rows compact; update/delete work; Product Detail count updates.</td></tr>
+<tr><th>Open questions</th><td>Kit build execution later.</td></tr>
+</table></section>
+
+<section class="card"><h2>Settings</h2>
+<table>
+<tr><th>Route</th><td>/app/settings</td></tr>
+<tr><th>Page type</th><td>Configuration</td></tr>
+<tr><th>Purpose</th><td>Configure optional workflow switches, privacy behavior and local test data helpers.</td></tr>
+<tr><th>Toolbar buttons</th><td>Save settings, Cancel, Seed local test data development only.</td></tr>
+<tr><th>Tabs</th><td>Workflow, Privacy, Users later, Test data.</td></tr>
+<tr><th>Forms</th><td>PO approval required, supplier acknowledgement required, receiving required before inventory, QC policy, putaway mode, shipping address strictness, shipment packing required, payables visibility, kitting build approval later.</td></tr>
+<tr><th>Allowed actions</th><td>Save settings, local-only seed/backfill actions, manage users later.</td></tr>
+<tr><th>Forbidden actions</th><td>Any Shopify writeback or process mutation hidden as configuration.</td></tr>
+<tr><th>Tests/checks</th><td>Switches affect button availability/status flow; local test actions hidden in production.</td></tr>
+<tr><th>Open questions</th><td>Role permissions granularity later.</td></tr>
+</table></section>
+</main>
+</div>
+</body></html>

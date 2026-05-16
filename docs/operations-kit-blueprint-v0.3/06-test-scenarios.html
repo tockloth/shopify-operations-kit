@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>06 Test-Szenarien</title>
+<link rel="stylesheet" href="assets/blueprint.css">
+</head>
+<body>
+<header><h1>06 Test-Szenarien</h1><p>Browsernahe End-to-End-Akzeptanztests</p></header>
+<div class="layout">
+<nav><a class="" href="index.html">Start</a>
+<a class="" href="01-product-vision.html">01 Produktvision</a>
+<a class="" href="02-process-map.html">02 Prozesslandkarte</a>
+<a class="" href="03-entities.html">03 Entitäten & Attribute</a>
+<a class="" href="04-status-models.html">04 Statusmodelle</a>
+<a class="" href="05-ui-pages.html">05 Page Ownership</a>
+<a class="active" href="06-test-scenarios.html">06 Test-Szenarien</a>
+<a class="" href="07-roadmap.html">07 Roadmap</a>
+<a class="" href="08-codex-working-mode.html">08 Codex-Arbeitsmodus</a>
+<a class="" href="09-ui-wireframes.html">09 UI Wireframes</a>
+<a class="" href="10-ui-patterns.html">10 UI Patterns</a>
+<a class="" href="11-page-specs.html">11 Page Specs</a>
+<a class="" href="12-implementation-backlog.html">12 Implementierungs-Backlog</a>
+<a class="" href="13-configuration.html">13 optionale Prozessschritte</a>
+<a class="" href="14-data-quality.html">14 Datenqualität & Sync</a>
+<a class="" href="15-detail-ui-wireframes.html">15 Detail UI Wireframes</a>
+<a class="" href="16-blueprint-compliance-tests.html">16 Blueprint Compliance Tests</a></nav>
+<main>
+<section class="card"><h2>Test-Szenarien</h2><p>Jeder Codex-Lauf muss auf mindestens ein Szenario einzahlen.</p></section>
+<section class="card">
+<h3>Scenario A: Handelsware Quantity 1</h3>
+<ol>
+<li>Shopify Order für sichtbares Produkt, Menge 1.</li>
+<li>Operations Kit: Sync Orders.</li>
+<li>Orders zeigt <code>1 × SKU Title</code>, Status <em>Needs planning</em> oder <em>Purchase proposal ready</em>.</li>
+<li>Procurement erzeugt Need automatisch/idempotent.</li>
+<li>Purchase Need Menge = 1.</li>
+<li>PO erstellen, PO Line Menge = 1.</li>
+<li>Approve/Send/Acknowledge.</li>
+<li>Goods Receipt erstellen.</li>
+<li>QC accepted=1 rejected=0.</li>
+<li>Putaway to inventory.</li>
+<li>Inventory zeigt Bewegung und Bestand.</li>
+<li>Logistics erzeugt Shipment wenn Adresse vorhanden.</li>
+</ol>
+</section>
+<section class="card">
+<h3>Scenario B: Handelsware Quantity 3</h3>
+<p>Wie A, aber Menge 3. Erwartung: Purchase Need = 3, PO Line = 3, Receipt accepted = 3, Putaway = 3.</p>
+</section>
+<section class="card">
+<h3>Scenario C: QC Rejected</h3>
+<ol>
+<li>Goods Receipt Menge 3.</li>
+<li>QC accepted=2 rejected=1.</li>
+<li>Accepted geht in Putaway, rejected in Quarantine.</li>
+<li>Order bleibt teilweise offen/blockiert, bis Ersatz oder manuelle Entscheidung.</li>
+</ol>
+</section>
+<section class="card">
+<h3>Scenario D: Logistics blocked wegen Adresse</h3>
+<ol>
+<li>Order vollständig eingelagert.</li>
+<li>Adresse fehlt.</li>
+<li>Orders Status: Logistics blocked.</li>
+<li>Logistics zeigt konkrete Gründe: Name/E-Mail/Shipping address fehlt.</li>
+<li>Dev Backfill Test Address.</li>
+<li>Status: Ready for logistics.</li>
+<li>Create shipment.</li>
+</ol>
+</section>
+<section class="card">
+<h3>Scenario E: Kit Product später</h3>
+<ol>
+<li>Kit hat BOM mit 2 Komponenten.</li>
+<li>Order Quantity 2 Kits.</li>
+<li>Komponentenbedarf = BOM × 2.</li>
+<li>Fehlende Komponenten erzeugen Purchase Needs.</li>
+<li>Build Kit konsumiert Komponenten und erzeugt Kit-Bestand.</li>
+</ol>
+</section>
+</main>
+</div>
+</body></html>
