@@ -4,11 +4,7 @@ import { Form, useActionData, useLoaderData } from "react-router";
 import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
 import {
-  consolidateOpenOrdersByCustomer,
-  createShippingOrdersFromOpenOperationsOrders,
   loadOperationsOrdersList,
-  redactOperationsOrderCustomerData,
-  runOperationsMrp,
 } from "../lib/operations-kit.server";
 import { syncShopifyOrders } from "../lib/shopify-sync.server";
 import { authenticate } from "../shopify.server";
@@ -18,6 +14,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!context.configured) return { configured: false, setupError: context.setupError };
   const url = new URL(request.url);
   const filters = {
+    queue: url.searchParams.get("queue") ?? "all",
     query: url.searchParams.get("q")?.trim() ?? "",
     fulfillment: url.searchParams.get("fulfillment") ?? "all",
     payment: url.searchParams.get("payment") ?? "all",
@@ -43,45 +40,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const form = await request.formData();
   const intent = String(form.get("intent") || "sync");
 
-  if (intent === "consolidate") {
-    const result = await consolidateOpenOrdersByCustomer(
-      context.pool,
-      context.ctx.tenantId,
-    );
-    return {
-      message: `${result.merged} customer order group(s) consolidated for operations planning.`,
-    };
-  }
-
-  if (intent === "runOperationsMrp") {
-    const result = await runOperationsMrp(context.pool, context.ctx.tenantId);
-    return {
-      message: `Planning run created for ${result.orderLines} open order line(s). Open Procurement to review and create purchase orders for trading goods.`,
-    };
-  }
-
-  if (intent === "createLogisticsWork") {
-    const result = await createShippingOrdersFromOpenOperationsOrders(
-      context.pool,
-      context.ctx.tenantId,
-    );
-    return {
-      message: `${result.shippingOrderIds.length} logistics order(s) created from open operations orders.${
-        result.blockedOrders.length
-          ? ` ${result.blockedOrders.length} order(s) were blocked because customer name, email or shipping address is missing for shipping.`
-          : ""
-      }`,
-    };
-  }
-
-  if (intent === "redactCustomerData") {
-    await redactOperationsOrderCustomerData(
-      context.pool,
-      context.ctx.tenantId,
-      String(form.get("orderId")),
-    );
-    return { message: "Customer data redacted for this order." };
-  }
+  if (intent !== "sync") return { message: "No action was performed." };
 
   try {
     const result = await syncShopifyOrders(context.pool, context.ctx.tenantId, admin);
@@ -115,12 +74,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
-function shopifyOrderUrl(shopDomain: string, legacyId?: string | null) {
-  if (!legacyId) return null;
-  const shop = shopDomain.replace(".myshopify.com", "");
-  return `https://admin.shopify.com/store/${shop}/orders/${legacyId}`;
-}
-
 function compactProducts(value?: string | null) {
   if (!value) return "No products";
   const products = value.split(" || ").filter(Boolean);
@@ -139,7 +92,13 @@ function formatOrderDate(value?: string | null) {
 
 function filterOrders(orders: any[], filters: any) {
   const query = String(filters.query ?? "").toLowerCase();
+  const queue = ["active", "completed", "all"].includes(filters.queue)
+    ? filters.queue
+    : "all";
   return orders.filter((order) => {
+    const completed = String(order.operational_status) === "Complete";
+    if (queue === "active" && completed) return false;
+    if (queue === "completed" && !completed) return false;
     const searchable = [
       order.order_name,
       order.customer_name,
@@ -167,7 +126,24 @@ function filterOrders(orders: any[], filters: any) {
     if (filters.addressMissing === "yes" && !missingAddress) return false;
     if (filters.addressMissing === "no" && missingAddress) return false;
     return true;
+  }).sort((left, right) => {
+    if (queue === "completed") {
+      return (
+        orderSortTime(right.latest_shipped_at ?? right.updated_at ?? right.created_at) -
+        orderSortTime(left.latest_shipped_at ?? left.updated_at ?? left.created_at)
+      );
+    }
+    return (
+      orderSortTime(right.latest_shipped_at ?? right.processed_at ?? right.created_at) -
+      orderSortTime(left.latest_shipped_at ?? left.processed_at ?? left.created_at)
+    );
   });
+}
+
+function orderSortTime(value: unknown) {
+  if (!value) return 0;
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
 
 function uniqueValues(orders: any[], field: string, fallback: string) {
@@ -192,6 +168,41 @@ function shippingBlockReason(order: any) {
   return missing.length > 0 ? missing.join(", ") : null;
 }
 
+function operationsStatusContent(order: any) {
+  if (order.operational_status === "Complete") {
+    return (
+      <s-stack direction="block" gap="small">
+        <MoneylessBadge tone="success">Shipped locally</MoneylessBadge>
+        {order.shipment_numbers ? (
+          <s-text>{order.shipment_numbers}</s-text>
+        ) : null}
+      </s-stack>
+    );
+  }
+
+  return (
+    <MoneylessBadge tone={order.operational_status_tone ?? "info"}>
+      {order.operational_status ?? "Needs planning"}
+    </MoneylessBadge>
+  );
+}
+
+function shopifyFulfillmentContent(order: any) {
+  return (
+    <s-stack direction="block" gap="small">
+      <MoneylessBadge
+        tone={order.fulfillment_status === "FULFILLED" ? "success" : "warning"}
+      >
+        {order.fulfillment_status ?? "unfulfilled"}
+      </MoneylessBadge>
+      {order.operational_status === "Complete" &&
+      order.fulfillment_status !== "FULFILLED" ? (
+        <s-text>Shopify not updated</s-text>
+      ) : null}
+    </s-stack>
+  );
+}
+
 export default function Orders() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
@@ -202,6 +213,7 @@ export default function Orders() {
   const orders = data.orders ?? [];
   const filteredOrders = data.filteredOrders ?? orders;
   const filters = data.filters ?? {
+    queue: "all",
     query: "",
     fulfillment: "all",
     payment: "all",
@@ -209,6 +221,7 @@ export default function Orders() {
   };
   const hasActiveFilters =
     filters.query ||
+    filters.queue !== "all" ||
     filters.fulfillment !== "all" ||
     filters.payment !== "all" ||
     filters.addressMissing !== "all";
@@ -247,13 +260,18 @@ export default function Orders() {
           <summary>Filters</summary>
           <Form method="get">
             <div className="kit-filterbar">
+              <s-select label="Work queue" name="queue" value={filters.queue}>
+                <s-option value="all">All orders</s-option>
+                <s-option value="active">Active work</s-option>
+                <s-option value="completed">Completed</s-option>
+              </s-select>
               <s-text-field
                 label="Search order, customer or product"
                 name="q"
                 value={filters.query}
               />
-              <s-select label="Fulfillment" name="fulfillment" value={filters.fulfillment}>
-                <s-option value="all">All fulfillment statuses</s-option>
+              <s-select label="Shopify fulfillment" name="fulfillment" value={filters.fulfillment}>
+                <s-option value="all">All Shopify fulfillment statuses</s-option>
                 {fulfillmentStatuses.map((status) => (
                   <s-option key={status} value={status}>
                     {status}
@@ -290,7 +308,7 @@ export default function Orders() {
         </s-paragraph>
       </s-section>
 
-      <s-section heading="Orders work queue">
+      <s-section heading="Orders">
         {orders.length === 0 ? (
           <s-box padding="base" borderWidth="base" borderRadius="base">
             <s-paragraph>Sync Shopify orders to create operational demand.</s-paragraph>
@@ -302,8 +320,9 @@ export default function Orders() {
               "Order date",
               "Customer",
               "Products / quantities",
+              "Operations",
               "Payment",
-              "Fulfillment",
+              "Shopify fulfillment",
               "Address",
               "Next action",
             ]}
@@ -324,12 +343,11 @@ export default function Orders() {
                     </s-text>
                     <s-text>{compactProducts(order.product_summary ?? order.skus)}</s-text>
                   </s-stack>,
+                  operationsStatusContent(order),
                   <MoneylessBadge tone={order.financial_status === "PAID" ? "success" : "neutral"}>
                     {order.financial_status ?? "unknown"}
                   </MoneylessBadge>,
-                  <MoneylessBadge tone={order.fulfillment_status === "FULFILLED" ? "success" : "warning"}>
-                    {order.fulfillment_status ?? "unfulfilled"}
-                  </MoneylessBadge>,
+                  shopifyFulfillmentContent(order),
                   blockReason ? (
                     <s-stack direction="block" gap="small">
                       <MoneylessBadge tone="warning">Missing</MoneylessBadge>
@@ -338,20 +356,7 @@ export default function Orders() {
                   ) : (
                     <MoneylessBadge tone="success">Ready</MoneylessBadge>
                   ),
-                  <s-stack direction="block" gap="small">
-                    <s-link href={order.next_action_href ?? `/app/orders/${order.id}`}>
-                      {order.next_action_label ?? "Open order"}
-                    </s-link>
-                    {shopifyOrderUrl(data.shopDomain ?? "", order.shopify_order_legacy_id) ? (
-                      <a
-                        href={shopifyOrderUrl(data.shopDomain ?? "", order.shopify_order_legacy_id)!}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Open in Shopify
-                      </a>
-                    ) : null}
-                  </s-stack>,
+                  "Open order",
                 ],
               };
             })}

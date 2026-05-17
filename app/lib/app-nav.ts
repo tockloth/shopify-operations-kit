@@ -7,50 +7,55 @@ export type AppNavItem = {
 
 export const appNavItems: AppNavItem[] = [
   {
-    label: "Dashboard",
+    label: "Start",
     href: "/app/dashboard",
     activePaths: ["/app", "/app/dashboard"],
     rel: "home",
   },
-  { label: "Products", href: "/app/items", activePaths: ["/app/items"] },
-  { label: "BOM", href: "/app/boms", activePaths: ["/app/boms"] },
   {
-    label: "Customers",
-    href: "/app/customers",
-    activePaths: ["/app/customers"],
-  },
-  {
-    label: "Suppliers",
-    href: "/app/suppliers",
-    activePaths: ["/app/suppliers"],
-  },
-  {
-    label: "Orders",
+    label: "01 Orders",
     href: "/app/orders",
     activePaths: ["/app/orders", "/app/order-lines"],
   },
+  { label: "02 Products", href: "/app/items", activePaths: ["/app/items"] },
   {
-    label: "Inventory",
-    href: "/app/inventory",
-    activePaths: ["/app/inventory"],
-  },
-  {
-    label: "Procurement",
+    label: "03 Procurement",
     href: "/app/procurement",
     activePaths: ["/app/procurement"],
   },
   {
-    label: "Receiving",
+    label: "04 Receiving",
     href: "/app/receiving",
     activePaths: ["/app/receiving"],
   },
   {
-    label: "Logistics",
+    label: "05 Inventory",
+    href: "/app/inventory",
+    activePaths: ["/app/inventory"],
+  },
+  {
+    label: "06 Payments",
+    href: "/app/payments",
+    activePaths: ["/app/payments"],
+  },
+  {
+    label: "07 Logistics",
     href: "/app/logistics",
     activePaths: ["/app/logistics"],
   },
   {
-    label: "Settings",
+    label: "08 Customers",
+    href: "/app/customers",
+    activePaths: ["/app/customers"],
+  },
+  {
+    label: "09 Suppliers",
+    href: "/app/suppliers",
+    activePaths: ["/app/suppliers"],
+  },
+  { label: "10 BOM / Kitting", href: "/app/boms", activePaths: ["/app/boms"] },
+  {
+    label: "11 Settings",
     href: "/app/settings",
     activePaths: ["/app/settings"],
   },

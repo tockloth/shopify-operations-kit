@@ -28,10 +28,31 @@ Demand Work Queue: Shopify-Bestellungen verstehen, planen und in operative Arbei
 
 ## UI
 ### list
-Siehe HTML-Wireframe auf der Modul-Seite. Anforderungen: Toolbar, Filter/Tabs, Tabellen/Forms, Next Action und Blocker gemäß Modul.
+Die Orders-Liste ist eine schlanke Shopify-Demand-Übersicht, kein Status-Dashboard.
+
+- Toolbar: genau ein primärer Button `Sync Shopify orders`.
+- Filter: standardmäßig eingeklappt; bei aktiven Filtern geöffnet. Filter für Work queue, Order/Kunde/Produkt, Payment, Shopify fulfillment und fehlende Adresse.
+- Work queue Default: `All orders`, damit auch lokal abgeschlossene Shopify Orders sichtbar bleiben. Weitere Filter: `Active work`, `Completed`. `Completed` zeigt lokal abgeschlossene Orders nach Shipment-/Completion-Zeit absteigend.
+- Tabelle: Order, Order date, Customer, Products / quantities, Operations, Payment, Shopify fulfillment, Address, Next action.
+- `Shopify fulfillment` ist der Shopify-Status und bleibt ohne Shopify Fulfillment Writeback z.B. `UNFULFILLED`.
+- `Operations` ist der lokale Operations-Kit-Status und muss nach lokalem Shipment `Complete` zeigen.
+- Lokal abgeschlossen wird als `Shipped locally` sichtbar gemacht; wenn Shopify weiterhin `UNFULFILLED` ist, zeigt die UI `Shopify not updated`.
+- Nicht auf der Liste anzeigen: Operational-Status-Zusammenfassung, Next reason / blocker.
+- Operative Status- und Reason-Details gehören auf Order Detail, Order Line Detail, Procurement, Receiving oder Logistics.
 
 ### detail
-Siehe HTML-Wireframe auf der Modul-Seite. Anforderungen: Toolbar, Filter/Tabs, Tabellen/Forms, Next Action und Blocker gemäß Modul.
+Order Detail ist die Demand-Situation-Seite.
+
+- Toolbar: Back to Orders, Open in Shopify, Refresh planning.
+- Sections/Tabs: Summary, Lines, Related work, Events later.
+- Jedes Feld, jeder Button und jeder Link erscheint nur einmal.
+- Summary zeigt Order, Order date, Customer, Email, Payment, Shopify fulfillment, Shipping address, Address readiness, Operations, Next action.
+- Next reason darf als kurzer Text im Summary stehen, aber nicht als zweite separate Next-Action-Box dupliziert werden.
+- Keine Ausführung von PO-Lifecycle, QC, Putaway oder Shipment-Pack/Ship auf Order Detail.
 
 ### line
-Siehe HTML-Wireframe auf der Modul-Seite. Anforderungen: Toolbar, Filter/Tabs, Tabellen/Forms, Next Action und Blocker gemäß Modul.
+Order Line Detail erklärt genau eine Nachfragezeile.
+
+- Toolbar: Back to Order, Open Product, genau ein kontextueller Link zu Procurement oder Logistics.
+- Sections: Line summary, Decision explanation, Inventory availability, Procurement/Receiving context, Logistics context, Next action.
+- Keine operativen Mutationsbuttons auf der Line-Seite; sie erklärt und verlinkt nur.

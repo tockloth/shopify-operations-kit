@@ -1,11 +1,12 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Link, useActionData, useLoaderData } from "react-router";
+import { Form, Link, useActionData, useLoaderData } from "react-router";
 
 import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
 import {
+  completeReceiptLineQc,
   loadInventoryItemDetail,
-  postInventoryMovement,
+  putawayReceiptLine,
 } from "../lib/operations-kit.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -23,22 +24,37 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   };
 };
 
-export const action = async ({ request, params }: ActionFunctionArgs) => {
+export const action = async ({ request }: ActionFunctionArgs) => {
   const context = await requireOperationsKitContext(request);
   if (!context.configured) return { message: context.setupError };
 
   const form = await request.formData();
   const intent = String(form.get("intent") || "");
 
-  if (intent === "postInventoryMovement") {
-    await postInventoryMovement(context.pool, context.ctx.tenantId, {
-      itemId: params.itemId!,
-      movementType: String(form.get("movementType") || "stock_adjustment"),
-      quantity: Number(form.get("quantity") || 0),
-      locationCode: String(form.get("locationCode") || "MAIN"),
-      reference: String(form.get("reference") || ""),
+  if (intent === "completeLineQc") {
+    const result = await completeReceiptLineQc(context.pool, context.ctx.tenantId, {
+      goodsReceiptLineId: String(form.get("goodsReceiptLineId")),
+      acceptedQuantity: Number(form.get("acceptedQuantity") || 0),
+      rejectedQuantity: Number(form.get("rejectedQuantity") || 0),
+      notes: String(form.get("notes") || ""),
     });
-    return { message: "Inventory movement posted." };
+    return {
+      message: `QC completed: ${result.accepted} accepted, ${result.rejected} quarantined.`,
+    };
+  }
+
+  if (intent === "putawayReceiptLine") {
+    const result = await putawayReceiptLine(
+      context.pool,
+      context.ctx.tenantId,
+      String(form.get("goodsReceiptLineId")),
+    );
+    if (result.putaway <= 0) {
+      return { message: "No putaway was performed for this receipt line." };
+    }
+    return {
+      message: "Putaway completed. Accepted quantity was booked into inventory.",
+    };
   }
 
   return { message: "No inventory action was performed." };
@@ -89,6 +105,18 @@ function sourceLabel(value: unknown) {
   return labels[source] ?? source.replaceAll("_", " ");
 }
 
+function qcLabel(line: any) {
+  if (!line.qc_status) return "Not required";
+  if (line.qc_result) return `${line.qc_status} · ${line.qc_result}`;
+  return `${line.qc_status} · pending`;
+}
+
+function putawayLabel(line: any) {
+  if (line.status === "accepted") return "Ready";
+  if (line.status === "putaway_done") return "Done";
+  return "Waiting for QC";
+}
+
 export default function InventoryItemDetail() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
@@ -105,6 +133,7 @@ export default function InventoryItemDetail() {
     balance: null,
     demand: [],
     incoming: [],
+    receivingWork: [],
     movements: [],
   };
   const item = detail.item as any;
@@ -124,22 +153,34 @@ export default function InventoryItemDetail() {
     <s-page heading={`${item.sku} · ${item.title}`}>
       <s-section>
         <s-stack direction="block" gap="base">
-          <Link to="/app/inventory">
-            <s-button>Back to inventory</s-button>
-          </Link>
-          <s-paragraph>
-            Operational stock position for this product, including demand,
-            incoming supply and ledger movements.
-          </s-paragraph>
+          <div className="kit-toolbar">
+            <Link to="/app/inventory">
+              <s-button>Back to Inventory</s-button>
+            </Link>
+            <div className="kit-toolbar-actions">
+              <Link to={`/app/items/${item.id}`}>
+                <s-button>Open Product</s-button>
+              </Link>
+              <Link to="/app/inventory/movements">
+                <s-button>Open Movements</s-button>
+              </Link>
+            </div>
+          </div>
           {actionData?.message ? (
             <s-banner tone="success">{actionData.message}</s-banner>
           ) : null}
         </s-stack>
       </s-section>
 
-      <s-section heading="Stock position">
+      <s-section heading="Inventory">
         <DataTable
-          headings={["Physical", "Reserved", "Available", "Ordered", "Planned"]}
+          headings={[
+            "On hand",
+            "Reserved from open orders",
+            "Available",
+            "Incoming purchase",
+            "Planned",
+          ]}
           rows={[
             [
               quantity(balance.physical_quantity),
@@ -152,7 +193,63 @@ export default function InventoryItemDetail() {
         />
       </s-section>
 
-      <s-section heading="Customer reservations">
+      <s-section heading="Inventory work">
+        {(detail.receivingWork ?? []).length > 0 ? (
+          <DataTable
+            headings={[
+              "Receipt",
+              "Supplier",
+              "Received",
+              "QC",
+              "Putaway",
+              "Next action",
+            ]}
+            rows={(detail.receivingWork ?? []).map((line: any) => [
+              <s-link href={`/app/receiving/${line.receipt_id}`}>
+                {line.receipt_number}
+              </s-link>,
+              line.supplier_name,
+              `${quantity(line.received_quantity)} ${line.unit}`,
+              qcLabel(line),
+              putawayLabel(line),
+              line.status === "qc_hold" ? (
+                <Form method="post">
+                  <input type="hidden" name="intent" value="completeLineQc" />
+                  <input type="hidden" name="goodsReceiptLineId" value={line.id} />
+                  <input
+                    type="hidden"
+                    name="acceptedQuantity"
+                    value={Number(line.received_quantity ?? 0)}
+                  />
+                  <input type="hidden" name="rejectedQuantity" value="0" />
+                  <s-button type="submit">Complete QC</s-button>
+                </Form>
+              ) : line.status === "accepted" ? (
+                <Form method="post">
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value="putawayReceiptLine"
+                  />
+                  <input type="hidden" name="goodsReceiptLineId" value={line.id} />
+                  <s-button variant="primary" type="submit">
+                    Put away to inventory
+                  </s-button>
+                </Form>
+              ) : (
+                <s-link href={`/app/receiving/${line.receipt_id}`}>
+                  Open Receipt
+                </s-link>
+              ),
+            ])}
+          />
+        ) : (
+          <s-paragraph>No open QC or putaway work for this item.</s-paragraph>
+        )}
+      </s-section>
+
+      <details className="kit-compact-disclosure" open>
+        <summary>Open orders / reservations</summary>
         {(detail.demand ?? []).length > 0 ? (
           <DataTable
             headings={["Order", "Customer", "Quantity", "Status"]}
@@ -170,9 +267,10 @@ export default function InventoryItemDetail() {
         ) : (
           <s-paragraph>No customer reservations.</s-paragraph>
         )}
-      </s-section>
+      </details>
 
-      <s-section heading="Incoming purchase orders">
+      <details className="kit-compact-disclosure" open>
+        <summary>Incoming purchase orders</summary>
         {(detail.incoming ?? []).length > 0 ? (
           <DataTable
             headings={[
@@ -184,7 +282,7 @@ export default function InventoryItemDetail() {
             ]}
             rows={(detail.incoming ?? []).map((line: any) => ({
               id: `incoming-${line.purchase_order_id}`,
-              href: `/app/procurement?purchaseOrderId=${line.purchase_order_id}`,
+              href: `/app/procurement/${line.purchase_order_id}`,
               cells: [
                 <strong>{line.display_number}</strong>,
                 line.supplier_name,
@@ -197,9 +295,10 @@ export default function InventoryItemDetail() {
         ) : (
           <s-paragraph>No incoming purchase orders.</s-paragraph>
         )}
-      </s-section>
+      </details>
 
-      <s-section heading="Ledger movements">
+      <details className="kit-compact-disclosure">
+        <summary>Ledger movements</summary>
         {(detail.movements ?? []).length > 0 ? (
           <DataTable
             headings={["Date", "Movement", "Quantity", "Location", "Source"]}
@@ -216,7 +315,7 @@ export default function InventoryItemDetail() {
         ) : (
           <s-paragraph>No ledger movements.</s-paragraph>
         )}
-      </s-section>
+      </details>
     </s-page>
   );
 }

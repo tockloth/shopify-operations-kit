@@ -17,7 +17,7 @@ Operational Master Data: Shopify-Produkte und Operations-Artikel klassifizieren
 
 ### Shopify Sync State
 - Attribute/Bedeutung: product_status, publishedAt/onlineStoreUrl, last_seen, missing/stale.
-- Regel: On shop ist getrennt von operational sellable.
+- Regel: On shop ist ein abgeleiteter Shopify-Visibility-Status aus active/status/publication/latest sync. Operational sellable ist eine getrennte Operations-Rolle und darf nicht als Ersatz für Shopify-Visibility verwendet werden.
 
 ## Prozess
 - **1. Sync Products:** Shopify-Produkte/Varianten importieren, Status, Publication und Last Seen pflegen.
@@ -25,10 +25,23 @@ Operational Master Data: Shopify-Produkte und Operations-Artikel klassifizieren
 - **3. Purchasing Settings:** Preferred Supplier, Supplier SKU, Preis, MOQ, Lead Time, Mindestbestand.
 - **4. QC Policy:** QC required on receiving / after production. Ausführung liegt bei Receipt/Production, nicht beim Produkt.
 - **5. BOM Readiness:** Producible Item braucht aktive BOM mit Komponenten.
+- **6. Create operational component:** Neuanlage nicht verkaufbarer Komponenten/Rohmaterialien muss Rollen und QC-Flags explizit setzen können. Defaults dürfen helfen, aber nicht die sichtbare Entscheidung ersetzen.
 
 ## UI
 ### list
 Siehe HTML-Wireframe auf der Modul-Seite. Anforderungen: Toolbar, Filter/Tabs, Tabellen/Forms, Next Action und Blocker gemäß Modul.
 
+- Filter: SKU/title, Source/on shop, Shopify status, Role, Supplier.
+- Tabelle: Product, Shopify status, Type, Roles, Supplier, Stock, BOM, Data quality, Next.
+- Products on shop verwendet dieselbe abgeleitete Shopify-Visibility-Logik wie die Shop-Spalte.
+
 ### detail
 Siehe HTML-Wireframe auf der Modul-Seite. Anforderungen: Toolbar, Filter/Tabs, Tabellen/Forms, Next Action und Blocker gemäß Modul.
+
+- Product Detail zeigt BOM-Komponenten read-only inklusive verfügbarer Komponentenbestände.
+- BOM und Product Detail enthalten keine MRP-/Produktionsausführung.
+
+### create operational component
+- Route: `/app/items/new`.
+- Felder: SKU, title, item_type, sellable, purchasable, producible, QC required on receiving, QC required after production, minimum stock, standard order quantity, standard production quantity, lead time.
+- Defaults: component/raw_material sind nicht sellable und typischerweise purchasable; assembly ist typischerweise producible. User kann Rollen/QC vor dem Speichern explizit ändern.

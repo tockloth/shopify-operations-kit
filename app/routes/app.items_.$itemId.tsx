@@ -531,7 +531,7 @@ export default function ProductDetail() {
                 />
                 {activeBomLines.length > 0 ? (
                   <DataTable
-                    headings={["Component", "Type", "Policy", "Quantity", "Unit"]}
+                    headings={["Component", "Type", "Policy", "Quantity", "Unit", "Available stock"]}
                     rows={activeBomLines.map((line: any) => [
                       <strong>
                         {line.component_sku} {line.component_title}
@@ -545,6 +545,7 @@ export default function ProductDetail() {
                         .join(" / ") || "review",
                       quantity(line.quantity),
                       line.unit ?? "pcs",
+                      quantity(line.component_available_quantity ?? 0),
                     ])}
                   />
                 ) : activeBomCount > 0 ? (

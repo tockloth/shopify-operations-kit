@@ -4,13 +4,14 @@
 <a class="" href="procurement.html">03 Procurement</a>
 <a class="" href="receiving.html">04 Receiving</a>
 <a class="active" href="inventory.html">05 Inventory</a>
-<a class="" href="logistics.html">06 Logistics</a>
-<a class="" href="customers.html">07 Customers</a>
-<a class="" href="suppliers.html">08 Suppliers</a>
-<a class="" href="bom-kitting.html">09 BOM / Kitting</a>
-<a class="" href="settings.html">10 Settings</a>
-<a class="" href="cross-cutting.html">11 Querschnitt</a>
-<a class="" href="implementation.html">12 Codex Umsetzung</a></nav><main>
+<a class="" href="payments.html">06 Payments</a>
+<a class="" href="logistics.html">07 Logistics</a>
+<a class="" href="customers.html">08 Customers</a>
+<a class="" href="suppliers.html">09 Suppliers</a>
+<a class="" href="bom-kitting.html">10 BOM / Kitting</a>
+<a class="" href="settings.html">11 Settings</a>
+<a class="" href="cross-cutting.html">12 Querschnitt</a>
+<a class="" href="implementation.html">13 Codex Umsetzung</a></nav><main>
     <section class='card'><h2>Inventory</h2><div class='section-meta'><div class='field'><label>App-Bereich</label><div>Inventory</div></div><div class='field'><label>Codex-Quelle</label><div>specs/inventory.md + inventory.html</div></div><div class='field'><label>Abschnitte</label><div>Entitäten · Prozess · UI</div></div></div></section>
     <section class='card'><h2>Entitäten</h2><table><tr><th>Entität</th><th>Attribute / Bedeutung</th><th>Regel</th></tr>
 <tr><td>InventoryMovement</td><td>Append-only Bewegungsledger mit item, location, quantity_delta, reserved_delta, source_type/source_id.</td><td>Bestand wird aus Bewegungen abgeleitet. Keine stille Korrektur.</td></tr>
@@ -24,16 +25,22 @@
 <tr><td>3. Ledger prüfen</td><td>Jede Bestandsänderung hat Quelle und Zeitpunkt.</td></tr>
 <tr><td>4. Adjustment später</td><td>Manuelle Korrekturen nur explizit und mit Audit/Permission.</td></tr>
 </table></section>
-    <section class='card'><h2>UI</h2><div class="wire"><div class="bar"><div><strong>Inventory — Stock and Ledger</strong><div class="small">/app/inventory</div></div><div class="toolbar"><span class="btn primary">Export ledger</span><span class="btn ">Adjustment later</span></div></div><div class="body"><div class="tabs"><div class="tab active">Stock Summary</div><div class="tab ">Ledger</div><div class="tab ">Reservations</div><div class="tab ">Adjustments later</div></div><div class="filters"><div class="input">Item</div><div class="input">Location</div><div class="input">Stock status</div><div class="input">Movement type</div><div class="input">Date</div></div><table><tr><th>Item</th><th>Location</th><th>On hand</th><th>Reserved</th><th>Available</th><th>QC hold</th><th>Last movement</th><th>Open</th></tr>
+    <section class='card'><h2>UI</h2><div class="wire"><div class="bar"><div><strong>Inventory</strong><div class="small">/app/inventory</div></div><div class="toolbar"><span class="btn primary">Open movements</span></div></div><div class="body"><div class="filters"><div class="input">Item</div><div class="input">Location</div><div class="input">Stock status</div></div><table><tr><th>Item</th><th>Location</th><th>On hand</th><th>Reserved</th><th>Available</th><th>QC hold</th><th>Last movement</th><th>Open</th></tr>
 <tr><td>Ski Wax</td><td>MAIN</td><td>3</td><td>1</td><td>2</td><td>0</td><td>Putaway today</td><td>Open item</td></tr>
 <tr><td>Snowboard</td><td>QC-HOLD</td><td>1</td><td>0</td><td>0</td><td>1</td><td>QC hold today</td><td>Open item</td></tr>
-</table></div></div><div class="wire"><div class="bar"><div><strong>Inventory Item Detail</strong><div class="small">/app/inventory/:itemId</div></div><div class="toolbar"><span class="btn primary">Back to Inventory</span><span class="btn ">Open Product</span><span class="btn ">Export ledger</span></div></div><div class="body"><div class="tabs"><div class="tab active">Stock position</div><div class="tab ">Ledger movements</div><div class="tab ">Reservations</div><div class="tab ">Procurement supply</div><div class="tab ">Events</div></div><table><tr><th>Location</th><th>On hand</th><th>Reserved</th><th>Available</th><th>QC hold</th><th>Last movement</th></tr>
-<tr><td>MAIN</td><td>3</td><td>1</td><td>2</td><td>0</td><td>Putaway today</td></tr>
-</table><table><tr><th>Date</th><th>Movement</th><th>Quantity delta</th><th>Reserved delta</th><th>Location</th><th>Source</th><th>Linked object</th></tr>
-<tr><td>May 18</td><td>putaway</td><td>+3</td><td>0</td><td>MAIN</td><td>GR-1007</td><td>Open Receipt</td></tr>
-</table><table><tr><th>Order</th><th>Line</th><th>Quantity</th><th>Status</th><th>Open order</th></tr>
-<tr><td>#1004</td><td>Ski Wax</td><td>1</td><td>reserved</td><td>Open order</td></tr>
-</table><table><tr><th>PO</th><th>Supplier</th><th>Quantity</th><th>Expected</th><th>Receipt status</th><th>Open PO</th></tr>
+</table></div></div><div class="wire"><div class="bar"><div><strong>Inventory Movements</strong><div class="small">/app/inventory/movements</div></div><div class="toolbar"><span class="btn primary">Back to Inventory</span></div></div><div class="body"><table><tr><th>Item</th><th>Quantity</th><th>Movement</th><th>Location</th><th>Source</th><th>Booked date</th></tr>
+<tr><td>Ski Wax</td><td>+3</td><td>putaway</td><td>MAIN</td><td>GR-1007</td><td>May 18</td></tr>
+<tr><td>Snowboard</td><td>+1</td><td>QC hold</td><td>QC-HOLD</td><td>GR-1008</td><td>May 18</td></tr>
+</table></div></div><div class="wire"><div class="bar"><div><strong>Inventory Item Detail</strong><div class="small">/app/inventory/:itemId</div></div><div class="toolbar"><span class="btn primary">Back to Inventory</span><span class="btn ">Open Product</span><span class="btn ">Open Movements</span></div></div><div class="body"><table><tr><th>On hand</th><th>Reserved from open orders</th><th>Available</th><th>Incoming purchase</th><th>Planned</th></tr>
+<tr><td>3</td><td>1</td><td>2</td><td>5</td><td>7</td></tr>
+</table><h4>Inventory work</h4><table><tr><th>Receipt</th><th>Supplier</th><th>Received</th><th>QC</th><th>Putaway</th><th>Next action</th></tr>
+<tr><td>GR-1008</td><td>Test Supplier</td><td>1 pcs</td><td>open · pending</td><td>Waiting for QC</td><td>Complete QC</td></tr>
+<tr><td>GR-1007</td><td>Test Supplier</td><td>3 pcs</td><td>passed</td><td>Ready</td><td>Put away to inventory</td></tr>
+</table><details open><summary>Open orders / reservations</summary><table><tr><th>Order</th><th>Customer</th><th>Quantity</th><th>Status</th><th>Open order</th></tr>
+<tr><td>#1004</td><td>Jörn Voigt</td><td>1</td><td>reserved</td><td>Open order</td></tr>
+</table></details><details open><summary>Incoming purchase orders</summary><table><tr><th>PO</th><th>Supplier</th><th>Quantity</th><th>Expected</th><th>Status</th><th>Open PO</th></tr>
 <tr><td>PO-1008</td><td>Test Supplier</td><td>5</td><td>May 24</td><td>awaiting receipt</td><td>Open PO</td></tr>
-</table></div></div></section>
+</table></details><details><summary>Ledger movements</summary><table><tr><th>Date</th><th>Movement</th><th>Quantity delta</th><th>Location</th><th>Source</th></tr>
+<tr><td>May 18</td><td>putaway</td><td>+3</td><td>MAIN</td><td>GR-1007</td></tr>
+</table></details></div></div></div></div></section>
     </main></div></body></html>

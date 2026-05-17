@@ -38,6 +38,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     title: String(form.get("title") || ""),
     itemType: safeItemType(String(form.get("itemType") || "component")),
     replenishmentPolicy: String(form.get("replenishmentPolicy") || "buy"),
+    isSellable: form.get("isSellable") === "on",
+    isPurchasable: form.get("isPurchasable") === "on",
+    isProducible: form.get("isProducible") === "on",
+    qcRequiredAfterPurchase: form.get("qcRequiredAfterPurchase") === "on",
+    qcRequiredAfterProduction: form.get("qcRequiredAfterProduction") === "on",
     minInventoryQuantity: Number(form.get("minInventoryQuantity") || 0),
     defaultProductionQuantity: Number(form.get("defaultProductionQuantity") || 1),
     defaultOrderQuantity: Number(form.get("defaultOrderQuantity") || 1),
@@ -53,6 +58,10 @@ export default function NewOperationalComponent() {
   if (!data.configured) {
     return <SetupBanner message={data.setupError ?? "Database setup is incomplete."} />;
   }
+  const defaultItemType = data.itemType ?? "component";
+  const defaultSellable = defaultItemType === "product" || defaultItemType === "assembly";
+  const defaultPurchasable = defaultItemType === "component" || defaultItemType === "raw_material";
+  const defaultProducible = defaultItemType === "assembly";
 
   return (
     <s-page heading="Create operational component">
@@ -98,10 +107,39 @@ export default function NewOperationalComponent() {
                 </s-select>
               </s-stack>
               <s-stack direction="inline" gap="base">
+                <s-checkbox
+                  label="Sellable"
+                  name="isSellable"
+                  checked={defaultSellable}
+                ></s-checkbox>
+                <s-checkbox
+                  label="Purchasable"
+                  name="isPurchasable"
+                  checked={defaultPurchasable}
+                ></s-checkbox>
+                <s-checkbox
+                  label="Producible"
+                  name="isProducible"
+                  checked={defaultProducible}
+                ></s-checkbox>
+              </s-stack>
+              <s-stack direction="inline" gap="base">
                 <s-number-field label="Minimum inventory" name="minInventoryQuantity" min={0} step={1} value="0"></s-number-field>
                 <s-number-field label="Default order quantity" name="defaultOrderQuantity" min={1} step={1} value="1"></s-number-field>
                 <s-number-field label="Default production quantity" name="defaultProductionQuantity" min={1} step={1} value="1"></s-number-field>
                 <s-number-field label="Supplier lead time days" name="supplierLeadTimeDays" min={0} step={1} value="7"></s-number-field>
+              </s-stack>
+              <s-stack direction="inline" gap="base">
+                <s-checkbox
+                  label="QC required on receiving"
+                  name="qcRequiredAfterPurchase"
+                  checked={defaultPurchasable}
+                ></s-checkbox>
+                <s-checkbox
+                  label="QC required after production"
+                  name="qcRequiredAfterProduction"
+                  checked={defaultProducible}
+                ></s-checkbox>
               </s-stack>
               <s-stack direction="inline" gap="small">
                 <s-button variant="primary" type="submit">Create product</s-button>

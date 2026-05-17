@@ -4,13 +4,14 @@
 <a class="" href="procurement.html">03 Procurement</a>
 <a class="" href="receiving.html">04 Receiving</a>
 <a class="" href="inventory.html">05 Inventory</a>
-<a class="active" href="logistics.html">06 Logistics</a>
-<a class="" href="customers.html">07 Customers</a>
-<a class="" href="suppliers.html">08 Suppliers</a>
-<a class="" href="bom-kitting.html">09 BOM / Kitting</a>
-<a class="" href="settings.html">10 Settings</a>
-<a class="" href="cross-cutting.html">11 Querschnitt</a>
-<a class="" href="implementation.html">12 Codex Umsetzung</a></nav><main>
+<a class="" href="payments.html">06 Payments</a>
+<a class="active" href="logistics.html">07 Logistics</a>
+<a class="" href="customers.html">08 Customers</a>
+<a class="" href="suppliers.html">09 Suppliers</a>
+<a class="" href="bom-kitting.html">10 BOM / Kitting</a>
+<a class="" href="settings.html">11 Settings</a>
+<a class="" href="cross-cutting.html">12 Querschnitt</a>
+<a class="" href="implementation.html">13 Codex Umsetzung</a></nav><main>
     <section class='card'><h2>Logistics</h2><div class='section-meta'><div class='field'><label>App-Bereich</label><div>Logistics</div></div><div class='field'><label>Codex-Quelle</label><div>specs/logistics.md + logistics.html</div></div><div class='field'><label>Abschnitte</label><div>Entitäten · Prozess · UI</div></div></div></section>
     <section class='card'><h2>Entitäten</h2><table><tr><th>Entität</th><th>Attribute / Bedeutung</th><th>Regel</th></tr>
 <tr><td>ShippingOrder</td><td>Shipment-Kopf: shipment_number, operations_order_id, status, created/packed/shipped timestamps, shipping address snapshot.</td><td>Single record für Versandarbeit.</td></tr>
@@ -21,16 +22,19 @@
     <section class='card'><h2>Prozess</h2><table><tr><th>Schritt</th><th>Prozessregel</th></tr>
 <tr><td>1. Ready/Blocked</td><td>Orders mit Bestand + Adresse sind ready, sonst blocked mit genauem Grund.</td></tr>
 <tr><td>2. Create Shipment</td><td>Erzeugt lokalen Shipment Record und Linien. Kein Shopify Fulfillment Writeback im MVP.</td></tr>
-<tr><td>3. Pack/Ship später</td><td>Mark packed / Mark shipped lokal. Packing optional via Settings.</td></tr>
+<tr><td>3. Pack/Ship</td><td>Mark packed / Mark shipped lokal. Packing ist optional via Settings; wenn direkt shipped wird, darf keine künstliche Reservierung entstehen.</td></tr>
 <tr><td>4. Completed</td><td>Shipment work complete; Shopify fulfillment writeback später explizit.</td></tr>
+<tr><td>5. Shopify Fulfillment</td><td>Nicht Teil des MVP-Flows. Später via Shopify Fulfillment Orders / fulfillmentCreate.</td></tr>
 </table></section>
-    <section class='card'><h2>UI</h2><div class="wire"><div class="bar"><div><strong>Logistics — Shipment Work Queue</strong><div class="small">/app/logistics</div></div><div class="toolbar"><span class="btn primary">Create shipment</span><span class="btn ">Backfill test address (dev only)</span><span class="btn ">Export later</span></div></div><div class="body"><div class="tabs"><div class="tab active">Ready</div><div class="tab ">Blocked</div><div class="tab ">Shipments</div><div class="tab ">Completed</div></div><div class="filters"><div class="input">Status</div><div class="input">Address missing?</div><div class="input">Customer</div><div class="input">Order</div><div class="input">Product</div></div><table><tr><th>Order</th><th>Customer</th><th>Products / quantities</th><th>Address status</th><th>Inventory status</th><th>Shipment status</th><th>Next action</th></tr>
-<tr><td>#1004</td><td>Jörn Voigt</td><td>1 × Ski Wax</td><td>present</td><td>ready</td><td>not created</td><td>Create shipment</td></tr>
-<tr><td>#1005</td><td>Jörn Voigt</td><td>1 × Snowboard</td><td>present</td><td>not ready</td><td>blocked</td><td>Open Procurement</td></tr>
-<tr><td>#1003</td><td>No customer</td><td>1 × Hydrogen</td><td>missing</td><td>ready</td><td>blocked</td><td>Open Order</td></tr>
-</table></div></div><div class="wire"><div class="bar"><div><strong>Shipment Detail</strong><div class="small">/app/logistics/:shipmentId</div></div><div class="toolbar"><span class="btn primary">Back to Logistics</span><span class="btn ">Mark packed</span><span class="btn ">Mark shipped</span><span class="btn ">Cancel shipment</span></div></div><div class="body"><div class="tabs"><div class="tab active">Header</div><div class="tab ">Lines</div><div class="tab ">Address</div><div class="tab ">Events</div></div><div class="formgrid cols5"><div class="field"><label>Shipment number</label><div>SHIP-1004</div></div><div class="field"><label>Order</label><div>#1004</div></div><div class="field"><label>Customer</label><div>Jörn Voigt</div></div><div class="field"><label>Status</label><div>created</div></div><div class="field"><label>Created date</label><div>May 18</div></div></div><table><tr><th>Product</th><th>Quantity</th><th>Picked</th><th>Packed</th><th>Shipped</th></tr>
-<tr><td>Ski Wax</td><td>1</td><td>yes</td><td>no</td><td>no</td></tr>
-</table><table><tr><th>Name</th><th>Street</th><th>City</th><th>Country</th><th>Postal code</th><th>Complete?</th></tr>
-<tr><td>Jörn Voigt</td><td>123 Test St</td><td>Washington</td><td>US</td><td>20340</td><td>yes</td></tr>
+    <section class='card'><h2>UI</h2><div class="wire"><div class="bar"><div><strong>Logistics — Work Queue</strong><div class="small">/app/logistics</div></div><div class="toolbar"></div></div><div class="body"><div class="filters"><div class="input">Work queue: Active work / Ready / Blocked / Shipments / Completed</div></div><details><summary>Filters</summary><div class="filters"><div class="input">Order / customer / product</div><div class="input">Address</div></div></details><details><summary>Development tools</summary><div class="filters"><div class="input">Backfill test shipping address, development only</div></div></details><table><tr><th>Reference</th><th>Status</th><th>Customer</th><th>Products / quantities</th><th>Address</th><th>Reason</th><th>Next action</th></tr>
+<tr><td>#1004</td><td>Ready</td><td>Jörn Voigt</td><td>1 × Ski Wax</td><td>Ready</td><td>Inventory and address ready</td><td>Create shipment</td></tr>
+<tr><td>#1005</td><td>Blocked</td><td>Jörn Voigt</td><td>1 × Snowboard</td><td>Ready</td><td>Inventory not ready</td><td>Open order</td></tr>
+<tr><td>SO-1004</td><td>Shipment created</td><td>Jörn Voigt</td><td>1 × Ski Wax</td><td>Ready</td><td>#1004</td><td>Open shipment</td></tr>
+</table><p class="small">Shipment rows open Shipment Detail. Ready Orders use Create shipment. Blocked Orders open Order Detail for correction.</p></div></div><div class="wire"><div class="bar"><div><strong>Shipment Detail</strong><div class="small">/app/logistics/:shipmentId</div></div><div class="toolbar"><span class="btn primary">Back to Logistics</span><span class="btn ">Mark packed</span><span class="btn ">Mark shipped</span></div></div><div class="body"><table><tr><th>Shipment</th><th>Order</th><th>Customer</th><th>Status</th><th>Created</th></tr>
+<tr><td>SO-1004</td><td>#1004</td><td>Jörn Voigt</td><td>open</td><td>May 18</td></tr>
+</table><div class="panel"><strong>Quantity correction</strong><div class="filters"><div class="input">Current quantity: 1 pcs</div><div class="input">Correct quantity</div><div class="btn">Update quantity</div></div></div><table><tr><th>Product</th><th>Quantity</th><th>Picked</th><th>Packed</th><th>Shipped</th><th>Status</th></tr>
+<tr><td>Ski Wax</td><td>1 pcs</td><td>0</td><td>0</td><td>0</td><td>open</td></tr>
+</table><table><tr><th>Name</th><th>Address</th></tr>
+<tr><td>Jörn Voigt</td><td>123 Test St, Washington, US</td></tr>
 </table></div></div></section>
     </main></div></body></html>

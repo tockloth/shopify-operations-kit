@@ -133,6 +133,127 @@
   margin: 12px 0;
 }
 
+.kit-products-filterbar {
+  grid-template-columns:
+    minmax(220px, 1fr)
+    minmax(160px, 220px)
+    minmax(160px, 220px)
+    minmax(150px, 200px)
+    minmax(180px, 240px)
+    auto
+    auto;
+}
+
+.kit-procurement-filterbar {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.kit-procurement-scopebar {
+  grid-template-columns: minmax(220px, 320px) auto;
+  justify-content: start;
+}
+
+.kit-procurement-filterbar s-button,
+.kit-procurement-filterbar a,
+.kit-procurement-scopebar s-button {
+  align-self: end;
+}
+
+.kit-compact-disclosure {
+  margin: 8px 0 12px;
+}
+
+.kit-compact-disclosure summary {
+  cursor: pointer;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.kit-tabbar {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid #dcdfe4;
+  margin: 0 0 12px;
+  flex-wrap: wrap;
+}
+
+.kit-tabbar a {
+  display: inline-block;
+  padding: 8px 10px;
+  border: 1px solid #dcdfe4;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: #f8fafc;
+}
+
+.kit-tabbar .kit-tab-active {
+  background: #fff;
+  font-weight: 650;
+}
+
+.kit-field-label {
+  display: grid;
+  gap: 4px;
+  color: #5c5f62;
+  font-size: 12px;
+}
+
+.kit-field-label input {
+  min-height: 34px;
+  border: 1px solid #dcdfe4;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.kit-po-line-price-form {
+  display: grid;
+  grid-template-columns:
+    minmax(76px, 90px)
+    minmax(90px, 1fr)
+    minmax(64px, 80px)
+    minmax(130px, 150px)
+    auto;
+  gap: 6px;
+  align-items: end;
+}
+
+.kit-po-line-price-form input {
+  min-height: 34px;
+  border: 1px solid #dcdfe4;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.kit-shipment-line-form {
+  display: grid;
+  grid-template-columns: minmax(120px, 160px) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.kit-shipment-line-form input {
+  min-height: 34px;
+  border: 1px solid #dcdfe4;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.kit-shipment-correction-list {
+  display: grid;
+  gap: 8px;
+}
+
+.kit-shipment-correction-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
 .kit-flow {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -184,6 +305,31 @@
   content: "→";
   margin-left: 8px;
   color: #8c9196;
+}
+
+.kit-process-guide.kit-process-guide-compact {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(72px, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+  align-items: stretch;
+}
+
+.kit-process-guide.kit-process-guide-compact span {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1.2;
+  font-size: 11px;
+  padding: 6px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.kit-process-guide.kit-process-guide-compact span::after {
+  content: none;
 }
 
 .kit-step-card {

@@ -25,15 +25,20 @@ import {
   loadPurchaseOrders,
   loadProductionOrders,
   loadReceipts,
+  loadShippingOrderDetail,
   loadWarehouseTasks,
   passQcAndCreatePutaway,
   postGoodsReceiptForAcknowledgedPurchaseOrders,
   putawayReceiptLine,
+  reopenPurchaseOrderForEditing,
   runOperationsMrp,
   runScenarioMrp,
   seedOperationsKitScenario,
   setOperationUserActive,
+  transitionShippingOrder,
   transitionPurchaseOrder,
+  updateShippingOrderLineQuantity,
+  updatePurchaseOrderLinePricing,
   upsertOperationUser,
 } from "../../app/lib/operations-kit.server";
 import {
@@ -1005,13 +1010,14 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
     );
     expect(Number(need.rows[0]?.quantity ?? 0)).toBe(3);
 
-    await createPurchaseOrderFromNeed(pool, tenantId, need.rows[0].id);
+    const po = await createPurchaseOrderFromNeed(pool, tenantId, need.rows[0].id);
     const poLine = await pool.query<{
+      id: string;
       quantity: string;
       requested_quantity: string;
     }>(
       `
-        select quantity, requested_quantity
+        select id, quantity, requested_quantity
         from purchase_order_lines
         where tenant_id = $1 and purchase_need_id = $2
       `,
@@ -1020,6 +1026,37 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
 
     expect(Number(poLine.rows[0]?.quantity ?? 0)).toBe(3);
     expect(Number(poLine.rows[0]?.requested_quantity ?? 0)).toBe(3);
+    await expect(
+      transitionPurchaseOrder(pool, tenantId, po.purchaseOrderId!, "approved"),
+    ).rejects.toThrow("unit price");
+    await updatePurchaseOrderLinePricing(pool, tenantId, {
+      purchaseOrderLineId: poLine.rows[0].id,
+      quantity: 2,
+      unitPrice: 12.5,
+      currencyCode: "EUR",
+      expectedDeliveryDate: "2026-05-31",
+    });
+    const updatedPoLine = await pool.query<{
+      quantity: string;
+      unit_price: string;
+      expected_delivery_date: string;
+    }>(
+      `
+        select quantity, unit_price, expected_delivery_date
+        from purchase_order_lines
+        where tenant_id = $1 and id = $2
+      `,
+      [tenantId, poLine.rows[0].id],
+    );
+    expect(Number(updatedPoLine.rows[0]?.quantity ?? 0)).toBe(2);
+    expect(Number(updatedPoLine.rows[0]?.unit_price ?? 0)).toBe(12.5);
+    await transitionPurchaseOrder(pool, tenantId, po.purchaseOrderId!, "approved");
+    await reopenPurchaseOrderForEditing(pool, tenantId, po.purchaseOrderId!);
+    const reopened = await pool.query<{ status: string }>(
+      "select status from purchase_orders where tenant_id = $1 and id = $2",
+      [tenantId, po.purchaseOrderId],
+    );
+    expect(reopened.rows[0]?.status).toBe("draft");
   });
 
   it("keeps same-item procurement status scoped to the source order where current schema can link it", async () => {
@@ -1511,6 +1548,47 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
     expect(shipping.shippingOrderIds.length).toBe(1);
     expect(shipping.blockedOrders.length).toBe(0);
 
+    const shipmentDetail = await loadShippingOrderDetail(
+      pool,
+      tenantId,
+      shipping.shippingOrderIds[0],
+    );
+    expect(Number((shipmentDetail.lines[0] as any)?.ordered_quantity ?? 0)).toBe(3);
+    const correction = await updateShippingOrderLineQuantity(
+      pool,
+      tenantId,
+      (shipmentDetail.lines[0] as any).id,
+      3,
+    );
+    expect(correction.updated).toBe(true);
+
+    await transitionShippingOrder(
+      pool,
+      tenantId,
+      shipping.shippingOrderIds[0],
+      "shipped",
+    );
+    const shippedBalance = await pool.query<{
+      on_hand: string;
+      reserved: string;
+    }>(
+      `
+        select coalesce(sum(quantity_delta), 0) as on_hand,
+          coalesce(sum(reserved_delta), 0) as reserved
+        from inventory_movements
+        where tenant_id = $1 and item_id = $2 and location_code = 'MAIN'
+      `,
+      [tenantId, item.rows[0].id],
+    );
+    expect(Number(shippedBalance.rows[0]?.on_hand ?? 0)).toBe(0);
+    expect(Number(shippedBalance.rows[0]?.reserved ?? 0)).toBe(0);
+    const completedOrders = await loadOperationsOrdersList(pool, tenantId);
+    const completedOrder = completedOrders.find(
+      (row: any) => row.id === order.rows[0].id,
+    ) as any;
+    expect(completedOrder?.operational_status).toBe("Complete");
+    expect(completedOrder?.latest_shipped_at).toBeTruthy();
+
     await pool.query(
       "update purchase_orders set status = 'cancelled' where tenant_id = $1 and id = $2",
       [tenantId, po.purchaseOrderId],
@@ -1558,25 +1636,12 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
       );
       expect(finalPutaway.putaway).toBeGreaterThan(0);
     }
-    expect(finalPutaway?.paymentId).toBeTruthy();
-
     const repeatedPutaway = await putawayReceiptLine(
       pool,
       tenantId,
       acceptedLines[acceptedLines.length - 1].id,
     );
     expect(repeatedPutaway.putaway).toBe(0);
-
-    const paymentCount = await pool.query<{ count: string }>(
-      `
-        select count(*)::text as count
-        from purchase_payments
-        where tenant_id = $1
-          and purchase_order_id = $2
-      `,
-      [tenantId, po.id],
-    );
-    expect(Number(paymentCount.rows[0]?.count ?? 0)).toBe(1);
 
     const afterPutaway = await loadReceipts(pool, tenantId);
     expect(

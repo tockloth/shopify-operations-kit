@@ -53,11 +53,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return { message: "No putaway was performed for this receipt line." };
     }
     return {
-      message: `Putaway completed. Accepted quantity was booked into inventory.${
-        result.paymentId
-          ? " Payment entry is now open for this purchase order."
-          : ""
-      }`,
+      message: "Putaway completed. Accepted quantity was booked into inventory.",
     };
   }
 
@@ -138,7 +134,6 @@ export default function ReceiptDetail() {
     receipt: null,
     lines: [],
     inventoryMovements: [],
-    payment: null,
   };
   const receipt = detail.receipt as any;
   if (!receipt) {
@@ -148,9 +143,6 @@ export default function ReceiptDetail() {
           <s-stack direction="inline" gap="small">
             <s-link href="/app/receiving">Back to Receiving</s-link>
             <s-link href="/app/procurement">Back to Procurement</s-link>
-            <s-link href={`/app/procurement/${receipt.purchase_order_id}`}>
-              Back to Purchase Order
-            </s-link>
           </s-stack>
         </s-section>
       </s-page>
@@ -165,7 +157,6 @@ export default function ReceiptDetail() {
     (line: any) => line.status === "accepted",
   );
   const inventoryMovements = (detail.inventoryMovements ?? []) as any[];
-  const payment = detail.payment as any;
 
   return (
     <s-page heading={`Receipt ${receipt.receipt_number}`}>
@@ -228,60 +219,6 @@ export default function ReceiptDetail() {
             <MoneylessBadge>{line.status}</MoneylessBadge>,
           ])}
         />
-      </s-section>
-
-      <s-section heading="Inventory booking outcome">
-        {inventoryMovements.length > 0 ? (
-          <DataTable
-            headings={[
-              "Item",
-              "Quantity",
-              "Movement",
-              "Location",
-              "Booked",
-              "Source",
-            ]}
-            rows={inventoryMovements.map((movement: any) => [
-              <strong>
-                {movement.sku} {movement.title}
-              </strong>,
-              formatQuantity(movement.quantity_delta),
-              movement.movement_type,
-              movement.location_code ?? "No location",
-              formatDateTime(movement.occurred_at),
-              sourceLabel(movement),
-            ])}
-          />
-        ) : (
-          <s-box padding="base" borderWidth="base" borderRadius="base">
-            <s-paragraph>
-              Inventory is booked after accepted quantities are put away.
-            </s-paragraph>
-          </s-box>
-        )}
-      </s-section>
-
-      <s-section heading="Payment / payable outcome">
-        {payment ? (
-          <DataTable
-            headings={["Payment", "Supplier", "Status", "Amount", "Due date"]}
-            rows={[
-              [
-                <strong>{payment.payment_number}</strong>,
-                payment.supplier_name ?? receipt.supplier_name,
-                <MoneylessBadge>{payment.status}</MoneylessBadge>,
-                `${formatQuantity(payment.gross_amount ?? payment.net_amount)} ${payment.currency_code ?? "EUR"}`,
-                formatDate(payment.due_date) || "No due date",
-              ],
-            ]}
-          />
-        ) : (
-          <s-box padding="base" borderWidth="base" borderRadius="base">
-            <s-paragraph>
-              A payment entry is created after the receipt is fully put away.
-            </s-paragraph>
-          </s-box>
-        )}
       </s-section>
 
       {qcLines.length > 0 ? (
@@ -371,6 +308,35 @@ export default function ReceiptDetail() {
               </s-box>
             ))}
           </s-stack>
+        </s-section>
+      ) : null}
+
+      {inventoryMovements.length > 0 ? (
+        <s-section heading="Inventory booking outcome">
+          <DataTable
+            headings={[
+              "Item",
+              "Quantity",
+              "Movement",
+              "Location",
+              "Booked",
+              "Source",
+              "Open inventory",
+            ]}
+            rows={inventoryMovements.map((movement: any) => [
+              <strong>
+                {movement.sku} {movement.title}
+              </strong>,
+              formatQuantity(movement.quantity_delta),
+              movement.movement_type,
+              movement.location_code ?? "No location",
+              formatDateTime(movement.occurred_at),
+              sourceLabel(movement),
+              <s-link href={`/app/inventory/${movement.item_id}`}>
+                Open inventory
+              </s-link>,
+            ])}
+          />
         </s-section>
       ) : null}
     </s-page>

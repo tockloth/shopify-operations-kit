@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { Link, useLoaderData } from "react-router";
 
-import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
+import { DataTable, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
 import { loadInventoryLedger } from "../lib/operations-kit.server";
 
@@ -26,47 +26,6 @@ function formatDate(value: unknown) {
   return date.toLocaleString();
 }
 
-function movementLabel(value: unknown) {
-  const movement = String(value || "");
-  const labels: Record<string, string> = {
-    stock_adjustment: "Inventory adjustment",
-    reservation: "Reservation",
-    reservation_release: "Reservation release",
-    purchase_receipt: "Purchase receipt",
-    qc_hold: "QC hold",
-    putaway: "Putaway",
-    quarantine: "Quarantine",
-    pick: "Pick",
-    pack: "Pack",
-    ship: "Ship",
-    consume: "Consume",
-    produce: "Produce",
-    count_adjustment: "Count adjustment",
-  };
-  return labels[movement] ?? movement.replaceAll("_", " ");
-}
-
-function sourceLabel(movement: any) {
-  if (movement.source_receipt_id && movement.source_receipt_number) {
-    return (
-      <Link to={`/app/receiving/${movement.source_receipt_id}`}>
-        Receipt {movement.source_receipt_number}
-      </Link>
-    );
-  }
-
-  if (movement.source_type === "goods_receipt_line") return "Receipt line";
-  if (movement.source_type === "qc_check") return "QC check";
-  if (
-    movement.source_type === "manual_adjustment" ||
-    movement.source_type === "manual_inventory"
-  ) {
-    return "Manual adjustment";
-  }
-
-  return String(movement.source_type || "");
-}
-
 export default function Inventory() {
   const data = useLoaderData<typeof loader>();
   if (!data.configured || !("inventory" in data)) {
@@ -78,19 +37,18 @@ export default function Inventory() {
     movements: [],
   };
   const summaryRows = inventory.locationBalances ?? [];
-  const movementRows = inventory.movements ?? [];
 
   return (
     <s-page heading="Inventory">
       <s-section>
-        <s-paragraph>
-          Operations Kit shows stock booked by operational inventory
-          movements. Receiving and QC place goods on hold; putaway books
-          accepted quantities into stock.
-        </s-paragraph>
-      </s-section>
-
-      <s-section heading="Inventory summary">
+        <div className="kit-toolbar">
+          <s-heading>Inventory</s-heading>
+          <div className="kit-toolbar-actions">
+            <Link to="/app/inventory/movements">
+              <s-button>Open movements</s-button>
+            </Link>
+          </div>
+        </div>
         {summaryRows.length > 0 ? (
           <DataTable
             headings={[
@@ -125,36 +83,6 @@ export default function Inventory() {
         )}
       </s-section>
 
-      <s-section heading="Inventory ledger / recent movements">
-        {movementRows.length > 0 ? (
-          <DataTable
-            headings={[
-              "Item",
-              "Quantity",
-              "Movement",
-              "Location",
-              "Source",
-              "Booked date",
-            ]}
-            rows={movementRows.map((movement: any) => [
-              <strong>
-                {movement.sku} {movement.title}
-              </strong>,
-              quantity(movement.quantity_delta),
-              <MoneylessBadge>
-                {movementLabel(movement.movement_type)}
-              </MoneylessBadge>,
-              movement.location_code ?? "Unassigned",
-              sourceLabel(movement),
-              formatDate(movement.occurred_at),
-            ])}
-          />
-        ) : (
-          <s-box padding="base" borderWidth="base" borderRadius="base">
-            <s-paragraph>No inventory movements yet.</s-paragraph>
-          </s-box>
-        )}
-      </s-section>
     </s-page>
   );
 }

@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, Link, useActionData, useLoaderData } from "react-router";
+import { Form, Link, redirect, useActionData, useLoaderData } from "react-router";
 
 import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
@@ -11,10 +11,8 @@ import {
   loadPurchaseNeedSupplierAssignment,
   loadPurchaseOrders,
   loadPurchaseOrderTenantDiagnostics,
-  loadPurchasePayments,
   loadSuppliers,
   runOperationsMrp,
-  transitionPurchaseOrder,
 } from "../lib/operations-kit.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -28,6 +26,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     context.ctx.tenantId,
     planningRun.mrpRunId,
   );
+  const url = new URL(request.url);
+  const filters = {
+    tab: url.searchParams.get("tab") ?? "active",
+    q: url.searchParams.get("q")?.trim() ?? "",
+    supplierId: url.searchParams.get("supplierId") ?? "all",
+    sourceOrder: url.searchParams.get("sourceOrder")?.trim() ?? "",
+    expectedBefore: url.searchParams.get("expectedBefore") ?? "",
+  };
 
   return {
     configured: true,
@@ -44,8 +50,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       context.ctx.tenantId,
     ),
     showDevelopmentDiagnostics: process.env.NODE_ENV !== "production",
-    payables: await loadPurchasePayments(context.pool, context.ctx.tenantId),
     suppliers: await loadSuppliers(context.pool, context.ctx.tenantId),
+    filters,
   };
 };
 
@@ -89,10 +95,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       context.ctx.tenantId,
       purchaseNeedId,
     );
+    if (result.purchaseOrderId) {
+      return redirect("/app/procurement");
+    }
     return {
-      message: result.purchaseOrderId
-        ? "Purchase order draft created for this need."
-        : "Purchase need was not open.",
+      message: "Purchase need was not open.",
     };
   }
 
@@ -111,35 +118,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { message: "Supplier assigned to purchase need." };
   }
 
-  if (intent === "poStatus") {
-    await transitionPurchaseOrder(
-      context.pool,
-      context.ctx.tenantId,
-      String(form.get("purchaseOrderId")),
-      String(form.get("status")) as
-        | "pending_approval"
-        | "approved"
-        | "sent"
-        | "acknowledged"
-        | "cancelled",
-    );
-    return { message: "Purchase order status updated." };
-  }
-
   return { message: "No action was performed." };
 };
 
 function purchaseOrderBusinessStatus(po: any) {
   if (po.status === "cancelled") return "cancelled";
-  if (po.payment_status && po.payment_status !== "paid") return "Payment open";
   if (po.receipt_status === "closed") return "Received / put away";
   if (po.receipt_status === "putaway_pending") return "Putaway pending";
   if (po.receipt_status === "qc_required" || po.receipt_status === "posted")
     return "Receiving / QC";
   if (po.status === "acknowledged") return "Awaiting receipt";
   if (po.status === "sent") return "Sent / ordered";
-  if (po.status === "approved") return "PO created";
+  if (po.status === "approved") return "PO approved";
   return "PO created";
+}
+
+function isCompletedProcurement(po: any) {
+  return po.status === "cancelled" || po.receipt_status === "closed";
 }
 
 type BadgeTone =
@@ -181,42 +176,25 @@ function formatDate(value: unknown) {
   return date.toLocaleDateString();
 }
 
-function formatMoney(amount: unknown, currencyCode: unknown) {
-  return `${Number(amount ?? 0).toLocaleString()} ${String(currencyCode || "EUR")}`;
-}
-
-function roleSummary(row: any) {
-  return [
-    row.is_sellable ? "sellable" : null,
-    row.is_purchasable ? "purchasable" : null,
-    row.is_producible ? "producible" : null,
-  ]
-    .filter(Boolean)
-    .join(" / ") || "not classified";
-}
-
-function policySummary(row: any) {
-  return (
-    <s-stack direction="block" gap="small">
-      <s-text>Roles: {roleSummary(row)}</s-text>
-      <s-text>
-        Lead time: {Number(row.supplier_lead_time_days ?? row.max_lead_time_days ?? 7).toLocaleString()} days
-      </s-text>
-      <s-text>
-        Order qty: {Number(row.default_order_quantity ?? row.max_default_order_quantity ?? 1).toLocaleString()}
-      </s-text>
-      <s-text>
-        Min stock: {Number(row.min_inventory_quantity ?? row.max_min_inventory_quantity ?? 0).toLocaleString()}
-      </s-text>
-    </s-stack>
-  );
+function sortTime(value: unknown) {
+  if (!value) return 0;
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
 
 function nextPurchaseOrderAction(po: any) {
+  if (
+    po.latest_receipt_id &&
+    ["posted", "qc_required", "putaway_pending", "closed"].includes(
+      String(po.receipt_status),
+    )
+  ) {
+    return "Open Receipt";
+  }
   if (po.status === "draft" || po.status === "pending_approval") {
     return "Open Purchase Order";
   }
-  if (po.status === "approved") return "Send to supplier";
+  if (po.status === "approved") return "Sent to supplier";
   if (po.status === "sent") return "Acknowledge supplier";
   if (po.status === "acknowledged" && !po.receipt_status) {
     return "Create Goods Receipt";
@@ -227,6 +205,60 @@ function nextPurchaseOrderAction(po: any) {
   if (po.receipt_status === "putaway_pending") return "Put away";
   if (po.receipt_status === "closed") return "View inventory";
   return "Open Purchase Order";
+}
+
+function purchaseOrderActionHref(po: any) {
+  if (
+    po.latest_receipt_id &&
+    ["posted", "qc_required", "putaway_pending", "closed"].includes(
+      String(po.receipt_status),
+    )
+  ) {
+    return `/app/receiving/${po.latest_receipt_id}`;
+  }
+  return `/app/procurement/${po.id}`;
+}
+
+function sourceSummary(need: any) {
+  if (need.demand_link_scope === "order_line") {
+    return `${need.source_order_name ?? "Order"} line ${need.source_line_sku ?? need.sku}`;
+  }
+  if (need.source_order_name) return need.source_order_name;
+  return "Item-level planning";
+}
+
+function leadTimeDays(row: any) {
+  return Number(row.supplier_lead_time_days ?? row.max_lead_time_days ?? 7);
+}
+
+function needExpectedLabel(need: any) {
+  return `Lead time ${leadTimeDays(need).toLocaleString()} days`;
+}
+
+function expectedDateForNeed(need: any) {
+  const date = new Date();
+  date.setDate(date.getDate() + leadTimeDays(need));
+  return date;
+}
+
+function matchesSearch(row: any, query: string, fields: string[]) {
+  if (!query) return true;
+  const searchable = fields
+    .map((field) => row[field])
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return searchable.includes(query.toLowerCase());
+}
+
+function expectedBeforeMatches(dateValue: unknown, expectedBefore: string) {
+  if (!expectedBefore) return true;
+  const value = dateValue instanceof Date ? dateValue : new Date(String(dateValue));
+  const threshold = new Date(expectedBefore);
+  if (Number.isNaN(value.getTime()) || Number.isNaN(threshold.getTime())) {
+    return true;
+  }
+  return value <= threshold;
 }
 
 export default function Procurement() {
@@ -241,145 +273,196 @@ export default function Procurement() {
   }
 
   const suppliers = (data.suppliers ?? []) as any[];
-  const paymentByPurchaseOrder = new Map(
-    (data.payables ?? []).map((payment: any) => [
-      payment.purchase_order_id,
-      payment,
-    ]),
-  );
-  const proposalRows = (data.needs ?? [])
-    .filter((need: any) => !need.purchase_order_id)
-    .map((need: any) => {
-      const assignedSupplier = Boolean(need.supplier_id);
-      const preferredSupplier = Boolean(need.preferred_supplier_id);
-      const selectedSupplierId =
-        need.supplier_id ?? need.preferred_supplier_id ?? suppliers[0]?.id;
+  const filters = (data.filters ?? {
+    tab: "active",
+    q: "",
+    supplierId: "all",
+    sourceOrder: "",
+    expectedBefore: "",
+  }) as any;
+  const activeTab = [
+    "active",
+    "needs",
+    "need_supplier",
+    "ready_for_po",
+    "orders",
+    "po_created",
+    "po_approved",
+    "sent_ordered",
+    "awaiting_receipt",
+    "receipts",
+    "receiving_qc",
+    "putaway_pending",
+    "completed",
+  ].includes(
+    filters.tab,
+  )
+    ? filters.tab
+    : "active";
+  const openNeeds = (data.needs ?? []).filter((need: any) => {
+    if (need.purchase_order_id) return false;
+    if (
+      filters.supplierId !== "all" &&
+      String(need.supplier_id ?? need.preferred_supplier_id ?? "") !==
+        filters.supplierId
+    ) {
+      return false;
+    }
+    if (
+      filters.sourceOrder &&
+      !String(need.source_order_name ?? "")
+        .toLowerCase()
+        .includes(String(filters.sourceOrder).toLowerCase())
+    ) {
+      return false;
+    }
+    if (!expectedBeforeMatches(expectedDateForNeed(need), filters.expectedBefore)) {
+      return false;
+    }
+    return matchesSearch(need, filters.q, [
+      "sku",
+      "title",
+      "source_order_name",
+      "source_line_sku",
+      "supplier_name",
+      "preferred_supplier_name",
+    ]);
+  });
 
-      const supplierCell = (
+  const filteredPurchaseOrders = (data.purchaseOrders ?? []).filter((po: any) => {
+    if (filters.supplierId !== "all" && String(po.supplier_id ?? "") !== filters.supplierId) {
+      return false;
+    }
+    if (
+      filters.sourceOrder &&
+      !String(po.source_order_names ?? "")
+        .toLowerCase()
+        .includes(String(filters.sourceOrder).toLowerCase())
+    ) {
+      return false;
+    }
+    if (!expectedBeforeMatches(po.next_expected_delivery_date, filters.expectedBefore)) {
+      return false;
+    }
+    return matchesSearch(po, filters.q, [
+      "display_number",
+      "supplier_name",
+      "item_summary",
+      "preferred_supplier_names",
+    ]);
+  });
+
+  function proposalRow(need: any) {
+    const assignedSupplier = Boolean(need.supplier_id);
+    const preferredSupplier = Boolean(need.preferred_supplier_id);
+    const selectedSupplierId =
+      need.supplier_id ?? need.preferred_supplier_id ?? suppliers[0]?.id;
+
+    const supplierCell = (
+      <s-stack direction="block" gap="small">
+        <strong>{need.supplier_name ?? "No assigned supplier"}</strong>
+        {need.preferred_supplier_name ? (
+          <s-text>Preferred supplier: {need.preferred_supplier_name}</s-text>
+        ) : (
+          <s-text>No preferred supplier set</s-text>
+        )}
+      </s-stack>
+    );
+
+    const itemCell = (
+      <s-stack direction="block" gap="small">
+        <strong>
+          {need.sku} {need.title}
+        </strong>
+        <s-link href={`/app/items/${need.item_id}`}>Open product</s-link>
+      </s-stack>
+    );
+
+    let actionCell;
+    if (assignedSupplier) {
+      actionCell = (
+        <Form method="post">
+          <input type="hidden" name="intent" value="createPoForNeed" />
+          <input type="hidden" name="purchaseNeedId" value={need.id} />
+          <s-button variant="primary" type="submit">
+            Create PO
+          </s-button>
+        </Form>
+      );
+    } else if (suppliers.length === 0 && !preferredSupplier) {
+      actionCell = (
         <s-stack direction="block" gap="small">
-          <strong>{need.supplier_name ?? "No assigned supplier"}</strong>
-          {need.preferred_supplier_name ? (
-            <s-text>Preferred supplier: {need.preferred_supplier_name}</s-text>
-          ) : (
-            <s-text>No preferred supplier set</s-text>
-          )}
+          <s-text>
+            Create a supplier first, then assign it to this purchase need.
+          </s-text>
+          <s-link href="/app/suppliers/new">Create supplier</s-link>
         </s-stack>
       );
-
-      const itemCell = (
+    } else {
+      actionCell = (
         <s-stack direction="block" gap="small">
-          <strong>
-            {need.sku} {need.title}
-          </strong>
-          <s-link href={`/app/items/${need.item_id}`}>Open product</s-link>
-        </s-stack>
-      );
-
-      let actionCell;
-      if (assignedSupplier) {
-        actionCell = (
-          <Form method="post">
-            <input type="hidden" name="intent" value="createPoForNeed" />
-            <input type="hidden" name="purchaseNeedId" value={need.id} />
-            <s-button variant="primary" type="submit">
-              Create PO
-            </s-button>
-          </Form>
-        );
-      } else if (suppliers.length === 0 && !preferredSupplier) {
-        actionCell = (
-          <s-stack direction="block" gap="small">
-            <s-text>
-              Create a supplier first, then assign it to this purchase need.
-            </s-text>
-            <s-link href="/app/suppliers/new">Create supplier</s-link>
-          </s-stack>
-        );
-      } else {
-        actionCell = (
-          <s-stack direction="block" gap="small">
-            {preferredSupplier ? (
-              <Form method="post">
-                <input
-                  type="hidden"
-                  name="intent"
-                  value="assignSupplierForNeed"
-                />
-                <input type="hidden" name="purchaseNeedId" value={need.id} />
-                <input
-                  type="hidden"
+          {preferredSupplier ? (
+            <Form method="post">
+              <input
+                type="hidden"
+                name="intent"
+                value="assignSupplierForNeed"
+              />
+              <input type="hidden" name="purchaseNeedId" value={need.id} />
+              <input
+                type="hidden"
+                name="supplierId"
+                value={need.preferred_supplier_id}
+              />
+              <s-button type="submit">Assign preferred supplier</s-button>
+            </Form>
+          ) : null}
+          {suppliers.length > 0 ? (
+            <Form method="post">
+              <input
+                type="hidden"
+                name="intent"
+                value="assignSupplierForNeed"
+              />
+              <input type="hidden" name="purchaseNeedId" value={need.id} />
+              <s-stack direction="block" gap="small">
+                <s-select
+                  label="Supplier"
                   name="supplierId"
-                  value={need.preferred_supplier_id}
-                />
-                <s-button type="submit">Assign preferred supplier</s-button>
-              </Form>
-            ) : null}
-            {suppliers.length > 0 ? (
-              <Form method="post">
-                <input
-                  type="hidden"
-                  name="intent"
-                  value="assignSupplierForNeed"
-                />
-                <input type="hidden" name="purchaseNeedId" value={need.id} />
-                <s-stack direction="block" gap="small">
-                  <s-select
-                    label="Supplier"
-                    name="supplierId"
-                    value={selectedSupplierId}
-                  >
-                    {suppliers.map((supplier: any) => (
-                      <s-option key={supplier.id} value={supplier.id}>
-                        {supplier.name}
-                      </s-option>
-                    ))}
-                  </s-select>
-                  <s-button type="submit">Assign supplier</s-button>
-                </s-stack>
-              </Form>
-            ) : null}
-          </s-stack>
-        );
-      }
+                  value={selectedSupplierId}
+                >
+                  {suppliers.map((supplier: any) => (
+                    <s-option key={supplier.id} value={supplier.id}>
+                      {supplier.name}
+                    </s-option>
+                  ))}
+                </s-select>
+                <s-button type="submit">Assign supplier</s-button>
+              </s-stack>
+            </Form>
+          ) : null}
+        </s-stack>
+      );
+    }
 
-      return [
-        <s-stack direction="block" gap="small">
-          <strong>Purchase proposal</strong>
-          {need.demand_link_scope === "order_line" ? (
-            <s-text>
-              Source line: {need.source_order_name ?? "Order"} ·{" "}
-              {need.source_line_sku ?? need.sku}
-            </s-text>
-          ) : need.source_order_name ? (
-            <s-text>Source order: {need.source_order_name}</s-text>
-          ) : (
-            <s-text>Source: item-level planning</s-text>
-          )}
-        </s-stack>,
-        <MoneylessBadge tone={purchaseNeedStatusTone(need)}>
-          {purchaseNeedStatus(need)}
-        </MoneylessBadge>,
-        itemCell,
-        policySummary(need),
-        supplierCell,
-        `${Number(need.quantity).toLocaleString()} ${need.unit}`,
-        `${Number(need.preferred_unit_price ?? 0).toLocaleString()} ${need.preferred_currency_code ?? "EUR"}`,
-        `${(Number(need.quantity ?? 0) * Number(need.preferred_unit_price ?? 0)).toLocaleString()} ${need.preferred_currency_code ?? "EUR"}`,
-        actionCell,
-      ];
-    });
+    return [
+      <strong>Purchase Need</strong>,
+      <MoneylessBadge tone={purchaseNeedStatusTone(need)}>
+        {purchaseNeedStatus(need)}
+      </MoneylessBadge>,
+      sourceSummary(need),
+      itemCell,
+      `${Number(need.quantity).toLocaleString()} ${need.unit}`,
+      supplierCell,
+      `${Number(need.preferred_unit_price ?? 0).toLocaleString()} ${need.preferred_currency_code ?? "EUR"}`,
+      `${(Number(need.quantity ?? 0) * Number(need.preferred_unit_price ?? 0)).toLocaleString()} ${need.preferred_currency_code ?? "EUR"}`,
+      needExpectedLabel(need),
+      actionCell,
+    ];
+  }
 
-  const purchaseOrderRows = (data.purchaseOrders ?? []).map((po: any) => {
-    const payment = paymentByPurchaseOrder.get(po.id) as any;
-    const row = { ...po, payment_status: payment?.status };
-    const businessStatus = purchaseOrderBusinessStatus(row);
-    const nextActionHref =
-      po.latest_receipt_id &&
-      ["posted", "qc_required", "putaway_pending", "closed"].includes(
-        String(po.receipt_status),
-      )
-        ? `/app/receiving/${po.latest_receipt_id}`
-        : `/app/procurement/${po.id}`;
+  function purchaseOrderRow(po: any) {
+    const businessStatus = purchaseOrderBusinessStatus(po);
     return [
       <Link to={`/app/procurement/${po.id}`}>
         <strong>{po.display_number}</strong>
@@ -387,93 +470,92 @@ export default function Procurement() {
       <MoneylessBadge tone={purchaseOrderStatusTone(businessStatus)}>
         {businessStatus}
       </MoneylessBadge>,
-      <s-stack direction="block" gap="small">
-        <strong>{po.item_summary ?? `${po.line_count} line${po.line_count === 1 ? "" : "s"}`}</strong>
-      </s-stack>,
-      policySummary(row),
+      po.source_order_names ?? "Purchase Order",
+      <strong>{po.item_summary ?? `${po.line_count} line${po.line_count === 1 ? "" : "s"}`}</strong>,
+      `${Number(po.total_quantity ?? 0).toLocaleString()} ${po.unit ?? "pcs"}`,
       <s-stack direction="block" gap="small">
         <strong>{po.supplier_name}</strong>
         {po.preferred_supplier_names ? (
           <s-text>Preferred: {po.preferred_supplier_names}</s-text>
         ) : null}
       </s-stack>,
-      `${Number(po.total_quantity ?? 0).toLocaleString()} ${po.unit ?? "pcs"}`,
-      `${Number(po.unit_price ?? 0).toLocaleString()} ${po.currency_code ?? "EUR"}`,
+      Number(po.unit_price ?? 0) > 0
+        ? `${Number(po.unit_price).toLocaleString()} ${po.currency_code ?? "EUR"}`
+        : "No price",
       `${Number(po.net_amount ?? 0).toLocaleString()} ${po.currency_code ?? "EUR"}`,
-      <s-stack direction="inline" gap="small">
-        {po.status === "draft" ? (
-          <Form method="post">
-            <input type="hidden" name="intent" value="poStatus" />
-            <input type="hidden" name="purchaseOrderId" value={po.id} />
-            <input type="hidden" name="status" value="pending_approval" />
-            <s-button type="submit">Submit</s-button>
-          </Form>
-        ) : null}
-        {po.status === "pending_approval" ? (
-          <Form method="post">
-            <input type="hidden" name="intent" value="poStatus" />
-            <input type="hidden" name="purchaseOrderId" value={po.id} />
-            <input type="hidden" name="status" value="approved" />
-            <s-button variant="primary" type="submit">
-              Approve
-            </s-button>
-          </Form>
-        ) : null}
-        {po.status === "approved" ? (
-          <Form method="post">
-            <input type="hidden" name="intent" value="poStatus" />
-            <input type="hidden" name="purchaseOrderId" value={po.id} />
-            <input type="hidden" name="status" value="sent" />
-            <s-button variant="primary" type="submit">
-              Send
-            </s-button>
-          </Form>
-        ) : null}
-        {po.status === "sent" ? (
-          <Form method="post">
-            <input type="hidden" name="intent" value="poStatus" />
-            <input type="hidden" name="purchaseOrderId" value={po.id} />
-            <input type="hidden" name="status" value="acknowledged" />
-            <s-button variant="primary" type="submit">
-              Acknowledge
-            </s-button>
-          </Form>
-        ) : null}
-        {po.status === "acknowledged" ? (
-          <s-text>Awaiting receipt</s-text>
-        ) : null}
-        <s-link href={nextActionHref}>
-          {nextPurchaseOrderAction(po)}
-        </s-link>
-      </s-stack>,
+      formatDate(po.next_expected_delivery_date) || "Not set",
+      <s-link href={purchaseOrderActionHref(po)}>
+        {nextPurchaseOrderAction(po)}
+      </s-link>,
     ];
-  });
+  }
 
-  const payableRows = (data.payables ?? []).map((payment: any) => [
-    <strong>{payment.payment_number}</strong>,
-    payment.supplier_name ?? "No supplier",
-    <Link to={`/app/procurement/${payment.purchase_order_id}`}>
-      {payment.purchase_order_number}
-    </Link>,
-    <MoneylessBadge>{payment.status}</MoneylessBadge>,
-    formatMoney(payment.gross_amount ?? payment.net_amount, payment.currency_code),
-    formatDate(payment.due_date) || "No due date",
-    formatDate(payment.created_at),
-    "Review in accounting",
-  ]);
-  const purchaseOrderSectionRows = [...proposalRows, ...purchaseOrderRows];
+  const activePurchaseOrders = filteredPurchaseOrders.filter(
+    (po: any) => !isCompletedProcurement(po),
+  );
+  const completedPurchaseOrders = filteredPurchaseOrders.filter(
+    (po: any) => isCompletedProcurement(po),
+  );
+  const needRows = openNeeds.filter((need: any) => {
+    if (activeTab === "need_supplier") return !need.supplier_id;
+    if (activeTab === "ready_for_po") return Boolean(need.supplier_id);
+    return activeTab === "active" || activeTab === "needs";
+  });
+  const visiblePurchaseOrders = activePurchaseOrders.filter((po: any) => {
+    const businessStatus = purchaseOrderBusinessStatus(po);
+    if (activeTab === "orders") return true;
+    if (activeTab === "po_created") return businessStatus === "PO created";
+    if (activeTab === "po_approved") return businessStatus === "PO approved";
+    if (activeTab === "sent_ordered") return businessStatus === "Sent / ordered";
+    if (activeTab === "awaiting_receipt") {
+      return businessStatus === "Awaiting receipt";
+    }
+    if (activeTab === "receipts") return Boolean(po.latest_receipt_id);
+    if (activeTab === "receiving_qc") return businessStatus === "Receiving / QC";
+    if (activeTab === "putaway_pending") return businessStatus === "Putaway pending";
+    return activeTab === "active";
+  });
+  const workQueueRows = [
+    ...needRows.map(proposalRow),
+    ...visiblePurchaseOrders.map(purchaseOrderRow),
+  ];
+  const activeQueueRows =
+    activeTab === "completed" ? [] : workQueueRows;
+  const hasActiveFilters = Boolean(
+    filters.q ||
+      filters.supplierId !== "all" ||
+      filters.sourceOrder ||
+      filters.expectedBefore,
+  );
+
+  const completedPurchaseOrderRows = completedPurchaseOrders
+    .sort(
+      (left: any, right: any) =>
+        sortTime(right.updated_at ?? right.created_at) -
+        sortTime(left.updated_at ?? left.created_at),
+    )
+    .map((po: any) => {
+      return [
+        <s-link href={`/app/procurement/${po.id}`}>{po.display_number}</s-link>,
+        po.supplier_name,
+        po.item_summary ?? `${po.line_count} line${po.line_count === 1 ? "" : "s"}`,
+        <MoneylessBadge>{purchaseOrderBusinessStatus(po)}</MoneylessBadge>,
+        `${Number(po.net_amount ?? 0).toLocaleString()} ${po.currency_code ?? "EUR"}`,
+        po.latest_receipt_id ? (
+          <s-link href={`/app/receiving/${po.latest_receipt_id}`}>
+            Open Receipt
+          </s-link>
+        ) : (
+          <s-link href={`/app/procurement/${po.id}`}>Open Purchase Order</s-link>
+        ),
+      ];
+    });
 
   return (
     <s-page heading="Procurement">
       <s-section>
         <div className="kit-toolbar">
-          <div>
-            <s-heading>Trading-goods purchasing</s-heading>
-            <div className="kit-list-summary">
-              Purchase orders are created from open customer order shortages,
-              stock, reservations, incoming purchase orders and minimum stock.
-            </div>
-          </div>
+          <div />
           <div className="kit-toolbar-actions">
             <Form method="post">
               <input type="hidden" name="intent" value="planPurchaseNeeds" />
@@ -483,52 +565,104 @@ export default function Procurement() {
             </Form>
           </div>
         </div>
+        <details className="kit-compact-disclosure">
+          <summary>Procurement process</summary>
+          <div className="kit-process-guide kit-process-guide-compact">
+            {[
+              "Purchase proposal",
+              "Supplier assigned",
+              "Purchase Order",
+              "Supplier acknowledgement",
+              "Goods Receipt",
+              "QC",
+              "Putaway",
+              "Inventory",
+            ].map((step) => (
+              <span key={step}>{step}</span>
+            ))}
+          </div>
+        </details>
         {actionData?.message ? (
           <s-box padding="base" borderWidth="base" borderRadius="base">
             <s-paragraph>{actionData.message}</s-paragraph>
           </s-box>
-        ) : data.autoPlanResult ? (
-          <s-box padding="base" borderWidth="base" borderRadius="base">
-            <s-paragraph>
-              Purchasing needs were refreshed from open order shortages.
-            </s-paragraph>
-          </s-box>
         ) : null}
       </s-section>
 
-      <s-section heading="Procurement process">
-        <div className="kit-process-guide">
-          {[
-            "Purchase proposal",
-            "Supplier assigned",
-            "Purchase Order",
-            "Supplier acknowledgement",
-            "Goods Receipt",
-            "QC",
-            "Putaway",
-            "Inventory",
-          ].map((step) => (
-            <span key={step}>{step}</span>
-          ))}
-        </div>
-      </s-section>
+      <s-section>
+        <Form method="get">
+          <div className="kit-filterbar kit-procurement-scopebar">
+            <s-select label="Work queue" name="tab" value={activeTab}>
+              <s-option value="active">Active work</s-option>
+              <s-option value="needs">Purchase Needs</s-option>
+              <s-option value="need_supplier">Need supplier</s-option>
+              <s-option value="ready_for_po">Ready for PO</s-option>
+              <s-option value="orders">Purchase Orders</s-option>
+              <s-option value="po_created">PO created</s-option>
+              <s-option value="po_approved">PO approved</s-option>
+              <s-option value="sent_ordered">Sent / ordered</s-option>
+              <s-option value="awaiting_receipt">Awaiting receipt</s-option>
+              <s-option value="receipts">Receipts</s-option>
+              <s-option value="receiving_qc">Receiving / QC</s-option>
+              <s-option value="putaway_pending">Putaway pending</s-option>
+              <s-option value="completed">Completed</s-option>
+            </s-select>
+            <s-button type="submit">Apply</s-button>
+          </div>
+          <details className="kit-compact-disclosure" open={hasActiveFilters}>
+            <summary>Filters</summary>
+            <div className="kit-filterbar kit-procurement-filterbar">
+              <s-text-field
+                label="Product / reference"
+                name="q"
+                value={filters.q}
+                placeholder="SKU, product, PO, supplier"
+              ></s-text-field>
+              <s-select label="Supplier" name="supplierId" value={filters.supplierId}>
+                <s-option value="all">All suppliers</s-option>
+                {suppliers.map((supplier: any) => (
+                  <s-option key={supplier.id} value={supplier.id}>
+                    {supplier.name}
+                  </s-option>
+                ))}
+              </s-select>
+              <s-text-field
+                label="Source order"
+                name="sourceOrder"
+                value={filters.sourceOrder}
+                placeholder="#1005"
+              ></s-text-field>
+              <s-text-field
+                label="Expected before"
+                name="expectedBefore"
+                value={filters.expectedBefore}
+                placeholder="YYYY-MM-DD"
+              ></s-text-field>
+              <s-button type="submit">Apply filters</s-button>
+              <Link to="/app/procurement">Clear filters</Link>
+            </div>
+          </details>
+        </Form>
 
-      <s-section heading="Purchase orders">
-        <DataTable
-          headings={[
-            "Reference",
-            "Status",
-            "Item",
-            "Product context",
-            "Supplier",
-            "Quantity",
-            "Unit price",
-            "Line value",
-            "Action",
-          ]}
-          rows={purchaseOrderSectionRows}
-        />
-        {purchaseOrderSectionRows.length === 0 &&
+        {activeTab !== "completed" ? (
+          <DataTable
+            headings={[
+              "Reference",
+              "Status",
+              "Source",
+              "Item",
+              "Qty",
+              "Supplier",
+              "Unit price",
+              "Line value",
+              "Expected",
+              "Next action",
+            ]}
+            rows={activeQueueRows}
+          />
+        ) : null}
+        {activeTab === "orders" &&
+        activeQueueRows.length === 0 &&
         data.showDevelopmentDiagnostics ? (
           <s-box padding="base" borderWidth="base" borderRadius="base">
             <s-stack direction="block" gap="small">
@@ -537,47 +671,29 @@ export default function Procurement() {
               <s-paragraph>Shop: {data.shopDomain}</s-paragraph>
               <s-paragraph>
                 Purchase Orders for current tenant:{" "}
-                {
-                  data.purchaseOrderDiagnostics
-                    .current_tenant_purchase_orders
-                }
+                {data.purchaseOrderDiagnostics.current_tenant_purchase_orders}
               </s-paragraph>
               <s-paragraph>
                 Purchase Orders across all tenants:{" "}
                 {data.purchaseOrderDiagnostics.total_purchase_orders}
               </s-paragraph>
-              <s-paragraph>
-                If total Purchase Orders exist but current-tenant Purchase
-                Orders are zero, the visible database rows belong to another
-                tenant, usually a DB-backed test tenant.
-              </s-paragraph>
             </s-stack>
           </s-box>
         ) : null}
-      </s-section>
 
-      <s-section heading="Payment / Payables">
-        {payableRows.length > 0 ? (
+        {activeTab === "completed" ? (
           <DataTable
             headings={[
-              "Payment",
-              "Supplier",
               "Purchase Order",
+              "Supplier",
+              "Products",
               "Status",
-              "Amount",
-              "Due date",
-              "Created",
-              "Next action",
+              "Value",
+              "Open",
             ]}
-            rows={payableRows}
+            rows={completedPurchaseOrderRows}
           />
-        ) : (
-          <s-box padding="base" borderWidth="base" borderRadius="base">
-            <s-paragraph>
-              Payment entries are created after received goods are put away.
-            </s-paragraph>
-          </s-box>
-        )}
+        ) : null}
       </s-section>
     </s-page>
   );

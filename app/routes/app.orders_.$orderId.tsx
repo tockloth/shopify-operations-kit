@@ -99,6 +99,39 @@ function shippingBlockReason(order: any, shippingAddress?: any) {
     : null;
 }
 
+function operationsStatusContent(status: string, tone: string, shipmentNumbers?: string | null) {
+  if (status === "Complete") {
+    return (
+      <s-stack direction="block" gap="small">
+        <MoneylessBadge tone="success">Shipped locally</MoneylessBadge>
+        {shipmentNumbers ? <s-text>{shipmentNumbers}</s-text> : null}
+      </s-stack>
+    );
+  }
+
+  return (
+    <MoneylessBadge tone={tone as any}>
+      {status}
+    </MoneylessBadge>
+  );
+}
+
+function shopifyFulfillmentContent(order: any, operationsStatus: string) {
+  return (
+    <s-stack direction="block" gap="small">
+      <MoneylessBadge
+        tone={order.fulfillment_status === "FULFILLED" ? "success" : "warning"}
+      >
+        {order.fulfillment_status ?? "unfulfilled"}
+      </MoneylessBadge>
+      {operationsStatus === "Complete" &&
+      order.fulfillment_status !== "FULFILLED" ? (
+        <s-text>Shopify not updated</s-text>
+      ) : null}
+    </s-stack>
+  );
+}
+
 type Decision = {
   label:
     | "Ready from stock"
@@ -344,10 +377,10 @@ export default function OrderDetail() {
             "Customer",
             "Email",
             "Payment",
-            "Fulfillment",
+            "Shopify fulfillment",
             "Shipping address",
             "Address",
-            "Operations status",
+            "Operations",
             "Next action",
           ]}
           rows={[
@@ -357,28 +390,29 @@ export default function OrderDetail() {
               order.customer_name ?? "No customer",
               order.customer_email ?? "No email",
               <MoneylessBadge>{order.financial_status ?? "unknown"}</MoneylessBadge>,
-              <MoneylessBadge>
-                {order.fulfillment_status ?? "unfulfilled"}
-              </MoneylessBadge>,
+              shopifyFulfillmentContent(order, operationsStatus),
               shippingAddress ? formatAddress(shippingAddress) : "No shipping address",
               shippingReason ? (
                 <MoneylessBadge tone="warning">Blocked</MoneylessBadge>
               ) : (
                 <MoneylessBadge tone="success">Ready</MoneylessBadge>
               ),
-              <MoneylessBadge tone={operationsStatusTone as any}>
-                {operationsStatus}
-              </MoneylessBadge>,
-              nextActionHref === currentOrderHref ? (
-                nextActionLabel
-              ) : (
-                <s-link href={nextActionHref}>{nextActionLabel}</s-link>
+              operationsStatusContent(
+                operationsStatus,
+                operationsStatusTone,
+                orderSummary?.shipment_numbers,
               ),
+              <s-stack direction="block" gap="small">
+                {nextActionHref === currentOrderHref ? (
+                  <s-text>{nextActionLabel}</s-text>
+                ) : (
+                  <s-link href={nextActionHref}>{nextActionLabel}</s-link>
+                )}
+                <s-text>{nextReason}</s-text>
+              </s-stack>,
             ],
           ]}
         />
-        {shippingReason ? <s-paragraph>{shippingReason}</s-paragraph> : null}
-        <s-paragraph>{nextReason}</s-paragraph>
       </s-section>
 
       <s-section heading="Lines">
@@ -413,14 +447,11 @@ export default function OrderDetail() {
               procurement?.demand_link_scope ?? receipt?.demand_link_scope,
             );
 
-            return {
-              id: line.id,
-                href: `/app/order-lines/${line.id}`,
-                cells: [
-                  `Line ${index + 1}`,
-                  `${line.sku ?? line.item_sku} / ${line.title ?? line.item_title}`,
-                  `${quantity(line.quantity)} ${line.unit}`,
-                  `${quantity(allocatedAvailable)} available`,
+            return [
+              `Line ${index + 1}`,
+              `${line.sku ?? line.item_sku} / ${line.title ?? line.item_title}`,
+              `${quantity(line.quantity)} ${line.unit}`,
+              `${quantity(allocatedAvailable)} available`,
                 shortage > 0 ? `${quantity(shortage)} short` : "Covered",
                 <MoneylessBadge tone={decision.tone}>
                   {decision.label}
@@ -443,8 +474,7 @@ export default function OrderDetail() {
                 <s-link href={`/app/order-lines/${line.id}`}>
                   Open line
                 </s-link>,
-              ],
-            };
+              ];
           })}
         />
       </s-section>
