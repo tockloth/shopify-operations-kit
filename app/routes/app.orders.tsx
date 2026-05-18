@@ -230,7 +230,7 @@ function operationsStatusContent(order: any) {
   if (order.operational_status === "Complete") {
     return (
       <s-stack direction="block" gap="small">
-        <MoneylessBadge tone="success">Shipped locally</MoneylessBadge>
+        <MoneylessBadge tone="success">Complete</MoneylessBadge>
         {order.shipment_numbers ? (
           <s-text>{order.shipment_numbers}</s-text>
         ) : null}

@@ -36,7 +36,7 @@ Die Orders-Liste ist eine schlanke Shopify-Demand-Übersicht, kein Status-Dashbo
 - Tabelle: Order, Order date, Customer, Products / quantities, Operations, Payment, Shopify fulfillment, Address, Next action.
 - `Shopify fulfillment` ist der Shopify-Status. Nach erfolgreichem Shipment Writeback sollte Shopify `FULFILLED` melden.
 - `Operations` ist der lokale Operations-Kit-Status und muss nach lokalem Shipment `Complete` zeigen.
-- Wenn lokales Shipment abgeschlossen ist, Shopify aber weiterhin `UNFULFILLED` meldet, zeigt die UI `Shopify not updated` als Daten-/Sync-Abweichung.
+- Wenn lokales Shipment abgeschlossen ist, Shopify aber weiterhin `UNFULFILLED` meldet, zeigt die UI `Shopify not updated` als Daten-/Sync-Abweichung und als Next Action `Update Shopify fulfillment`.
 - Nicht auf der Liste anzeigen: Operational-Status-Zusammenfassung, Next reason / blocker.
 - Operative Status- und Reason-Details gehören auf Order Detail, Order Line Detail, Procurement, Receiving oder Logistics.
 
@@ -49,6 +49,7 @@ Order Detail ist die Demand-Situation-Seite.
 - Summary zeigt Order, Order date, Customer, Email, Payment, Shopify fulfillment, Shipping address, Address readiness, Operations, Next action.
 - Next reason darf als kurzer Text im Summary stehen, aber nicht als zweite separate Next-Action-Box dupliziert werden.
 - Keine Ausführung von PO-Lifecycle, QC, Putaway oder Shipment-Pack/Ship auf Order Detail.
+- Ausnahme: `Update Shopify fulfillment` ist erlaubt, wenn das lokale Shipment bereits `shipped` ist, aber Shopify noch nicht `FULFILLED` meldet. Diese Aktion verändert kein lokales Inventory und keine Shipment-Mengen.
 
 ### line
 Order Line Detail erklärt genau eine Nachfragezeile.

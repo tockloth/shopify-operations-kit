@@ -161,7 +161,7 @@ function operationsStatusContent(status: string, tone: string, shipmentNumbers?:
   if (status === "Complete") {
     return (
       <s-stack direction="block" gap="small">
-        <MoneylessBadge tone="success">Shipped locally</MoneylessBadge>
+        <MoneylessBadge tone="success">Complete</MoneylessBadge>
         {shipmentNumbers ? <s-text>{shipmentNumbers}</s-text> : null}
       </s-stack>
     );
@@ -413,7 +413,9 @@ export default function OrderDetail() {
       type: "Logistics",
       reference: row.shipment_number,
       status: row.status ?? row.shipping_order_status,
-      href: "/app/logistics",
+      href: row.shipping_order_id
+        ? `/app/logistics/${row.shipping_order_id}`
+        : "/app/logistics",
     })),
   ].slice(0, 12);
 

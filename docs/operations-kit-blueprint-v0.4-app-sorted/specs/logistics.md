@@ -46,7 +46,7 @@ Logistics Overview ist eine Work Queue.
 Shipment Detail besitzt den lokalen Shipment-Lifecycle.
 
 - Route: `/app/logistics/:shipmentId`.
-- Toolbar: Back to Logistics, Mark packed, Mark shipped.
+- Toolbar: Back to Logistics, Mark packed, Mark shipped. Wenn lokal bereits shipped, Shopify aber noch nicht `FULFILLED` ist: Update Shopify fulfillment.
 - Sections: Shipment summary, Lines, Address.
 - Lines: Product, Quantity, Picked, Packed, Shipped, Status.
 - Offene Shipment-Zeilen dürfen vor Pack/Ship korrigiert werden: Quantity ändern, danach erneut Mark packed oder Mark shipped.
@@ -54,3 +54,4 @@ Shipment Detail besitzt den lokalen Shipment-Lifecycle.
 - Address zeigt den gespeicherten Versandadress-Snapshot aus der Order.
 - `Mark shipped` führt bei Shopify Orders zuerst das Shopify Fulfillment Writeback aus und markiert danach lokal als shipped.
 - Wenn Shopify Fulfillment fehlschlägt, bleibt der lokale Shipment-Status unverändert und die UI zeigt den Shopify-Fehler.
+- `Update Shopify fulfillment` ist eine Nachholaktion für historische/lokal bereits abgeschlossene Shipments. Sie darf keine lokale Shipment- oder Inventory-Buchung wiederholen.

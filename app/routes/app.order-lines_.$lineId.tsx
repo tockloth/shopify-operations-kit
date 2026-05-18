@@ -489,8 +489,10 @@ export default function OrderLineDetail() {
               ) : (
                 "Not created"
               ),
-              logisticsRows[0] ? (
-                <s-link href="/app/logistics">Open Logistics</s-link>
+              logisticsRows[0]?.shipping_order_id ? (
+                <s-link href={`/app/logistics/${logisticsRows[0].shipping_order_id}`}>
+                  Open shipment
+                </s-link>
               ) : (
                 <s-link href="/app/logistics">Open Logistics</s-link>
               ),
