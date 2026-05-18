@@ -4,8 +4,11 @@ import { Form, useActionData, useLoaderData } from "react-router";
 import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
 import {
+  loadShopifyFulfillmentTargetForOrder,
   loadOperationsOrdersList,
+  updateOperationsOrderFulfillmentStatus,
 } from "../lib/operations-kit.server";
+import { fulfillShopifyOrderForShipment } from "../lib/shopify-fulfillment.server";
 import { syncShopifyOrders } from "../lib/shopify-sync.server";
 import { authenticate } from "../shopify.server";
 
@@ -40,6 +43,59 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const form = await request.formData();
   const intent = String(form.get("intent") || "sync");
 
+  if (intent === "syncShopifyFulfillment") {
+    const orderId = String(form.get("orderId") || "");
+    const target = await loadShopifyFulfillmentTargetForOrder(
+      context.pool,
+      context.ctx.tenantId,
+      orderId,
+    );
+    if (!target) return { message: "Order not found.", tone: "critical" };
+    if (!target.shopify_order_gid) {
+      return {
+        message: "No Shopify order id is stored for this order.",
+        tone: "critical",
+      };
+    }
+    if (Number(target.shipped_shipment_count ?? 0) <= 0) {
+      return {
+        message:
+          "Shopify fulfillment can only be updated after the local shipment is marked shipped.",
+        tone: "critical",
+      };
+    }
+
+    try {
+      const result = await fulfillShopifyOrderForShipment(
+        admin,
+        target.shopify_order_gid,
+      );
+      if (result.shopifyFulfillmentStatus) {
+        await updateOperationsOrderFulfillmentStatus(
+          context.pool,
+          context.ctx.tenantId,
+          target.id,
+          result.shopifyFulfillmentStatus,
+        );
+      }
+      return {
+        message: `${target.order_name}: ${result.message}`,
+        tone:
+          result.shopifyFulfillmentStatus === "FULFILLED"
+            ? "success"
+            : "warning",
+      };
+    } catch (error) {
+      return {
+        message:
+          error instanceof Error
+            ? `${target.order_name}: ${error.message}`
+            : `${target.order_name}: Shopify fulfillment failed.`,
+        tone: "critical",
+      };
+    }
+  }
+
   if (intent !== "sync") return { message: "No action was performed." };
 
   try {
@@ -56,6 +112,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     return {
       message: `${result.orders} Shopify order(s) and ${result.lines} line item(s) synced into Operations Kit. ${result.shippingAddressesStored} shipping address(es) stored.${protectedDataMessage}`,
+      tone: "success",
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -67,6 +124,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return {
         message:
           "Order sync is blocked by Shopify Protected Customer Data. This is an app access setting, not an Operations Kit process error. Enable Protected customer data access for Orders in the Partner Dashboard, restart the dev preview, then re-approve the app scopes.",
+        tone: "critical",
       };
     }
 
@@ -201,6 +259,29 @@ function shopifyFulfillmentContent(order: any) {
       ) : null}
     </s-stack>
   );
+}
+
+function canUpdateShopifyFulfillment(order: any) {
+  return (
+    order.operational_status === "Complete" &&
+    order.fulfillment_status !== "FULFILLED" &&
+    Number(order.shipment_shipped_count ?? 0) > 0 &&
+    Boolean(order.shopify_order_gid)
+  );
+}
+
+function nextActionContent(order: any) {
+  if (canUpdateShopifyFulfillment(order)) {
+    return (
+      <Form method="post">
+        <input type="hidden" name="intent" value="syncShopifyFulfillment" />
+        <input type="hidden" name="orderId" value={order.id} />
+        <s-button type="submit">Update Shopify fulfillment</s-button>
+      </Form>
+    );
+  }
+
+  return "Open order";
 }
 
 export default function Orders() {
@@ -356,7 +437,7 @@ export default function Orders() {
                   ) : (
                     <MoneylessBadge tone="success">Ready</MoneylessBadge>
                   ),
-                  "Open order",
+                  nextActionContent(order),
                 ],
               };
             })}

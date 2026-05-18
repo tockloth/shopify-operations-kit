@@ -21,10 +21,10 @@
 </table></section>
     <section class='card'><h2>Prozess</h2><table><tr><th>Schritt</th><th>Prozessregel</th></tr>
 <tr><td>1. Ready/Blocked</td><td>Orders mit Bestand + Adresse sind ready, sonst blocked mit genauem Grund.</td></tr>
-<tr><td>2. Create Shipment</td><td>Erzeugt lokalen Shipment Record und Linien. Kein Shopify Fulfillment Writeback im MVP.</td></tr>
-<tr><td>3. Pack/Ship</td><td>Mark packed / Mark shipped lokal. Packing ist optional via Settings; wenn direkt shipped wird, darf keine künstliche Reservierung entstehen.</td></tr>
-<tr><td>4. Completed</td><td>Shipment work complete; Shopify fulfillment writeback später explizit.</td></tr>
-<tr><td>5. Shopify Fulfillment</td><td>Nicht Teil des MVP-Flows. Später via Shopify Fulfillment Orders / fulfillmentCreate.</td></tr>
+<tr><td>2. Create Shipment</td><td>Erzeugt lokalen Shipment Record und Linien.</td></tr>
+<tr><td>3. Pack/Ship</td><td>Mark packed / Mark shipped. Packing ist optional via Settings; wenn direkt shipped wird, darf keine künstliche Reservierung entstehen.</td></tr>
+<tr><td>4. Shopify Fulfillment</td><td>Beim Markieren als shipped erzeugt Operations Kit für Shopify Orders ein Shopify Fulfillment über Fulfillment Orders / fulfillmentCreate.</td></tr>
+<tr><td>5. Completed</td><td>Shipment work ist erst abgeschlossen, wenn lokale Shipment-Buchung und Shopify-Fulfillment-Writeback erfolgreich sind. Für manuelle Orders ohne Shopify Order ID wird nur lokal abgeschlossen.</td></tr>
 </table></section>
     <section class='card'><h2>UI</h2><div class="wire"><div class="bar"><div><strong>Logistics — Work Queue</strong><div class="small">/app/logistics</div></div><div class="toolbar"></div></div><div class="body"><div class="filters"><div class="input">Work queue: Active work / Ready / Blocked / Shipments / Completed</div></div><details><summary>Filters</summary><div class="filters"><div class="input">Order / customer / product</div><div class="input">Address</div></div></details><details><summary>Development tools</summary><div class="filters"><div class="input">Backfill test shipping address, development only</div></div></details><table><tr><th>Reference</th><th>Status</th><th>Customer</th><th>Products / quantities</th><th>Address</th><th>Reason</th><th>Next action</th></tr>
 <tr><td>#1004</td><td>Ready</td><td>Jörn Voigt</td><td>1 × Ski Wax</td><td>Ready</td><td>Inventory and address ready</td><td>Create shipment</td></tr>

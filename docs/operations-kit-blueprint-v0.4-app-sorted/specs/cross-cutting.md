@@ -12,4 +12,4 @@
 - Fokus liegt auf den Daten. Hauptaktionen bleiben sichtbar; Filter, Prozesshilfen und andere Hilfsmittel sind standardmäßig einblendbar/eingeklappt.
 - Funktionsbereich-Startseiten verwenden keine Reiter als primäre Navigation, wenn ein Scope-/Status-Selektor dieselbe Arbeit klarer und kompakter abbildet.
 - Payment/Payables ist ein später eigener Funktionsbereich. Procurement und Receiving zeigen keine Payment-Blöcke. Später erzeugt der Payment-Bereich exportierbare Zahlungsvorschläge/Buchungssätze; exportierte Datensätze werden als `exported_for_payment` oder äquivalent markiert.
-- Shopify Fulfillment ist nicht identisch mit lokalem Operations-/Shipment-Status. Ohne Shopify Fulfillment Writeback bleibt Shopify z.B. `UNFULFILLED`; Operations Kit zeigt parallel `Shipped locally` / `Complete`.
+- Shopify Fulfillment ist nicht identisch mit lokalem Operations-/Shipment-Status, muss aber beim Versand synchronisiert werden: `Mark shipped` erzeugt für Shopify Orders ein Fulfillment über Fulfillment Orders / `fulfillmentCreate`. Wenn Shopify Writeback fehlschlägt, darf der lokale Shipment-Status nicht still auf shipped gesetzt werden.

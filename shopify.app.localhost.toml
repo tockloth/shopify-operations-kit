@@ -14,7 +14,7 @@ automatically_update_urls_on_dev = true
 api_version = "2026-07"
 
 [access_scopes]
-scopes = "read_customers,read_inventory,read_orders,read_products,write_metaobject_definitions,write_metaobjects,write_products"
+scopes = "read_customers,read_inventory,read_merchant_managed_fulfillment_orders,read_orders,read_products,write_merchant_managed_fulfillment_orders,write_metaobject_definitions,write_metaobjects,write_orders,write_products"
 
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]

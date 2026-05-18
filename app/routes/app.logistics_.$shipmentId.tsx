@@ -6,8 +6,11 @@ import { requireOperationsKitContext } from "../lib/app-context.server";
 import {
   loadShippingOrderDetail,
   transitionShippingOrder,
+  updateOperationsOrderFulfillmentStatus,
   updateShippingOrderLineQuantity,
 } from "../lib/operations-kit.server";
+import { fulfillShopifyOrderForShipment } from "../lib/shopify-fulfillment.server";
+import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const context = await requireOperationsKitContext(request);
@@ -39,15 +42,102 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       Number(form.get("quantity")),
     );
   }
+  if (intent === "syncShopifyFulfillment") {
+    const detail = await loadShippingOrderDetail(
+      context.pool,
+      context.ctx.tenantId,
+      params.shipmentId!,
+    );
+    const shipment = detail.order as any;
+    if (!shipment?.shopify_order_gid) {
+      return {
+        message: "No Shopify order id is stored for this shipment.",
+        tone: "critical",
+      };
+    }
+
+    try {
+      const { admin } = await authenticate.admin(request);
+      const result = await fulfillShopifyOrderForShipment(
+        admin,
+        shipment.shopify_order_gid,
+      );
+      if (result.shopifyFulfillmentStatus) {
+        await updateOperationsOrderFulfillmentStatus(
+          context.pool,
+          context.ctx.tenantId,
+          shipment.operations_order_id,
+          result.shopifyFulfillmentStatus,
+        );
+      }
+      return {
+        message: result.message,
+        tone: "success",
+      };
+    } catch (error) {
+      return {
+        message:
+          error instanceof Error
+            ? `${error.message} Re-authorize the app after deploying the new fulfillment scopes, then try again.`
+            : "Shopify fulfillment failed. Re-authorize the app after deploying the new fulfillment scopes, then try again.",
+        tone: "critical",
+      };
+    }
+  }
 
   const status = String(form.get("status")) === "shipped" ? "shipped" : "packed";
+  let shopifyMessage: string | null = null;
+  if (status === "shipped") {
+    const detail = await loadShippingOrderDetail(
+      context.pool,
+      context.ctx.tenantId,
+      params.shipmentId!,
+    );
+    const shipment = detail.order as any;
+    if (shipment?.shopify_order_gid) {
+      try {
+        const { admin } = await authenticate.admin(request);
+        const result = await fulfillShopifyOrderForShipment(
+          admin,
+          shipment.shopify_order_gid,
+        );
+        if (result.shopifyFulfillmentStatus) {
+          await updateOperationsOrderFulfillmentStatus(
+            context.pool,
+            context.ctx.tenantId,
+            shipment.operations_order_id,
+            result.shopifyFulfillmentStatus,
+          );
+        }
+        shopifyMessage = result.message;
+      } catch (error) {
+        return {
+          message:
+            error instanceof Error
+              ? `${error.message} Re-authorize the app after deploying the new fulfillment scopes, then try again.`
+              : "Shopify fulfillment failed. Re-authorize the app after deploying the new fulfillment scopes, then try again.",
+          tone: "critical",
+        };
+      }
+    } else {
+      shopifyMessage =
+        "No Shopify order id is stored, so only the local shipment was updated.";
+    }
+  }
+
   await transitionShippingOrder(
     context.pool,
     context.ctx.tenantId,
     params.shipmentId!,
     status,
   );
-  return { message: "Shipment updated." };
+  return {
+    message:
+      status === "shipped"
+        ? `Shipment marked shipped. ${shopifyMessage ?? ""}`.trim()
+        : "Shipment updated.",
+    tone: "success",
+  };
 };
 
 function formatDate(value: unknown) {
@@ -134,10 +224,24 @@ export default function ShipmentDetail() {
                 </s-button>
               </Form>
             ) : null}
+            {shipment.status === "shipped" &&
+            shipment.shopify_order_gid &&
+            shipment.fulfillment_status !== "FULFILLED" ? (
+              <Form method="post">
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="syncShopifyFulfillment"
+                />
+                <s-button type="submit">Update Shopify fulfillment</s-button>
+              </Form>
+            ) : null}
           </div>
         </div>
         {actionData?.message ? (
-          <s-banner tone="success">{actionData.message}</s-banner>
+          <s-banner tone={(actionData as any).tone ?? "success"}>
+            {actionData.message}
+          </s-banner>
         ) : null}
       </s-section>
 

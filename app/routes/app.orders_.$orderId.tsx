@@ -6,8 +6,12 @@ import { requireOperationsKitContext } from "../lib/app-context.server";
 import {
   loadOperationsOrderDetail,
   loadOperationsOrdersList,
+  loadShopifyFulfillmentTargetForOrder,
   runOperationsMrp,
+  updateOperationsOrderFulfillmentStatus,
 } from "../lib/operations-kit.server";
+import { fulfillShopifyOrderForShipment } from "../lib/shopify-fulfillment.server";
+import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const context = await requireOperationsKitContext(request);
@@ -34,6 +38,60 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!context.configured) return { message: context.setupError };
 
   const form = await request.formData();
+  if (String(form.get("intent")) === "syncShopifyFulfillment") {
+    const orderId = String(form.get("orderId") || "");
+    const target = await loadShopifyFulfillmentTargetForOrder(
+      context.pool,
+      context.ctx.tenantId,
+      orderId,
+    );
+    if (!target) return { message: "Order not found.", tone: "critical" };
+    if (!target.shopify_order_gid) {
+      return {
+        message: "No Shopify order id is stored for this order.",
+        tone: "critical",
+      };
+    }
+    if (Number(target.shipped_shipment_count ?? 0) <= 0) {
+      return {
+        message:
+          "Shopify fulfillment can only be updated after the local shipment is marked shipped.",
+        tone: "critical",
+      };
+    }
+
+    try {
+      const { admin } = await authenticate.admin(request);
+      const result = await fulfillShopifyOrderForShipment(
+        admin,
+        target.shopify_order_gid,
+      );
+      if (result.shopifyFulfillmentStatus) {
+        await updateOperationsOrderFulfillmentStatus(
+          context.pool,
+          context.ctx.tenantId,
+          target.id,
+          result.shopifyFulfillmentStatus,
+        );
+      }
+      return {
+        message: `${target.order_name}: ${result.message}`,
+        tone:
+          result.shopifyFulfillmentStatus === "FULFILLED"
+            ? "success"
+            : "warning",
+      };
+    } catch (error) {
+      return {
+        message:
+          error instanceof Error
+            ? `${target.order_name}: ${error.message}`
+            : `${target.order_name}: Shopify fulfillment failed.`,
+        tone: "critical",
+      };
+    }
+  }
+
   if (String(form.get("intent")) === "refreshPlanning") {
     const result = await runOperationsMrp(context.pool, context.ctx.tenantId);
     return {
@@ -129,6 +187,22 @@ function shopifyFulfillmentContent(order: any, operationsStatus: string) {
         <s-text>Shopify not updated</s-text>
       ) : null}
     </s-stack>
+  );
+}
+
+function canUpdateShopifyFulfillment(order: any, orderSummary: any) {
+  return (
+    operationsComplete(orderSummary) &&
+    order.fulfillment_status !== "FULFILLED" &&
+    Number(orderSummary?.shipment_shipped_count ?? 0) > 0 &&
+    Boolean(order.shopify_order_gid)
+  );
+}
+
+function operationsComplete(orderSummary: any) {
+  return (
+    orderSummary?.operational_status === "Complete" ||
+    Number(orderSummary?.shipment_shipped_count ?? 0) > 0
   );
 }
 
@@ -403,6 +477,19 @@ export default function OrderDetail() {
                 orderSummary?.shipment_numbers,
               ),
               <s-stack direction="block" gap="small">
+                {canUpdateShopifyFulfillment(order, orderSummary) ? (
+                  <Form method="post">
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value="syncShopifyFulfillment"
+                    />
+                    <input type="hidden" name="orderId" value={order.id} />
+                    <s-button type="submit">
+                      Update Shopify fulfillment
+                    </s-button>
+                  </Form>
+                ) : null}
                 {nextActionHref === currentOrderHref ? (
                   <s-text>{nextActionLabel}</s-text>
                 ) : (

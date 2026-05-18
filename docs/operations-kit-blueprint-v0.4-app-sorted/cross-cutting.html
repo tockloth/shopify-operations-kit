@@ -24,11 +24,12 @@
 <tr><td>Datenfokus</td><td>Hauptaktionen bleiben sichtbar; Filter, Prozesshilfen und andere Hilfsmittel sind standardmäßig eingeklappt. Keine großen Kopfbereiche ohne unmittelbare Arbeit.</td></tr>
 <tr><td>Keine primären Reiter</td><td>Funktionsbereich-Startseiten verwenden bevorzugt einen kompakten Scope-/Status-Selektor statt Reitern, wenn damit dieselbe Queue gefiltert wird.</td></tr>
 <tr><td>Payment später separat</td><td>Procurement und Receiving zeigen keine Payment-Blöcke. Payment/Payables wird später eigener Funktionsbereich für exportierbare Zahlungsvorschläge/Buchungssätze; exportierte Datensätze werden als exportiert markiert.</td></tr>
+<tr><td>Shopify Fulfillment Writeback</td><td>Mark shipped erzeugt für Shopify Orders ein Fulfillment über Shopify Fulfillment Orders / fulfillmentCreate. Wenn Shopify Writeback fehlschlägt, darf der lokale Shipment-Status nicht still auf shipped gesetzt werden.</td></tr>
 </table></section>
 <section class="card"><h2>Statusmodelle zusammengefasst</h2><table><tr><th>Bereich</th><th>Status</th></tr>
 <tr><td>Orders</td><td>Needs planning → Purchase proposal ready → Purchase Order created → Sent to supplier → Awaiting receipt → Receiving/QC → Putaway pending → Ready for logistics → Shipment created → Complete; Blocker: Logistics blocked, Review required.</td></tr>
 <tr><td>Purchase Need</td><td>Need supplier → Ready for PO → Converted to PO → Cancelled. MVP-Aliase müssen klar gemappt werden.</td></tr>
 <tr><td>Purchase Order</td><td>Draft → Approved optional → Sent → Supplier acknowledged optional → Receiving allowed → Closed/Complete.</td></tr>
 <tr><td>Receipt</td><td>Expected → Received/QC required → QC completed → Putaway pending → Closed.</td></tr>
-<tr><td>Shipment</td><td>Ready → Created → Packed optional → Shipped → Complete; kein Shopify Fulfillment Writeback im MVP.</td></tr>
+<tr><td>Shipment</td><td>Ready → Created → Packed optional → Shopify fulfillmentCreate → Shipped → Complete; Shopify-Fehler blockieren den lokalen shipped-Übergang.</td></tr>
 </table></section></main></div></body></html>

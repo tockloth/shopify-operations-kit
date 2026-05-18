@@ -6351,6 +6351,9 @@ export async function loadShippingOrders(db: QueryExecutor, tenantId: string) {
   const orders = await db.query(
     `
       select shipping_orders.*, operations_orders.order_name,
+        operations_orders.shopify_order_gid,
+        operations_orders.shopify_order_legacy_id,
+        operations_orders.fulfillment_status,
         operations_orders.customer_name_encrypted,
         operations_orders.customer_email_encrypted,
         operations_orders.shipping_address_encrypted,
@@ -6360,6 +6363,9 @@ export async function loadShippingOrders(db: QueryExecutor, tenantId: string) {
       left join shipping_order_lines on shipping_order_lines.shipping_order_id = shipping_orders.id
       where shipping_orders.tenant_id = $1
       group by shipping_orders.id, operations_orders.order_name,
+        operations_orders.shopify_order_gid,
+        operations_orders.shopify_order_legacy_id,
+        operations_orders.fulfillment_status,
         operations_orders.customer_name_encrypted,
         operations_orders.customer_email_encrypted,
         operations_orders.shipping_address_encrypted
@@ -6395,6 +6401,8 @@ export async function loadShippingOrderDetail(
   const order = await db.query(
     `
       select shipping_orders.*, operations_orders.order_name,
+        operations_orders.shopify_order_gid,
+        operations_orders.shopify_order_legacy_id,
         operations_orders.customer_name_encrypted,
         operations_orders.customer_email_encrypted,
         operations_orders.shipping_address_encrypted,
@@ -6404,6 +6412,8 @@ export async function loadShippingOrderDetail(
       left join shipping_order_lines on shipping_order_lines.shipping_order_id = shipping_orders.id
       where shipping_orders.tenant_id = $1 and shipping_orders.id = $2
       group by shipping_orders.id, operations_orders.order_name,
+        operations_orders.shopify_order_gid,
+        operations_orders.shopify_order_legacy_id,
         operations_orders.customer_name_encrypted,
         operations_orders.customer_email_encrypted,
         operations_orders.shipping_address_encrypted
@@ -6462,6 +6472,56 @@ export async function loadOperationsOrders(
       [tenantId],
     )
   ).rows;
+}
+
+export async function loadShopifyFulfillmentTargetForOrder(
+  db: QueryExecutor,
+  tenantId: string,
+  operationsOrderId: string,
+) {
+  const result = await db.query<{
+    id: string;
+    order_name: string;
+    shopify_order_gid: string | null;
+    fulfillment_status: string | null;
+    shipped_shipment_count: number;
+  }>(
+    `
+      select operations_orders.id,
+        operations_orders.order_name,
+        operations_orders.shopify_order_gid,
+        operations_orders.fulfillment_status,
+        count(shipping_orders.id) filter (where shipping_orders.status = 'shipped')::int as shipped_shipment_count
+      from operations_orders
+      left join shipping_orders
+        on shipping_orders.operations_order_id = operations_orders.id
+        and shipping_orders.tenant_id = operations_orders.tenant_id
+        and shipping_orders.status <> 'cancelled'
+      where operations_orders.tenant_id = $1
+        and operations_orders.id = $2
+      group by operations_orders.id
+    `,
+    [tenantId, operationsOrderId],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function updateOperationsOrderFulfillmentStatus(
+  db: QueryExecutor,
+  tenantId: string,
+  operationsOrderId: string,
+  fulfillmentStatus: string,
+) {
+  await db.query(
+    `
+      update operations_orders
+      set fulfillment_status = $3,
+          updated_at = now()
+      where tenant_id = $1
+        and id = $2
+    `,
+    [tenantId, operationsOrderId, fulfillmentStatus],
+  );
 }
 
 export async function loadOrderProcess(db: QueryExecutor, tenantId: string) {

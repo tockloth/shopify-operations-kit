@@ -34,9 +34,9 @@ Die Orders-Liste ist eine schlanke Shopify-Demand-Übersicht, kein Status-Dashbo
 - Filter: standardmäßig eingeklappt; bei aktiven Filtern geöffnet. Filter für Work queue, Order/Kunde/Produkt, Payment, Shopify fulfillment und fehlende Adresse.
 - Work queue Default: `All orders`, damit auch lokal abgeschlossene Shopify Orders sichtbar bleiben. Weitere Filter: `Active work`, `Completed`. `Completed` zeigt lokal abgeschlossene Orders nach Shipment-/Completion-Zeit absteigend.
 - Tabelle: Order, Order date, Customer, Products / quantities, Operations, Payment, Shopify fulfillment, Address, Next action.
-- `Shopify fulfillment` ist der Shopify-Status und bleibt ohne Shopify Fulfillment Writeback z.B. `UNFULFILLED`.
+- `Shopify fulfillment` ist der Shopify-Status. Nach erfolgreichem Shipment Writeback sollte Shopify `FULFILLED` melden.
 - `Operations` ist der lokale Operations-Kit-Status und muss nach lokalem Shipment `Complete` zeigen.
-- Lokal abgeschlossen wird als `Shipped locally` sichtbar gemacht; wenn Shopify weiterhin `UNFULFILLED` ist, zeigt die UI `Shopify not updated`.
+- Wenn lokales Shipment abgeschlossen ist, Shopify aber weiterhin `UNFULFILLED` meldet, zeigt die UI `Shopify not updated` als Daten-/Sync-Abweichung.
 - Nicht auf der Liste anzeigen: Operational-Status-Zusammenfassung, Next reason / blocker.
 - Operative Status- und Reason-Details gehören auf Order Detail, Order Line Detail, Procurement, Receiving oder Logistics.
 

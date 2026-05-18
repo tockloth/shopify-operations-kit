@@ -21,10 +21,10 @@ Versandbereitschaft, Shipment Work und lokale Shipment-Lifecycle
 
 ## Prozess
 - **1. Ready/Blocked:** Orders mit Bestand + Adresse sind ready, sonst blocked mit genauem Grund.
-- **2. Create Shipment:** Erzeugt lokalen Shipment Record und Linien. Kein Shopify Fulfillment Writeback im MVP.
-- **3. Pack/Ship:** Mark packed / Mark shipped lokal. Packing ist optional via Settings; wenn direkt shipped wird, darf keine künstliche Reservierung entstehen.
-- **4. Completed:** Shipment work complete; Shopify fulfillment writeback später explizit.
-- **5. Shopify Fulfillment:** Nicht Teil des MVP-Flows. Um Shopify auf `FULFILLED` zu setzen, braucht es später eine eigene Fulfillment-Writeback-Aktion über Shopify Fulfillment Orders / `fulfillmentCreate`.
+- **2. Create Shipment:** Erzeugt lokalen Shipment Record und Linien.
+- **3. Pack/Ship:** Mark packed / Mark shipped. Packing ist optional via Settings; wenn direkt shipped wird, darf keine künstliche Reservierung entstehen.
+- **4. Shopify Fulfillment:** Beim Markieren als shipped erzeugt Operations Kit für Shopify Orders ein Shopify Fulfillment über Fulfillment Orders / `fulfillmentCreate`.
+- **5. Completed:** Shipment work ist erst abgeschlossen, wenn lokale Shipment-Buchung und Shopify-Fulfillment-Writeback erfolgreich sind. Für manuelle Orders ohne Shopify Order ID wird nur lokal abgeschlossen.
 
 ## UI
 ### list
@@ -52,4 +52,5 @@ Shipment Detail besitzt den lokalen Shipment-Lifecycle.
 - Offene Shipment-Zeilen dürfen vor Pack/Ship korrigiert werden: Quantity ändern, danach erneut Mark packed oder Mark shipped.
 - Nach Pack/Ship sind Zeilen gesperrt; Korrektur erfolgt dann später über definierte Ausnahmeprozesse.
 - Address zeigt den gespeicherten Versandadress-Snapshot aus der Order.
-- Kein Shopify Fulfillment Writeback im MVP.
+- `Mark shipped` führt bei Shopify Orders zuerst das Shopify Fulfillment Writeback aus und markiert danach lokal als shipped.
+- Wenn Shopify Fulfillment fehlschlägt, bleibt der lokale Shipment-Status unverändert und die UI zeigt den Shopify-Fehler.
