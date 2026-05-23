@@ -2,7 +2,7 @@
 
 client_id = "b2a744a27e7dd9fedf805e5aabf9cb12"
 name = "Operations Ledger"
-application_url = "https://example.com"
+application_url = "https://operations-kit-staging.onrender.com"
 embedded = true
 
 [build]
@@ -24,7 +24,11 @@ api_version = "2026-07"
 scopes = "read_customers,read_inventory,read_merchant_managed_fulfillment_orders,read_orders,read_products,write_merchant_managed_fulfillment_orders,write_metaobject_definitions,write_metaobjects,write_orders,write_products"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [
+  "https://operations-kit-staging.onrender.com/auth/callback",
+  "https://operations-kit-staging.onrender.com/auth/shopify/callback",
+  "https://operations-kit-staging.onrender.com/api/auth/callback"
+]
 
 [product.metafields.app.demo_info]
 type = "single_line_text_field"
