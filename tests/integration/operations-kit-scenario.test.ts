@@ -16,6 +16,7 @@ import {
   ensureTenantForShop,
   loadAccessControlSettings,
   loadDashboard,
+  loadDashboardOrderLineCards,
   loadInventoryLedger,
   loadOperationsOrderDetail,
   loadItems,
@@ -80,6 +81,21 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
     const summary = await loadDashboard(pool, tenantId);
     expect(summary.items).toBeGreaterThanOrEqual(5);
     expect(summary.activeBoms).toBeGreaterThanOrEqual(1);
+  });
+
+  it("loads dashboard order-line cards against the real schema", async () => {
+    const cards = await loadDashboardOrderLineCards(pool, tenantId);
+
+    expect(Array.isArray(cards)).toBe(true);
+    expect(cards.length).toBeGreaterThan(0);
+
+    const card = cards[0];
+    if (!card) {
+      throw new Error("Expected at least one dashboard order-line card");
+    }
+
+    expect(card.detailHref).toMatch(/^\/app\/order-lines\//);
+    expect(card.statusKey).toBeTruthy();
   });
 
   it("seeds operation users and fixed role groups", async () => {

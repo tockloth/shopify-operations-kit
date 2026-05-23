@@ -4228,6 +4228,354 @@ export async function loadOperationsOrderLinesList(
   ).rows;
 }
 
+export type DashboardOrderLineStatusKey =
+  | "needs_planning"
+  | "procurement"
+  | "receiving"
+  | "putaway_pending"
+  | "ready_for_logistics"
+  | "shipment"
+  | "fulfilled_done"
+  | "blocked_review";
+
+const dashboardOrderLineStatusLabels: Record<
+  DashboardOrderLineStatusKey,
+  string
+> = {
+  needs_planning: "Needs planning",
+  procurement: "Procurement",
+  receiving: "Receiving / QC",
+  putaway_pending: "Putaway",
+  ready_for_logistics: "Ready for logistics",
+  shipment: "Shipment",
+  fulfilled_done: "Fulfilled / Done",
+  blocked_review: "Blocked / Review",
+};
+
+function dashboardOrderLineNextAction(
+  statusKey: DashboardOrderLineStatusKey,
+  orderLineId: string,
+) {
+  switch (statusKey) {
+    case "procurement":
+      return { label: "Open procurement", href: "/app/procurement" };
+    case "receiving":
+    case "putaway_pending":
+      return { label: "Open receiving", href: "/app/receiving" };
+    case "ready_for_logistics":
+    case "shipment":
+      return { label: "Open logistics", href: "/app/logistics" };
+    case "fulfilled_done":
+      return { label: "Review line", href: `/app/order-lines/${orderLineId}` };
+    case "blocked_review":
+      return { label: "Review blocker", href: `/app/order-lines/${orderLineId}` };
+    case "needs_planning":
+    default:
+      return { label: "Review line", href: `/app/order-lines/${orderLineId}` };
+  }
+}
+
+export async function loadDashboardOrderLineCards(
+  db: QueryExecutor,
+  tenantId: string,
+) {
+  const rows = (
+    await db.query(
+      `
+        with movement_balances as (
+          select
+            tenant_id,
+            item_id,
+            coalesce(sum(quantity_delta) filter (where location_code = 'MAIN'), 0) as physical_quantity,
+            coalesce(sum(reserved_delta) filter (where location_code = 'MAIN'), 0) as reserved_quantity
+          from inventory_movements
+          where tenant_id = $1
+          group by tenant_id, item_id
+        ),
+        open_purchase_orders as (
+          select
+            purchase_order_lines.tenant_id,
+            purchase_order_lines.item_id,
+            coalesce(sum(
+              case
+                when purchase_orders.status in ('created', 'submitted', 'approved', 'sent', 'acknowledged')
+                then purchase_order_lines.quantity
+                else 0
+              end
+            ), 0) as ordered_quantity
+          from purchase_order_lines
+          join purchase_orders
+            on purchase_orders.id = purchase_order_lines.purchase_order_id
+            and purchase_orders.tenant_id = purchase_order_lines.tenant_id
+          where purchase_order_lines.tenant_id = $1
+          group by purchase_order_lines.tenant_id, purchase_order_lines.item_id
+        ),
+        item_availability as (
+          select
+            items.id as item_id,
+            items.tenant_id,
+            coalesce(movement_balances.physical_quantity, 0) as physical_quantity,
+            abs(coalesce(movement_balances.reserved_quantity, 0)) as reserved_quantity,
+            coalesce(movement_balances.physical_quantity, 0)
+              - abs(coalesce(movement_balances.reserved_quantity, 0)) as available_quantity,
+            coalesce(open_purchase_orders.ordered_quantity, 0) as ordered_quantity
+          from items
+          left join movement_balances
+            on movement_balances.item_id = items.id
+            and movement_balances.tenant_id = items.tenant_id
+          left join open_purchase_orders
+            on open_purchase_orders.item_id = items.id
+            and open_purchase_orders.tenant_id = items.tenant_id
+          where items.tenant_id = $1
+        ),
+        line_base as (
+          select
+            operations_order_lines.id as order_line_id,
+            operations_order_lines.operations_order_id as order_id,
+            operations_order_lines.tenant_id,
+            operations_order_lines.item_id,
+            operations_order_lines.quantity,
+            operations_order_lines.unit,
+            operations_order_lines.sku as line_sku,
+            operations_order_lines.title as line_title,
+            operations_order_lines.supply_status,
+            operations_order_lines.created_at as updated_at,
+            operations_orders.order_name,
+            operations_orders.customer_name,
+            operations_orders.customer_email,
+            operations_orders.customer_name_encrypted,
+            operations_orders.customer_email_encrypted,
+            operations_orders.shipping_address_encrypted,
+            operations_orders.status as order_status,
+            operations_orders.fulfillment_status,
+            operations_orders.processed_at as order_processed_at,
+            operations_orders.created_at as order_created_at,
+            items.sku as item_sku,
+            items.title as item_title,
+            items.is_sellable,
+            items.is_purchasable,
+            items.is_producible,
+            coalesce(item_availability.available_quantity, 0) as available_quantity
+          from operations_order_lines
+          join operations_orders
+            on operations_orders.id = operations_order_lines.operations_order_id
+            and operations_orders.tenant_id = operations_order_lines.tenant_id
+          join items
+            on items.id = operations_order_lines.item_id
+            and items.tenant_id = operations_order_lines.tenant_id
+          left join item_availability
+            on item_availability.item_id = operations_order_lines.item_id
+            and item_availability.tenant_id = operations_order_lines.tenant_id
+          where operations_order_lines.tenant_id = $1
+        ),
+        line_allocations as (
+          select
+            line_base.*,
+            coalesce(
+              sum(
+                case
+                  when line_base.order_status in ('open', 'planned', 'in_progress')
+                    and line_base.supply_status <> 'cancelled'
+                  then line_base.quantity
+                  else 0
+                end
+              ) over (
+                partition by line_base.item_id
+                order by line_base.order_processed_at nulls last,
+                  line_base.order_created_at,
+                  line_base.order_line_id
+                rows between unbounded preceding and 1 preceding
+              ),
+              0
+            ) as prior_open_demand_quantity
+          from line_base
+        ),
+        purchase_context as (
+          select
+            purchase_needs.source_order_line_id as order_line_id,
+            count(purchase_needs.id)::int as purchase_need_count,
+            count(purchase_order_lines.id)::int as purchase_order_line_count
+          from purchase_needs
+          left join purchase_order_lines
+            on purchase_order_lines.purchase_need_id = purchase_needs.id
+            and purchase_order_lines.tenant_id = purchase_needs.tenant_id
+          where purchase_needs.tenant_id = $1
+            and purchase_needs.source_order_line_id is not null
+          group by purchase_needs.source_order_line_id
+        ),
+        receipt_context as (
+          select
+            purchase_needs.source_order_line_id as order_line_id,
+            count(goods_receipt_lines.id)::int as receipt_line_count,
+            coalesce(sum(goods_receipt_lines.accepted_quantity), 0) as accepted_quantity,
+            coalesce(sum(
+              case
+                when goods_receipt_lines.status = 'putaway_done'
+                then goods_receipt_lines.accepted_quantity
+                else 0
+              end
+            ), 0) as putaway_quantity
+          from purchase_needs
+          join purchase_order_lines
+            on purchase_order_lines.purchase_need_id = purchase_needs.id
+            and purchase_order_lines.tenant_id = purchase_needs.tenant_id
+          join goods_receipt_lines
+            on goods_receipt_lines.purchase_order_line_id = purchase_order_lines.id
+            and goods_receipt_lines.tenant_id = purchase_order_lines.tenant_id
+          where purchase_needs.tenant_id = $1
+            and purchase_needs.source_order_line_id is not null
+          group by purchase_needs.source_order_line_id
+        ),
+        shipment_context as (
+          select
+            shipping_order_lines.operations_order_line_id as order_line_id,
+            count(shipping_order_lines.id)::int as shipment_line_count,
+            count(*) filter (where shipping_orders.status in ('open', 'picking', 'packed', 'partially_shipped'))::int as open_shipment_count,
+            count(*) filter (where shipping_orders.status = 'shipped')::int as shipped_shipment_count
+          from shipping_order_lines
+          join shipping_orders
+            on shipping_orders.id = shipping_order_lines.shipping_order_id
+            and shipping_orders.tenant_id = shipping_order_lines.tenant_id
+          where shipping_order_lines.tenant_id = $1
+          group by shipping_order_lines.operations_order_line_id
+        )
+        select
+          line_allocations.*,
+          coalesce(purchase_context.purchase_need_count, 0) as purchase_need_count,
+          coalesce(purchase_context.purchase_order_line_count, 0) as purchase_order_line_count,
+          coalesce(receipt_context.receipt_line_count, 0) as receipt_line_count,
+          coalesce(receipt_context.accepted_quantity, 0) as accepted_quantity,
+          coalesce(receipt_context.putaway_quantity, 0) as putaway_quantity,
+          coalesce(shipment_context.shipment_line_count, 0) as shipment_line_count,
+          coalesce(shipment_context.open_shipment_count, 0) as open_shipment_count,
+          coalesce(shipment_context.shipped_shipment_count, 0) as shipped_shipment_count
+        from line_allocations
+        left join purchase_context on purchase_context.order_line_id = line_allocations.order_line_id
+        left join receipt_context on receipt_context.order_line_id = line_allocations.order_line_id
+        left join shipment_context on shipment_context.order_line_id = line_allocations.order_line_id
+        order by line_allocations.order_processed_at desc nulls last,
+          line_allocations.order_created_at desc,
+          coalesce(line_allocations.line_sku, line_allocations.item_sku)
+      `,
+      [tenantId],
+    )
+  ).rows;
+
+  return rows.map((rawRow) => {
+    const row = decryptOrderRow(rawRow as CustomerEncryptedRow) as CustomerEncryptedRow & {
+      order_line_id: string;
+      order_id: string;
+      order_name: string | null;
+      customer_name: string | null;
+      line_sku: string | null;
+      item_sku: string | null;
+      line_title: string | null;
+      item_title: string | null;
+      quantity: string | number | null;
+      unit: string | null;
+      available_quantity: string | number | null;
+      prior_open_demand_quantity: string | number | null;
+      supply_status: string | null;
+      order_status: string | null;
+      fulfillment_status: string | null;
+      is_sellable: boolean | null;
+      is_purchasable: boolean | null;
+      is_producible: boolean | null;
+      purchase_need_count: string | number | null;
+      purchase_order_line_count: string | number | null;
+      receipt_line_count: string | number | null;
+      accepted_quantity: string | number | null;
+      putaway_quantity: string | number | null;
+      shipment_line_count: string | number | null;
+      open_shipment_count: string | number | null;
+      shipped_shipment_count: string | number | null;
+      updated_at: string | null;
+      shipping_address?: NormalizedShippingAddress | null;
+    };
+    const quantity = Number(row.quantity ?? 0);
+    const availableQuantity = Number(row.available_quantity ?? 0);
+    const priorDemandQuantity = Number(row.prior_open_demand_quantity ?? 0);
+    const allocatedAvailableQuantity = Math.max(
+      availableQuantity - priorDemandQuantity,
+      0,
+    );
+    const shortage = Math.max(quantity - allocatedAvailableQuantity, 0);
+    const purchaseContextCount =
+      Number(row.purchase_need_count ?? 0) +
+      Number(row.purchase_order_line_count ?? 0);
+    const receiptLineCount = Number(row.receipt_line_count ?? 0);
+    const acceptedQuantity = Number(row.accepted_quantity ?? 0);
+    const putawayQuantity = Number(row.putaway_quantity ?? 0);
+    const shipmentLineCount = Number(row.shipment_line_count ?? 0);
+    const openShipmentCount = Number(row.open_shipment_count ?? 0);
+    const shippedShipmentCount = Number(row.shipped_shipment_count ?? 0);
+    const fulfillmentStatus = String(row.fulfillment_status ?? "").toLowerCase();
+    const stockReady =
+      row.supply_status === "reserved" || allocatedAvailableQuantity >= quantity;
+    const hasCustomerData = Boolean(row.customer_name && row.customer_email);
+    const hasShippingAddress = hasUsableShippingAddress(row.shipping_address ?? null);
+    const masterDataMissing =
+      !row.is_sellable && !row.is_purchasable && !row.is_producible;
+
+    let statusKey: DashboardOrderLineStatusKey = "needs_planning";
+    let blockerReason: string | null = null;
+
+    if (masterDataMissing) {
+      statusKey = "blocked_review";
+      blockerReason = "Product master data is incomplete.";
+    } else if (
+      shippedShipmentCount > 0 ||
+      fulfillmentStatus === "fulfilled" ||
+      row.order_status === "complete"
+    ) {
+      statusKey = "fulfilled_done";
+    } else if (shipmentLineCount > 0 || openShipmentCount > 0) {
+      statusKey = "shipment";
+    } else if (stockReady && !hasCustomerData) {
+      statusKey = "blocked_review";
+      blockerReason = "Customer data is missing.";
+    } else if (stockReady && !hasShippingAddress) {
+      statusKey = "blocked_review";
+      blockerReason = "Shipping address is missing.";
+    } else if (stockReady) {
+      statusKey = "ready_for_logistics";
+    } else if (acceptedQuantity > putawayQuantity && acceptedQuantity > 0) {
+      statusKey = "putaway_pending";
+    } else if (receiptLineCount > 0) {
+      statusKey = "receiving";
+    } else if (purchaseContextCount > 0) {
+      statusKey = "procurement";
+    } else if (shortage > 0) {
+      statusKey = "needs_planning";
+    }
+
+    const nextAction = dashboardOrderLineNextAction(statusKey, row.order_line_id);
+    const sku = row.line_sku ?? row.item_sku;
+    const title = row.line_title ?? row.item_title ?? "Untitled product";
+
+    return {
+      id: row.order_line_id,
+      orderLineId: row.order_line_id,
+      orderId: row.order_id,
+      orderName: row.order_name ?? "Order",
+      customerName: row.customer_name ?? null,
+      sku,
+      title,
+      quantity,
+      unit: row.unit ?? "pcs",
+      availableQuantity: allocatedAvailableQuantity,
+      shortage,
+      statusKey,
+      statusLabel: dashboardOrderLineStatusLabels[statusKey],
+      blockerReason,
+      nextActionLabel: nextAction.label,
+      detailHref: `/app/order-lines/${row.order_line_id}`,
+      areaHref: nextAction.href,
+      updatedAt: row.updated_at,
+    };
+  });
+}
+
 export async function loadOperationsCustomersList(
   db: QueryExecutor,
   tenantId: string,
