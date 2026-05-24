@@ -29,6 +29,29 @@ function decryptKeys() {
   ).map((material) => key(material));
 }
 
+export function customerDataEncryptionStatus() {
+  const source = process.env.OPERATIONS_KIT_CUSTOMER_DATA_KEY
+    ? "OPERATIONS_KIT_CUSTOMER_DATA_KEY"
+    : process.env.SHOPIFY_API_SECRET
+      ? "SHOPIFY_API_SECRET"
+      : "development_fallback";
+
+  let canRoundTrip = false;
+  try {
+    const encrypted = encryptCustomerData("operations-kit-diagnostic");
+    canRoundTrip = decryptCustomerData(encrypted) === "operations-kit-diagnostic";
+  } catch {
+    canRoundTrip = false;
+  }
+
+  return {
+    configured: source !== "development_fallback",
+    source,
+    usingDevelopmentFallback: source === "development_fallback",
+    canRoundTrip,
+  };
+}
+
 export function encryptCustomerData(value?: string | null) {
   const normalized = value?.trim();
   if (!normalized) return null;

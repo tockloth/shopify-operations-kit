@@ -95,6 +95,8 @@ describe("Shopify customer data access diagnostics", () => {
     expect(result.protectedCustomerData.shippingAddressAccessible).toBe(true);
     expect(result.protectedCustomerData.defaultAddressAccessible).toBe(false);
     expect(result.protectedCustomerData.errors.customer[0]?.code).toBe("ACCESS_DENIED");
+    expect(result.storagePreflight.encryptionRoundTripOk).toBe(true);
+    expect(result.storagePreflight.databaseWritePathAvailable).toBe(true);
     expect(result.storageProbe.totalOrders).toBe(5);
     expect(result.storageProbe.ordersWithShippingAddress).toBe(0);
   });

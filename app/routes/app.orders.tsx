@@ -108,9 +108,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       : result.shippingAddressesMissing > 0
         ? ` ${result.shippingAddressesMissing} order(s) did not include a usable Shopify shipping address.`
         : "";
+    const customerStorageMessage = ` Customer data returned for ${result.customerDataReturnedCount} order(s), encrypted for ${result.customerDataEncryptedCount} order(s), stored on ${result.customerDataStoredCount} order(s). Shipping addresses encrypted for ${result.shippingAddressEncryptedCount} order(s), stored on ${result.shippingAddressStoredCount} order(s).`;
 
     return ordersRedirect(
-      `${result.orders} Shopify order(s) and ${result.lines} line item(s) synced into Operations Kit. ${result.shippingAddressesStored} shipping address(es) stored.${protectedDataMessage}`,
+      `${result.orders} Shopify order(s) and ${result.lines} line item(s) synced into Operations Kit. ${result.shippingAddressesStored} shipping address(es) returned for storage.${customerStorageMessage}${protectedDataMessage}`,
       "success",
     );
   } catch (error) {

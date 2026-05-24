@@ -310,6 +310,33 @@ export default function Settings() {
                     )}
                   </s-paragraph>
 
+                  <s-heading>Storage preflight</s-heading>
+                  <s-paragraph>
+                    Encryption configured:{" "}
+                    {yesNo(diagnostics.storagePreflight.encryptionConfigured)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Encryption source: {diagnostics.storagePreflight.encryptionSource}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Development encryption fallback:{" "}
+                    {yesNo(
+                      diagnostics.storagePreflight.usingDevelopmentEncryptionFallback,
+                    )}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Encryption can encrypt/decrypt test value:{" "}
+                    {yesNo(diagnostics.storagePreflight.encryptionRoundTripOk)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Database write path available:{" "}
+                    {yesNo(diagnostics.storagePreflight.databaseWritePathAvailable)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Database write error:{" "}
+                    {diagnostics.storagePreflight.databaseWriteError ?? "none"}
+                  </s-paragraph>
+
                   <s-heading>Stored Operations Kit data</s-heading>
                   {diagnostics.protectedCustomerData.customerNameOrEmailReturned &&
                   diagnostics.protectedCustomerData.shippingAddressReturned &&

@@ -35,6 +35,8 @@ The code also recognizes `OPERATIONS_LEDGER_DATABASE_URL` and `SUPABASE_DB_URL` 
 
 No Supabase REST URL or anon/service role key is currently required by the app server. Operations Kit talks directly to Postgres through `OPERATIONS_KIT_DATABASE_URL`.
 
+For customer-data storage issues, open `/app/settings` and run **Shopify access diagnostics**. The storage preflight reports whether customer-data encryption is configured, which non-secret key source is used, whether a test encrypt/decrypt round trip works, and whether the database write path is available. Render staging should use `OPERATIONS_KIT_CUSTOMER_DATA_KEY`; if it is missing, the app can fall back to `SHOPIFY_API_SECRET`, but that couples encrypted customer data to the Shopify app secret and is not recommended for staging or production.
+
 ## Local vs Staging Environment
 
 Local development keeps using:

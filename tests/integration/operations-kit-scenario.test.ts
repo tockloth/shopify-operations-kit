@@ -386,6 +386,16 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
         ],
       },
     };
+    await pool.query(
+      `
+        insert into operations_orders (
+          tenant_id, shopify_order_gid, order_name, status,
+          financial_status, fulfillment_status, processed_at
+        )
+        values ($1, $2, $3, 'open', 'PAID', 'UNFULFILLED', now())
+      `,
+      [tenantId, orderPayload.id, orderPayload.name],
+    );
     const admin = {
       graphql: async (query: string) => {
         expect(query).not.toContain("phone");
@@ -402,7 +412,14 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
     expect(synced.shippingAddressAvailable).toBe(true);
     expect(synced.protectedCustomerDataUnavailable).toBe(false);
     expect(synced.fallbackQueryUsed).toBe(false);
+    expect(synced.customerDataReturnedCount).toBe(1);
+    expect(synced.customerDataEncryptedCount).toBe(1);
+    expect(synced.customerDataStoredCount).toBe(1);
+    expect(synced.customerNameStoredCount).toBe(1);
+    expect(synced.customerEmailStoredCount).toBe(1);
     expect(synced.shippingAddressesStored).toBe(1);
+    expect(synced.shippingAddressEncryptedCount).toBe(1);
+    expect(synced.shippingAddressStoredCount).toBe(1);
     expect(synced.orderShippingAddressesStored).toBe(1);
     expect(synced.customerDefaultAddressesStored).toBe(0);
     expect(synced.shippingAddressesMissing).toBe(0);

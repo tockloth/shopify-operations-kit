@@ -1,6 +1,7 @@
 import type { QueryExecutor } from "./kit-db.server";
 import { withKitTransaction } from "./kit-db.server";
 import {
+  customerDataEncryptionStatus,
   encryptCustomerData,
   hashCustomerLookup,
 } from "./customer-privacy.server";
@@ -412,6 +413,18 @@ function summarizeGraphqlErrors(
   }));
 }
 
+function encryptCustomerDataForSync(value: string | null | undefined, label: string) {
+  try {
+    return encryptCustomerData(value);
+  } catch (error) {
+    throw new Error(
+      `Customer data encryption failed while encrypting ${label}. Set OPERATIONS_KIT_CUSTOMER_DATA_KEY to a stable secret and redeploy. ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
 function isProtectedCustomerDataError(error: unknown) {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   return (
@@ -530,6 +543,8 @@ export async function diagnoseShopifyCustomerDataAccess(
     [tenantId],
   );
   const row = dbState.rows[0];
+  const storageWrite = await graphqlIndependentStorageWriteProbe(db, tenantId);
+  const encryption = customerDataEncryptionStatus();
 
   return {
     accessScopes: {
@@ -561,6 +576,14 @@ export async function diagnoseShopifyCustomerDataAccess(
         defaultAddress: defaultAddressProbe.errors,
       },
     },
+    storagePreflight: {
+      encryptionConfigured: encryption.configured,
+      encryptionSource: encryption.source,
+      usingDevelopmentEncryptionFallback: encryption.usingDevelopmentFallback,
+      encryptionRoundTripOk: encryption.canRoundTrip,
+      databaseWritePathAvailable: storageWrite.ok,
+      databaseWriteError: storageWrite.error,
+    },
     storageProbe: {
       totalOrders: Number(row?.total_orders ?? 0),
       ordersWithCustomerName: Number(row?.orders_with_customer_name ?? 0),
@@ -568,6 +591,29 @@ export async function diagnoseShopifyCustomerDataAccess(
       ordersWithShippingAddress: Number(row?.orders_with_shipping_address ?? 0),
     },
   };
+}
+
+async function graphqlIndependentStorageWriteProbe(
+  db: QueryExecutor,
+  tenantId: string,
+) {
+  try {
+    await db.query(
+      `
+        insert into privacy_settings (tenant_id)
+        values ($1)
+        on conflict (tenant_id)
+        do update set tenant_id = excluded.tenant_id
+      `,
+      [tenantId],
+    );
+    return { ok: true, error: null };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 async function upsertShopifyVariantItem(
@@ -936,6 +982,13 @@ export async function syncShopifyOrders(
     }
 
     let lines = 0;
+    let customerDataReturnedCount = 0;
+    let customerDataEncryptedCount = 0;
+    let customerDataStoredCount = 0;
+    let customerNameStoredCount = 0;
+    let customerEmailStoredCount = 0;
+    let shippingAddressEncryptedCount = 0;
+    let shippingAddressStoredCount = 0;
     let shippingAddressesStored = 0;
     let orderShippingAddressesStored = 0;
     let customerDefaultAddressesStored = 0;
@@ -957,8 +1010,40 @@ export async function syncShopifyOrders(
         shippingAddressesMissing += 1;
         ordersMissingShippingAddress.push(order.name);
       }
+      if (
+        order.customer?.displayName ||
+        order.customer?.defaultEmailAddress?.emailAddress
+      ) {
+        customerDataReturnedCount += 1;
+      }
+      const encryptedCustomerName = customerDataAvailable
+        ? encryptCustomerDataForSync(order.customer?.displayName, "order customer name")
+        : null;
+      const encryptedCustomerEmail = customerDataAvailable
+        ? encryptCustomerDataForSync(
+            order.customer?.defaultEmailAddress?.emailAddress,
+            "order customer email",
+          )
+        : null;
+      const encryptedShippingAddress = selectedAddress.address
+        ? encryptCustomerDataForSync(
+            JSON.stringify(selectedAddress.address),
+            "order shipping address",
+          )
+        : null;
+      if (encryptedCustomerName || encryptedCustomerEmail) {
+        customerDataEncryptedCount += 1;
+      }
+      if (encryptedShippingAddress) {
+        shippingAddressEncryptedCount += 1;
+      }
 
-      const orderResult = await tx.query<{ id: string }>(
+      const orderResult = await tx.query<{
+        id: string;
+        has_customer_name: boolean;
+        has_customer_email: boolean;
+        has_shipping_address: boolean;
+      }>(
         `
           insert into operations_orders (
             tenant_id, shopify_order_gid, shopify_order_legacy_id,
@@ -1004,17 +1089,18 @@ export async function syncShopifyOrders(
             fulfillment_status = excluded.fulfillment_status,
             processed_at = excluded.processed_at,
             updated_at = now()
-          returning id
+          returning id,
+            customer_name_encrypted is not null as has_customer_name,
+            customer_email_encrypted is not null as has_customer_email,
+            shipping_address_encrypted is not null as has_shipping_address
         `,
         [
           tenantId,
           order.id,
           order.legacyResourceId,
           order.name,
-          customerDataAvailable ? encryptCustomerData(order.customer?.displayName) : null,
-          customerDataAvailable
-            ? encryptCustomerData(order.customer?.defaultEmailAddress?.emailAddress)
-            : null,
+          encryptedCustomerName,
+          encryptedCustomerEmail,
           customerDataAvailable
             ? hashCustomerLookup(
                 order.customer?.defaultEmailAddress?.emailAddress,
@@ -1022,14 +1108,22 @@ export async function syncShopifyOrders(
               )
             : null,
           customerDataRetentionUntil(order.processedAt, retentionDays),
-          selectedAddress.address
-            ? encryptCustomerData(JSON.stringify(selectedAddress.address))
-            : null,
+          encryptedShippingAddress,
           order.displayFinancialStatus,
           order.displayFulfillmentStatus,
           order.processedAt,
         ],
       );
+      const storedOrder = orderResult.rows[0];
+      if (!storedOrder) {
+        throw new Error("Order sync did not return a stored order row.");
+      }
+      if (storedOrder.has_customer_name) customerNameStoredCount += 1;
+      if (storedOrder.has_customer_email) customerEmailStoredCount += 1;
+      if (storedOrder.has_customer_name || storedOrder.has_customer_email) {
+        customerDataStoredCount += 1;
+      }
+      if (storedOrder.has_shipping_address) shippingAddressStoredCount += 1;
 
       for (const line of order.lineItems.nodes) {
         const itemId =
@@ -1093,12 +1187,19 @@ export async function syncShopifyOrders(
       orders: data.orders.nodes.length,
       lines,
       customerDataAvailable,
+      customerDataReturnedCount,
+      customerDataEncryptedCount,
+      customerDataStoredCount,
+      customerNameStoredCount,
+      customerEmailStoredCount,
       shippingAddressAvailable,
       customerDefaultAddressAvailable,
       protectedCustomerDataUnavailable,
       fallbackQueryUsed,
       protectedCustomerDataDeniedAt,
       shippingAddressesStored,
+      shippingAddressEncryptedCount,
+      shippingAddressStoredCount,
       orderShippingAddressesStored,
       customerDefaultAddressesStored,
       shippingAddressesMissing,
