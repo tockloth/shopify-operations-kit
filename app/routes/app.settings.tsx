@@ -9,6 +9,8 @@ import {
   seedSampleOperatingScenario,
   updatePrivacySettings,
 } from "../lib/operations-kit.server";
+import { diagnoseShopifyCustomerDataAccess } from "../lib/shopify-sync.server";
+import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const context = await requireOperationsKitContext(request);
@@ -65,8 +67,49 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     };
   }
 
+  if (intent === "diagnoseShopifyAccess") {
+    const { admin } = await authenticate.admin(request);
+    return {
+      message: "Shopify access diagnostics completed.",
+      diagnostics: await diagnoseShopifyCustomerDataAccess(
+        context.pool,
+        context.ctx.tenantId,
+        admin,
+      ),
+    };
+  }
+
   return { message: "No action was performed." };
 };
+
+function yesNo(value: boolean) {
+  return value ? "yes" : "no";
+}
+
+function diagnosticErrors(
+  errors: Array<{
+    message: string;
+    path: string | null;
+    code: string | null;
+    extensionKeys?: string[];
+  }>,
+) {
+  if (!errors.length) return "none";
+  return errors
+    .map((error) => {
+      const details = [
+        error.path ? `path: ${error.path}` : null,
+        error.code ? `code: ${error.code}` : null,
+        error.extensionKeys?.length
+          ? `extensions: ${error.extensionKeys.join(",")}`
+          : null,
+      ].filter(Boolean);
+      return details.length
+        ? `${error.message} (${details.join(", ")})`
+        : error.message;
+    })
+    .join(" | ");
+}
 
 export default function Settings() {
   const data = useLoaderData<typeof loader>();
@@ -74,6 +117,8 @@ export default function Settings() {
   if (!data.configured || !("tenantId" in data)) {
     return <SetupBanner message={data.setupError ?? "Database setup is incomplete."} />;
   }
+  const diagnostics =
+    actionData && "diagnostics" in actionData ? actionData.diagnostics : null;
 
   return (
     <s-page heading="Settings">
@@ -170,6 +215,132 @@ export default function Settings() {
             <input type="hidden" name="intent" value="redactExpired" />
             <s-button type="submit">Redact expired customer data now</s-button>
           </Form>
+        </s-box>
+      </s-section>
+      <s-section heading="Shopify access diagnostics">
+        <s-box padding="base" borderWidth="base" borderRadius="base">
+          <s-stack direction="block" gap="base">
+            <s-stack direction="block" gap="small">
+              <s-heading>Current app token probe</s-heading>
+              <s-paragraph>
+                Development/staging diagnostic for the currently installed Shopify
+                Admin API token. It shows scopes, access booleans and GraphQL
+                errors only; customer names, emails, addresses and tokens are not
+                displayed.
+              </s-paragraph>
+            </s-stack>
+            <Form method="post">
+              <input type="hidden" name="intent" value="diagnoseShopifyAccess" />
+              <s-button type="submit">Run Shopify access diagnostics</s-button>
+            </Form>
+            {diagnostics ? (
+              <s-box padding="small" borderWidth="base" borderRadius="base">
+                <s-stack direction="block" gap="small">
+                  <s-heading>Granted scopes</s-heading>
+                  <s-paragraph>
+                    Query OK: {yesNo(diagnostics.accessScopes.queryOk)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    read_orders: {yesNo(diagnostics.accessScopes.hasReadOrders)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    read_customers: {yesNo(diagnostics.accessScopes.hasReadCustomers)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Handles: {diagnostics.accessScopes.grantedScopes.join(", ") || "none"}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Scope errors: {diagnosticErrors(diagnostics.accessScopes.errors)}
+                  </s-paragraph>
+
+                  <s-heading>Order probe</s-heading>
+                  <s-paragraph>
+                    Orders query OK: {yesNo(diagnostics.orderProbe.queryOk)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Sample order returned: {yesNo(diagnostics.orderProbe.orderReturned)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Order errors: {diagnosticErrors(diagnostics.orderProbe.errors)}
+                  </s-paragraph>
+
+                  <s-heading>Protected customer data probe</s-heading>
+                  <s-paragraph>
+                    Customer field accessible:{" "}
+                    {yesNo(diagnostics.protectedCustomerData.customerFieldAccessible)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Customer object returned:{" "}
+                    {yesNo(diagnostics.protectedCustomerData.customerObjectReturned)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Customer name/email returned:{" "}
+                    {yesNo(diagnostics.protectedCustomerData.customerNameOrEmailReturned)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Shipping address accessible:{" "}
+                    {yesNo(diagnostics.protectedCustomerData.shippingAddressAccessible)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Shipping address returned:{" "}
+                    {yesNo(diagnostics.protectedCustomerData.shippingAddressReturned)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Customer default address accessible:{" "}
+                    {yesNo(diagnostics.protectedCustomerData.defaultAddressAccessible)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Customer default address returned:{" "}
+                    {yesNo(diagnostics.protectedCustomerData.defaultAddressReturned)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Customer field errors:{" "}
+                    {diagnosticErrors(diagnostics.protectedCustomerData.errors.customer)}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Shipping address errors:{" "}
+                    {diagnosticErrors(
+                      diagnostics.protectedCustomerData.errors.shippingAddress,
+                    )}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Default address errors:{" "}
+                    {diagnosticErrors(
+                      diagnostics.protectedCustomerData.errors.defaultAddress,
+                    )}
+                  </s-paragraph>
+
+                  <s-heading>Stored Operations Kit data</s-heading>
+                  {diagnostics.protectedCustomerData.customerNameOrEmailReturned &&
+                  diagnostics.protectedCustomerData.shippingAddressReturned &&
+                  diagnostics.storageProbe.ordersWithCustomerName === 0 &&
+                  diagnostics.storageProbe.ordersWithCustomerEmail === 0 &&
+                  diagnostics.storageProbe.ordersWithShippingAddress === 0 ? (
+                    <s-paragraph>
+                      Shopify returned customer data, but Operations Kit has no
+                      encrypted customer fields stored yet. Run Orders sync and
+                      re-run this diagnostic.
+                    </s-paragraph>
+                  ) : null}
+                  <s-paragraph>
+                    Orders stored: {diagnostics.storageProbe.totalOrders}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Orders with encrypted customer name:{" "}
+                    {diagnostics.storageProbe.ordersWithCustomerName}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Orders with encrypted customer email:{" "}
+                    {diagnostics.storageProbe.ordersWithCustomerEmail}
+                  </s-paragraph>
+                  <s-paragraph>
+                    Orders with encrypted shipping address:{" "}
+                    {diagnostics.storageProbe.ordersWithShippingAddress}
+                  </s-paragraph>
+                </s-stack>
+              </s-box>
+            ) : null}
+          </s-stack>
         </s-box>
       </s-section>
       <s-section heading="Access settings">

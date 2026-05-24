@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData } from "react-router";
+import { Form, redirect, useActionData, useLoaderData } from "react-router";
 
 import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
@@ -23,6 +23,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     payment: url.searchParams.get("payment") ?? "all",
     addressMissing: url.searchParams.get("addressMissing") ?? "all",
   };
+  const notice = url.searchParams.get("notice");
+  const noticeTone = url.searchParams.get("tone") ?? "info";
   const orders = await loadOperationsOrdersList(context.pool, context.ctx.tenantId);
   const filteredOrders = filterOrders(orders, filters);
 
@@ -30,6 +32,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     configured: true,
     shopDomain: context.shopDomain,
     filters,
+    notice: notice ? { message: notice, tone: noticeTone } : null,
     orders,
     filteredOrders,
   };
@@ -38,7 +41,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const context = await requireOperationsKitContext(request);
-  if (!context.configured) return { message: context.setupError };
+  if (!context.configured) return ordersRedirect(context.setupError, "critical");
 
   const form = await request.formData();
   const intent = String(form.get("intent") || "sync");
@@ -50,19 +53,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       context.ctx.tenantId,
       orderId,
     );
-    if (!target) return { message: "Order not found.", tone: "critical" };
+    if (!target) return ordersRedirect("Order not found.", "critical");
     if (!target.shopify_order_gid) {
-      return {
-        message: "No Shopify order id is stored for this order.",
-        tone: "critical",
-      };
+      return ordersRedirect("No Shopify order id is stored for this order.", "critical");
     }
     if (Number(target.shipped_shipment_count ?? 0) <= 0) {
-      return {
-        message:
-          "Shopify fulfillment can only be updated after the local shipment is marked shipped.",
-        tone: "critical",
-      };
+      return ordersRedirect(
+        "Shopify fulfillment can only be updated after the local shipment is marked shipped.",
+        "critical",
+      );
     }
 
     try {
@@ -78,25 +77,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           result.shopifyFulfillmentStatus,
         );
       }
-      return {
-        message: `${target.order_name}: ${result.message}`,
-        tone:
-          result.shopifyFulfillmentStatus === "FULFILLED"
-            ? "success"
-            : "warning",
-      };
+      return ordersRedirect(
+        `${target.order_name}: ${result.message}`,
+        result.shopifyFulfillmentStatus === "FULFILLED"
+          ? "success"
+          : "warning",
+      );
     } catch (error) {
-      return {
-        message:
-          error instanceof Error
-            ? `${target.order_name}: ${error.message}`
-            : `${target.order_name}: Shopify fulfillment failed.`,
-        tone: "critical",
-      };
+      return ordersRedirect(
+        error instanceof Error
+          ? `${target.order_name}: ${error.message}`
+          : `${target.order_name}: Shopify fulfillment failed.`,
+        "critical",
+      );
     }
   }
 
-  if (intent !== "sync") return { message: "No action was performed." };
+  if (intent !== "sync") return ordersRedirect("No action was performed.", "info");
 
   try {
     const result = await syncShopifyOrders(context.pool, context.ctx.tenantId, admin);
@@ -112,10 +109,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ? ` ${result.shippingAddressesMissing} order(s) did not include a usable Shopify shipping address.`
         : "";
 
-    return {
-      message: `${result.orders} Shopify order(s) and ${result.lines} line item(s) synced into Operations Kit. ${result.shippingAddressesStored} shipping address(es) stored.${protectedDataMessage}`,
-      tone: "success",
-    };
+    return ordersRedirect(
+      `${result.orders} Shopify order(s) and ${result.lines} line item(s) synced into Operations Kit. ${result.shippingAddressesStored} shipping address(es) stored.${protectedDataMessage}`,
+      "success",
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (
@@ -123,16 +120,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       message.toLowerCase().includes("protected customer data") ||
       message.toLowerCase().includes("not approved for protected customer data")
     ) {
-      return {
-        message:
-          "Order sync is blocked by Shopify Protected Customer Data. This is an app access setting, not an Operations Kit process error. Enable Protected customer data access for Orders in the Partner Dashboard, restart the dev preview, then re-approve the app scopes.",
-        tone: "critical",
-      };
+      return ordersRedirect(
+        "Order sync is blocked by Shopify Protected Customer Data. This is an app access setting, not an Operations Kit process error. Enable Protected customer data access for Orders in the Partner Dashboard, restart the dev preview, then re-approve the app scopes.",
+        "critical",
+      );
     }
 
     throw error;
   }
 };
+
+function ordersRedirect(message: string, tone: string) {
+  const params = new URLSearchParams({ notice: message, tone });
+  return redirect(`/app/orders?${params.toString()}`);
+}
 
 function compactProducts(value?: string | null) {
   if (!value) return "No products";
@@ -332,6 +333,8 @@ export default function Orders() {
     "fulfillment_status",
     "unfulfilled",
   );
+  const actionNotice = actionData as { message?: string } | undefined;
+  const notice = actionNotice?.message ? actionNotice : data.notice;
   return (
     <s-page heading="Orders">
       <s-section>
@@ -349,9 +352,9 @@ export default function Orders() {
             </Form>
           </div>
         </div>
-        {actionData?.message ? (
+        {notice?.message ? (
           <s-box padding="base" borderWidth="base" borderRadius="base">
-            <s-paragraph>{actionData.message}</s-paragraph>
+            <s-paragraph>{notice.message}</s-paragraph>
           </s-box>
         ) : null}
       </s-section>

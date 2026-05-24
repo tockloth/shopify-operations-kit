@@ -65,7 +65,6 @@ const ORDER_SYNC_QUERY = `#graphql
             provinceCode
             zip
             countryCodeV2
-            phone
           }
         }
         shippingAddress {
@@ -76,7 +75,6 @@ const ORDER_SYNC_QUERY = `#graphql
           provinceCode
           zip
           countryCodeV2
-          phone
         }
         lineItems(first: 100) {
           nodes {
@@ -131,7 +129,6 @@ const ORDER_SYNC_WITH_CUSTOMER_QUERY = `#graphql
             provinceCode
             zip
             countryCodeV2
-            phone
           }
         }
         lineItems(first: 100) {
@@ -204,6 +201,74 @@ const ORDER_SYNC_WITHOUT_CUSTOMER_QUERY = `#graphql
   }
 `;
 
+const CURRENT_APP_INSTALLATION_ACCESS_SCOPES_QUERY = `#graphql
+  query OperationsKitCurrentAppInstallationAccessScopes {
+    currentAppInstallation {
+      accessScopes {
+        handle
+      }
+    }
+  }
+`;
+
+const ORDER_CUSTOMER_DATA_BASE_PROBE_QUERY = `#graphql
+  query OperationsKitOrderBaseProbe($first: Int!) {
+    orders(first: $first, sortKey: CREATED_AT, reverse: true) {
+      nodes {
+        id
+      }
+    }
+  }
+`;
+
+const ORDER_CUSTOMER_PROBE_QUERY = `#graphql
+  query OperationsKitOrderCustomerProbe($first: Int!) {
+    orders(first: $first, sortKey: CREATED_AT, reverse: true) {
+      nodes {
+        id
+        customer {
+          displayName
+          defaultEmailAddress {
+            emailAddress
+          }
+        }
+      }
+    }
+  }
+`;
+
+const ORDER_SHIPPING_ADDRESS_PROBE_QUERY = `#graphql
+  query OperationsKitOrderShippingAddressProbe($first: Int!) {
+    orders(first: $first, sortKey: CREATED_AT, reverse: true) {
+      nodes {
+        id
+        shippingAddress {
+          address1
+          city
+          countryCodeV2
+        }
+      }
+    }
+  }
+`;
+
+const ORDER_DEFAULT_ADDRESS_PROBE_QUERY = `#graphql
+  query OperationsKitOrderDefaultAddressProbe($first: Int!) {
+    orders(first: $first, sortKey: CREATED_AT, reverse: true) {
+      nodes {
+        id
+        customer {
+          defaultAddress {
+            address1
+            city
+            countryCodeV2
+          }
+        }
+      }
+    }
+  }
+`;
+
 type ShopifyShippingAddress = {
   name: string | null;
   address1: string | null;
@@ -212,7 +277,7 @@ type ShopifyShippingAddress = {
   provinceCode: string | null;
   zip: string | null;
   countryCodeV2: string | null;
-  phone: string | null;
+  phone?: string | null;
 } | null;
 
 function hasUsableShopifyShippingAddress(address: ShopifyShippingAddress) {
@@ -286,6 +351,67 @@ async function graphqlJson<T>(
   return payload.data;
 }
 
+type ShopifyGraphqlErrorSummary = {
+  message: string;
+  path: string | null;
+  code: string | null;
+  extensionKeys: string[];
+};
+
+async function graphqlDiagnosticProbe<T>(
+  admin: ShopifyAdmin,
+  query: string,
+  variables: Record<string, unknown>,
+) {
+  try {
+    const response = await admin.graphql(query, { variables });
+    const payload = (await response.json()) as {
+      data?: T;
+      errors?: Array<{
+        message?: string;
+        path?: Array<string | number>;
+        extensions?: Record<string, unknown>;
+      }>;
+    };
+    return {
+      ok: !payload.errors?.length && Boolean(payload.data),
+      data: payload.data ?? null,
+      errors: summarizeGraphqlErrors(payload.errors),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      data: null,
+      errors: [
+        {
+          message: error instanceof Error ? error.message : String(error),
+          path: null,
+          code: null,
+          extensionKeys: [],
+        },
+      ],
+    };
+  }
+}
+
+function summarizeGraphqlErrors(
+  errors?: Array<{
+    message?: string;
+    path?: Array<string | number>;
+    extensions?: Record<string, unknown>;
+  }>,
+): ShopifyGraphqlErrorSummary[] {
+  return (errors ?? []).map((error) => ({
+    message: error.message ?? "Unknown Shopify GraphQL error.",
+    path: error.path?.join(".") ?? null,
+    code:
+      typeof error.extensions?.code === "string"
+        ? error.extensions.code
+        : null,
+    extensionKeys: Object.keys(error.extensions ?? {}).sort(),
+  }));
+}
+
 function isProtectedCustomerDataError(error: unknown) {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   return (
@@ -297,6 +423,151 @@ function isProtectedCustomerDataError(error: unknown) {
     message.includes("access denied for customers field") ||
     message.includes("read_customers")
   );
+}
+
+export async function diagnoseShopifyCustomerDataAccess(
+  db: QueryExecutor,
+  tenantId: string,
+  admin: ShopifyAdmin,
+) {
+  type ScopesData = {
+    currentAppInstallation: {
+      accessScopes: Array<{ handle: string }>;
+    } | null;
+  };
+  type OrderBaseData = { orders: { nodes: Array<{ id: string }> } };
+  type CustomerProbeData = {
+    orders: {
+      nodes: Array<{
+        id: string;
+        customer: {
+          displayName: string | null;
+          defaultEmailAddress: { emailAddress: string | null } | null;
+        } | null;
+      }>;
+    };
+  };
+  type ShippingProbeData = {
+    orders: {
+      nodes: Array<{
+        id: string;
+        shippingAddress: {
+          address1: string | null;
+          city: string | null;
+          countryCodeV2: string | null;
+        } | null;
+      }>;
+    };
+  };
+  type DefaultAddressProbeData = {
+    orders: {
+      nodes: Array<{
+        id: string;
+        customer: {
+          defaultAddress: {
+            address1: string | null;
+            city: string | null;
+            countryCodeV2: string | null;
+          } | null;
+        } | null;
+      }>;
+    };
+  };
+
+  const [scopesProbe, baseProbe, customerProbe, shippingProbe, defaultAddressProbe] =
+    await Promise.all([
+      graphqlDiagnosticProbe<ScopesData>(
+        admin,
+        CURRENT_APP_INSTALLATION_ACCESS_SCOPES_QUERY,
+        {},
+      ),
+      graphqlDiagnosticProbe<OrderBaseData>(
+        admin,
+        ORDER_CUSTOMER_DATA_BASE_PROBE_QUERY,
+        { first: 1 },
+      ),
+      graphqlDiagnosticProbe<CustomerProbeData>(
+        admin,
+        ORDER_CUSTOMER_PROBE_QUERY,
+        { first: 1 },
+      ),
+      graphqlDiagnosticProbe<ShippingProbeData>(
+        admin,
+        ORDER_SHIPPING_ADDRESS_PROBE_QUERY,
+        { first: 1 },
+      ),
+      graphqlDiagnosticProbe<DefaultAddressProbeData>(
+        admin,
+        ORDER_DEFAULT_ADDRESS_PROBE_QUERY,
+        { first: 1 },
+      ),
+    ]);
+
+  const grantedScopes =
+    scopesProbe.data?.currentAppInstallation?.accessScopes
+      ?.map((scope) => scope.handle)
+      .sort((left, right) => left.localeCompare(right)) ?? [];
+  const baseOrder = baseProbe.data?.orders.nodes[0] ?? null;
+  const customerOrder = customerProbe.data?.orders.nodes[0] ?? null;
+  const shippingOrder = shippingProbe.data?.orders.nodes[0] ?? null;
+  const defaultAddressOrder = defaultAddressProbe.data?.orders.nodes[0] ?? null;
+
+  const dbState = await db.query<{
+    total_orders: string | number;
+    orders_with_customer_name: string | number;
+    orders_with_customer_email: string | number;
+    orders_with_shipping_address: string | number;
+  }>(
+    `
+      select
+        count(*) as total_orders,
+        count(*) filter (where customer_name_encrypted is not null) as orders_with_customer_name,
+        count(*) filter (where customer_email_encrypted is not null) as orders_with_customer_email,
+        count(*) filter (where shipping_address_encrypted is not null) as orders_with_shipping_address
+      from operations_orders
+      where tenant_id = $1
+    `,
+    [tenantId],
+  );
+  const row = dbState.rows[0];
+
+  return {
+    accessScopes: {
+      queryOk: scopesProbe.ok,
+      grantedScopes,
+      hasReadOrders: grantedScopes.includes("read_orders"),
+      hasReadCustomers: grantedScopes.includes("read_customers"),
+      errors: scopesProbe.errors,
+    },
+    orderProbe: {
+      queryOk: baseProbe.ok,
+      orderReturned: Boolean(baseOrder),
+      errors: baseProbe.errors,
+    },
+    protectedCustomerData: {
+      customerFieldAccessible: customerProbe.ok,
+      customerObjectReturned: Boolean(customerOrder?.customer),
+      customerNameOrEmailReturned: Boolean(
+        customerOrder?.customer?.displayName ||
+          customerOrder?.customer?.defaultEmailAddress?.emailAddress,
+      ),
+      shippingAddressAccessible: shippingProbe.ok,
+      shippingAddressReturned: Boolean(shippingOrder?.shippingAddress),
+      defaultAddressAccessible: defaultAddressProbe.ok,
+      defaultAddressReturned: Boolean(defaultAddressOrder?.customer?.defaultAddress),
+      errors: {
+        customer: customerProbe.errors,
+        shippingAddress: shippingProbe.errors,
+        defaultAddress: defaultAddressProbe.errors,
+      },
+    },
+    storageProbe: {
+      totalOrders: Number(row?.total_orders ?? 0),
+      ordersWithCustomerName: Number(row?.orders_with_customer_name ?? 0),
+      ordersWithCustomerEmail: Number(row?.orders_with_customer_email ?? 0),
+      ordersWithShippingAddress: Number(row?.orders_with_shipping_address ?? 0),
+    },
+  };
 }
 
 async function upsertShopifyVariantItem(
@@ -583,7 +854,7 @@ export async function syncShopifyOrders(
               provinceCode: string | null;
               zip: string | null;
               countryCodeV2: string | null;
-              phone: string | null;
+              phone?: string | null;
             } | null;
           } | null;
           shippingAddress: {
@@ -594,7 +865,7 @@ export async function syncShopifyOrders(
             provinceCode: string | null;
             zip: string | null;
             countryCodeV2: string | null;
-            phone: string | null;
+            phone?: string | null;
           } | null;
           lineItems: {
             nodes: Array<{

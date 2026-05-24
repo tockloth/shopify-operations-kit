@@ -387,13 +387,15 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
       },
     };
     const admin = {
-      graphql: async () =>
-        new Response(
+      graphql: async (query: string) => {
+        expect(query).not.toContain("phone");
+        return new Response(
           JSON.stringify({
             data: { orders: { nodes: [orderPayload] } },
           }),
           { headers: { "content-type": "application/json" } },
-        ),
+        );
+      },
     };
 
     const synced = await syncShopifyOrders(pool, tenantId, admin);
