@@ -105,6 +105,66 @@ function sourceLabel(value: unknown) {
   return labels[source] ?? source.replaceAll("_", " ");
 }
 
+function movementReason(movement: any) {
+  if (
+    movement.movement_type === "putaway" &&
+    movement.source_type === "goods_receipt_line"
+  ) {
+    return "Putaway from receipt";
+  }
+  if (
+    movement.movement_type === "qc_hold" &&
+    movement.source_type === "goods_receipt_line"
+  ) {
+    return "Received into QC hold";
+  }
+  if (movement.movement_type === "quarantine" && movement.source_type === "qc_check") {
+    return "Rejected during QC";
+  }
+  if (movement.movement_type === "reservation") return "Reserved for customer order";
+  if (movement.movement_type === "ship") return "Shipped to customer";
+  return movementLabel(movement.movement_type);
+}
+
+function MovementSource({ movement }: { movement: any }) {
+  const hasTrace = Boolean(
+    movement.source_receipt_id ||
+      movement.source_purchase_order_id ||
+      movement.source_order_line_id,
+  );
+
+  if (!hasTrace) {
+    return <s-text>{sourceLabel(movement.source_type)}</s-text>;
+  }
+
+  return (
+    <s-stack direction="block" gap="small">
+      {movement.source_receipt_id ? (
+        <s-link href={`/app/receiving/${movement.source_receipt_id}`}>
+          {movement.source_receipt_number ?? "Source receipt"}
+        </s-link>
+      ) : null}
+      {movement.source_purchase_order_id ? (
+        <s-link href={`/app/procurement/${movement.source_purchase_order_id}`}>
+          {movement.source_purchase_order_number ?? "Source PO"}
+        </s-link>
+      ) : null}
+      {movement.source_order_line_id ? (
+        <s-link href={`/app/order-lines/${movement.source_order_line_id}`}>
+          {movement.source_order_name
+            ? `${movement.source_order_name} order line`
+            : "Source order line"}
+        </s-link>
+      ) : null}
+      {movement.source_order_line_sku || movement.source_order_line_title ? (
+        <s-text>
+          {movement.source_order_line_sku} {movement.source_order_line_title}
+        </s-text>
+      ) : null}
+    </s-stack>
+  );
+}
+
 function qcLabel(line: any) {
   if (!line.qc_status) return "Not required";
   if (line.qc_result) return `${line.qc_status} · ${line.qc_result}`;
@@ -115,6 +175,17 @@ function putawayLabel(line: any) {
   if (line.status === "accepted") return "Ready";
   if (line.status === "putaway_done") return "Done";
   return "Waiting for QC";
+}
+
+function orderLineNextAction(line: any, balance: any) {
+  const physical = Number(balance?.physical_quantity ?? 0);
+  const reserved = Number(balance?.reserved_quantity ?? 0);
+  const required = Number(line.quantity ?? 0);
+  if (physical >= required && physical >= reserved && reserved > 0) {
+    return "Open Logistics";
+  }
+  if (physical >= required) return "Stock available";
+  return "Waiting for stock";
 }
 
 export default function InventoryItemDetail() {
@@ -176,9 +247,9 @@ export default function InventoryItemDetail() {
         <DataTable
           headings={[
             "On hand",
-            "Reserved from open orders",
+            "Reserved / needed",
             "Available",
-            "Incoming purchase",
+            "Ordered / incoming",
             "Planned",
           ]}
           rows={[
@@ -252,15 +323,23 @@ export default function InventoryItemDetail() {
         <summary>Open orders / reservations</summary>
         {(detail.demand ?? []).length > 0 ? (
           <DataTable
-            headings={["Order", "Customer", "Quantity", "Status"]}
+            headings={["Order", "Order Line", "Customer", "Quantity", "Status", "Next action"]}
             rows={(detail.demand ?? []).map((line: any) => ({
               id: `demand-${line.order_id}`,
               href: `/app/orders/${line.order_id}`,
               cells: [
                 <strong>{line.order_name}</strong>,
+                <s-link href={`/app/order-lines/${line.order_line_id}`}>
+                  Open line
+                </s-link>,
                 line.customer_display_name ?? "No customer",
                 `${quantity(line.quantity)} ${line.unit}`,
                 <MoneylessBadge>{line.status}</MoneylessBadge>,
+                orderLineNextAction(line, balance) === "Open Logistics" ? (
+                  <s-link href="/app/logistics">Open Logistics</s-link>
+                ) : (
+                  orderLineNextAction(line, balance)
+                ),
               ],
             }))}
           />
@@ -301,7 +380,14 @@ export default function InventoryItemDetail() {
         <summary>Ledger movements</summary>
         {(detail.movements ?? []).length > 0 ? (
           <DataTable
-            headings={["Date", "Movement", "Quantity", "Location", "Source"]}
+            headings={[
+              "Date",
+              "Movement",
+              "Quantity",
+              "Location",
+              "Business reason",
+              "Source",
+            ]}
             rows={(detail.movements ?? []).map((movement: any) => [
               formatDate(movement.occurred_at),
               <MoneylessBadge>
@@ -309,7 +395,8 @@ export default function InventoryItemDetail() {
               </MoneylessBadge>,
               quantity(movement.quantity_delta),
               movement.location_code ?? "Unassigned",
-              sourceLabel(movement.source_type),
+              movementReason(movement),
+              <MovementSource movement={movement} />,
             ])}
           />
         ) : (

@@ -17,13 +17,16 @@ import {
   loadAccessControlSettings,
   loadDashboard,
   loadDashboardOrderLineCards,
+  loadInventoryItemDetail,
   loadInventoryLedger,
   loadOperationsOrderDetail,
   loadItems,
   loadOperationsOrdersList,
   loadOperationsOrderLineDetail,
   loadPurchaseNeeds,
+  loadPurchaseOrderDetail,
   loadPurchaseOrders,
+  loadReceiptDetail,
   loadProductionOrders,
   loadReceipts,
   loadShippingOrderDetail,
@@ -453,6 +456,9 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
     expect(fallbackSynced.shippingAddressAvailable).toBe(false);
     expect(fallbackSynced.protectedCustomerDataUnavailable).toBe(true);
     expect(fallbackSynced.fallbackQueryUsed).toBe(true);
+    expect(fallbackSynced.protectedCustomerDataDeniedAt).toBe(
+      "full_order_query",
+    );
     expect(fallbackSynced.customerDefaultAddressAvailable).toBe(true);
     expect(fallbackSynced.shippingAddressesStored).toBe(1);
     expect(fallbackSynced.customerDefaultAddressesStored).toBe(1);
@@ -504,6 +510,9 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
     expect(noCustomerSynced.customerDataAvailable).toBe(false);
     expect(noCustomerSynced.protectedCustomerDataUnavailable).toBe(true);
     expect(noCustomerSynced.fallbackQueryUsed).toBe(true);
+    expect(noCustomerSynced.protectedCustomerDataDeniedAt).toBe(
+      "customer_fallback_query",
+    );
 
     orders = await loadOperationsOrdersList(pool, tenantId);
     const preservedAfterUnavailable = orders.find(
@@ -1075,6 +1084,199 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
     expect(reopened.rows[0]?.status).toBe("draft");
   });
 
+  it("creates purchase needs for min-stock shortages without customer demand", async () => {
+    const sku = `MINSTOCK-${Date.now()}`;
+    const item = await pool.query<{ id: string }>(
+      `
+        insert into items (
+          tenant_id, sku, title, item_type, unit, is_sellable, is_purchasable,
+          is_producible, is_active, supplier_lead_time_days,
+          default_order_quantity, default_production_quantity,
+          min_inventory_quantity, qc_required_after_purchase,
+          qc_required_after_production
+        )
+        values ($1, $2, 'Min Stock Test Product', 'product', 'pcs', true, true,
+          false, true, 7, 5, 1, 3, true, false)
+        returning id
+      `,
+      [tenantId, sku],
+    );
+    const supplier = await pool.query<{ id: string }>(
+      `
+        insert into suppliers (tenant_id, name, is_active)
+        values ($1, $2, true)
+        returning id
+      `,
+      [tenantId, `Min Stock Supplier ${sku}`],
+    );
+    await pool.query(
+      `
+        insert into supplier_items (
+          tenant_id, supplier_id, item_id, is_preferred, supplier_sku,
+          unit_price, currency_code, lead_time_days, minimum_order_quantity,
+          is_active
+        )
+        values ($1, $2, $3, true, $4, 9, 'EUR', 7, 1, true)
+      `,
+      [tenantId, supplier.rows[0].id, item.rows[0].id, sku],
+    );
+
+    const mrp = await runOperationsMrp(pool, tenantId);
+    await commitMrpRun(pool, tenantId, mrp.mrpRunId);
+
+    const needs = await loadPurchaseNeeds(pool, tenantId);
+    const need = needs.find((row: any) => row.sku === sku) as any;
+    expect(need).toBeTruthy();
+    expect(Number(need.quantity)).toBe(5);
+    expect(need.supplier_id).toBe(supplier.rows[0].id);
+    expect(need.need_explanation).toContain("Min stock shortage");
+
+    const negativeSku = `NEG-NEED-${Date.now()}`;
+    const negativeItem = await pool.query<{ id: string }>(
+      `
+        insert into items (
+          tenant_id, sku, title, item_type, unit, is_sellable, is_purchasable,
+          is_producible, is_active, supplier_lead_time_days,
+          default_order_quantity, default_production_quantity,
+          min_inventory_quantity
+        )
+        values ($1, $2, 'Negative Need Product', 'product', 'pcs', true, true,
+          false, true, 7, 1, 1, 0)
+        returning id
+      `,
+      [tenantId, negativeSku],
+    );
+    await pool.query(
+      `
+        insert into supplier_items (
+          tenant_id, supplier_id, item_id, is_preferred, supplier_sku,
+          unit_price, currency_code, lead_time_days, minimum_order_quantity,
+          is_active
+        )
+        values ($1, $2, $3, true, $4, 9, 'EUR', 7, 1, true)
+      `,
+      [tenantId, supplier.rows[0].id, negativeItem.rows[0].id, negativeSku],
+    );
+    await pool.query(
+      `
+        insert into inventory_movements (
+          tenant_id, item_id, movement_type, quantity_delta, reserved_delta,
+          location_code, source_type, source_id, idempotency_key
+        )
+        values ($1, $2, 'ship', -1, 0, 'MAIN', 'test', $3, $4)
+      `,
+      [
+        tenantId,
+        negativeItem.rows[0].id,
+        negativeItem.rows[0].id,
+        `negative-need:${negativeSku}`,
+      ],
+    );
+
+    const negativeMrp = await runOperationsMrp(pool, tenantId);
+    await commitMrpRun(pool, tenantId, negativeMrp.mrpRunId);
+    const negativeNeeds = await loadPurchaseNeeds(pool, tenantId);
+    const negativeNeed = negativeNeeds.find(
+      (row: any) => row.sku === negativeSku,
+    ) as any;
+    expect(Number(negativeNeed?.quantity ?? 0)).toBe(1);
+    expect(negativeNeed?.need_explanation).toContain("Negative stock shortage");
+  });
+
+  it("blocks shipping when shipment quantity would make physical inventory negative", async () => {
+    const sku = `NO-NEG-${Date.now()}`;
+    const item = await pool.query<{ id: string }>(
+      `
+        insert into items (
+          tenant_id, sku, title, item_type, unit, is_sellable, is_purchasable,
+          is_producible, is_active
+        )
+        values ($1, $2, 'No Negative Stock Product', 'product', 'pcs', true,
+          true, false, true)
+        returning id
+      `,
+      [tenantId, sku],
+    );
+    const shippingAddress = {
+      name: "No Negative Customer",
+      address1: "123 Stock St",
+      address2: null,
+      city: "Berlin",
+      provinceCode: "BE",
+      zip: "10115",
+      countryCodeV2: "DE",
+      phone: null,
+    };
+    const order = await pool.query<{ id: string }>(
+      `
+        insert into operations_orders (
+          tenant_id, order_name, status, customer_name_encrypted,
+          customer_email_encrypted, shipping_address_encrypted
+        )
+        values ($1, $2, 'open', $3, $4, $5)
+        returning id
+      `,
+      [
+        tenantId,
+        `#${sku}`,
+        encryptCustomerData(shippingAddress.name),
+        encryptCustomerData("no-negative@example.com"),
+        encryptCustomerData(JSON.stringify(shippingAddress)),
+      ],
+    );
+    await pool.query(
+      `
+        insert into operations_order_lines (
+          tenant_id, operations_order_id, item_id, quantity, unit, sku, title
+        )
+        values ($1, $2, $3, 1, 'pcs', $4, 'No Negative Stock Product')
+      `,
+      [tenantId, order.rows[0].id, item.rows[0].id, sku],
+    );
+    await pool.query(
+      `
+        insert into inventory_movements (
+          tenant_id, item_id, movement_type, quantity_delta, reserved_delta,
+          location_code, source_type, source_id, idempotency_key
+        )
+        values ($1, $2, 'putaway', 1, 0, 'MAIN', 'test', $3, $4)
+      `,
+      [tenantId, item.rows[0].id, order.rows[0].id, `no-neg-stock:${sku}`],
+    );
+
+    const shipping = await createShippingOrdersFromOpenOperationsOrders(
+      pool,
+      tenantId,
+      order.rows[0].id,
+    );
+    expect(shipping.shippingOrderIds.length).toBe(1);
+    const detail = await loadShippingOrderDetail(
+      pool,
+      tenantId,
+      shipping.shippingOrderIds[0],
+    );
+    await updateShippingOrderLineQuantity(
+      pool,
+      tenantId,
+      (detail.lines[0] as any).id,
+      2,
+    );
+
+    await expect(
+      transitionShippingOrder(pool, tenantId, shipping.shippingOrderIds[0], "shipped"),
+    ).rejects.toThrow("physical inventory would become negative");
+
+    const balance = await pool.query<{ physical_quantity: string }>(
+      `
+        select coalesce(sum(quantity_delta), 0) as physical_quantity
+        from inventory_movements
+        where tenant_id = $1 and item_id = $2 and location_code = 'MAIN'
+      `,
+      [tenantId, item.rows[0].id],
+    );
+    expect(Number(balance.rows[0]?.physical_quantity ?? 0)).toBe(1);
+  });
+
   it("keeps same-item procurement status scoped to the source order where current schema can link it", async () => {
     const sku = `TRACE-${Date.now()}`;
     const item = await pool.query<{ id: string }>(
@@ -1183,6 +1385,9 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
     ) as any;
     expect(procurementNeed?.demand_link_scope).toBe("order_line");
     expect(procurementNeed?.source_order_line_id).toBe(firstLine.rows[0].id);
+    expect(procurementNeed?.source_line_title).toBe("Traceability Test Product");
+    expect(procurementNeed?.need_explanation).toContain("Direct procurement");
+    expect(Number(procurementNeed?.shortage_quantity ?? 0)).toBeGreaterThanOrEqual(1);
 
     let orders = await loadOperationsOrdersList(pool, tenantId);
     const firstBeforePo = orders.find(
@@ -1225,6 +1430,12 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
     expect((firstLineDetail.procurement?.[0] as any)?.demand_link_scope).toBe(
       "order_line",
     );
+    expect((firstLineDetail.procurement?.[0] as any)?.need_explanation).toContain(
+      "Direct procurement",
+    );
+    expect(
+      Number((firstLineDetail.procurement?.[0] as any)?.shortage_quantity ?? 0),
+    ).toBeGreaterThanOrEqual(1);
     const secondLineDetail = await loadOperationsOrderLineDetail(
       pool,
       tenantId,
@@ -1237,6 +1448,20 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
       tenantId,
       createdNeed.purchaseNeedId,
     );
+    const linkedPoDetail = await loadPurchaseOrderDetail(
+      pool,
+      tenantId,
+      po.purchaseOrderId!,
+    );
+    expect((linkedPoDetail.lines[0] as any)?.source_order_line_id).toBe(
+      firstLine.rows[0].id,
+    );
+    expect((linkedPoDetail.lines[0] as any)?.source_line_title).toBe(
+      "Traceability Test Product",
+    );
+    expect((linkedPoDetail.lines[0] as any)?.need_explanation).toContain(
+      "Direct procurement",
+    );
     await transitionPurchaseOrder(pool, tenantId, po.purchaseOrderId!, "sent");
     await transitionPurchaseOrder(
       pool,
@@ -1248,6 +1473,28 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
       pool,
       tenantId,
       po.purchaseOrderId!,
+    );
+    const receiptDetailBeforeQc = await loadReceiptDetail(
+      pool,
+      tenantId,
+      receipt.receiptId!,
+    );
+    expect((receiptDetailBeforeQc.receipt as any)?.purchase_order_id).toBe(
+      po.purchaseOrderId,
+    );
+    expect((receiptDetailBeforeQc.receipt as any)?.supplier_name).toBe(
+      "Traceability Supplier",
+    );
+    expect(
+      Number((receiptDetailBeforeQc.lines[0] as any)?.ordered_quantity ?? 0),
+    ).toBe(1);
+    expect(
+      Number((receiptDetailBeforeQc.lines[0] as any)?.received_quantity ?? 0),
+    ).toBe(1);
+    expect(Number((receiptDetailBeforeQc.lines[0] as any)?.putaway_quantity ?? 0)).toBe(0);
+    expect((receiptDetailBeforeQc.lines[0] as any)?.qc_status).toBe("open");
+    expect((receiptDetailBeforeQc.lines[0] as any)?.source_order_line_id).toBe(
+      firstLine.rows[0].id,
     );
     const receiptLine = await pool.query<{
       id: string;
@@ -1267,6 +1514,22 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
       rejectedQuantity: 0,
     });
     await putawayReceiptLine(pool, tenantId, receiptLine.rows[0].id);
+    const traceInventoryDetail = await loadInventoryItemDetail(
+      pool,
+      tenantId,
+      item.rows[0].id,
+    );
+    const tracePutawayMovement = traceInventoryDetail.movements.find(
+      (movement: any) =>
+        movement.movement_type === "putaway" &&
+        movement.source_receipt_id === receipt.receiptId,
+    ) as any;
+    expect(tracePutawayMovement?.source_purchase_order_id).toBe(
+      po.purchaseOrderId,
+    );
+    expect(tracePutawayMovement?.source_order_line_id).toBe(
+      firstLine.rows[0].id,
+    );
 
     orders = await loadOperationsOrdersList(pool, tenantId);
     const first = orders.find(
@@ -1512,6 +1775,18 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
     expect(Number(poLine.rows[0]?.unit_price ?? 0)).toBe(10);
     expect(Number(poLine.rows[0]?.quantity ?? 0) * Number(poLine.rows[0]?.unit_price ?? 0)).toBe(30);
     expect(poLine.rows[0]?.currency_code).toBe("EUR");
+    const poDetailBeforeReceipt = await loadPurchaseOrderDetail(
+      pool,
+      tenantId,
+      po.purchaseOrderId!,
+    );
+    expect((poDetailBeforeReceipt.lines[0] as any)?.need_explanation).toContain(
+      sku,
+    );
+    expect(
+      Number((poDetailBeforeReceipt.lines[0] as any)?.shortage_quantity ?? 0),
+    ).toBe(3);
+    expect((poDetailBeforeReceipt.lines[0] as any)?.receipt_id).toBeNull();
 
     await transitionPurchaseOrder(pool, tenantId, po.purchaseOrderId!, "sent");
     await transitionPurchaseOrder(
@@ -1549,6 +1824,49 @@ describe.skipIf(!databaseUrl)("Operations Kit scenario flow", () => {
       rejectedQuantity: 0,
     });
     await putawayReceiptLine(pool, tenantId, receiptLine.rows[0].id);
+    const poDetailAfterReceipt = await loadPurchaseOrderDetail(
+      pool,
+      tenantId,
+      po.purchaseOrderId!,
+    );
+    expect((poDetailAfterReceipt.lines[0] as any)?.receipt_id).toBe(
+      receipt.receiptId,
+    );
+    expect((poDetailAfterReceipt.lines[0] as any)?.receipt_line_status).toBe(
+      "putaway_done",
+    );
+    expect(
+      Number((poDetailAfterReceipt.lines[0] as any)?.accepted_quantity ?? 0),
+    ).toBe(3);
+    const receiptDetailAfterPutaway = await loadReceiptDetail(
+      pool,
+      tenantId,
+      receipt.receiptId!,
+    );
+    expect((receiptDetailAfterPutaway.receipt as any)?.status).toBe("closed");
+    expect((receiptDetailAfterPutaway.lines[0] as any)?.status).toBe(
+      "putaway_done",
+    );
+    expect(
+      Number((receiptDetailAfterPutaway.lines[0] as any)?.putaway_quantity ?? 0),
+    ).toBe(3);
+    const inventoryDetail = await loadInventoryItemDetail(
+      pool,
+      tenantId,
+      item.rows[0].id,
+    );
+    expect(Number((inventoryDetail.balance as any)?.physical_quantity ?? 0)).toBe(3);
+    expect(Number((inventoryDetail.balance as any)?.reserved_quantity ?? 0)).toBe(3);
+    expect(Number((inventoryDetail.balance as any)?.available_quantity ?? 0)).toBe(0);
+    expect(
+      inventoryDetail.demand.some((line: any) => line.order_id === order.rows[0].id),
+    ).toBe(true);
+    const putawayMovement = inventoryDetail.movements.find(
+      (movement: any) =>
+        movement.movement_type === "putaway" &&
+        movement.source_receipt_id === receipt.receiptId,
+    ) as any;
+    expect(putawayMovement?.source_purchase_order_id).toBe(po.purchaseOrderId);
 
     orders = await loadOperationsOrdersList(pool, tenantId);
     expect(

@@ -37,6 +37,9 @@ export default function Inventory() {
     movements: [],
   };
   const summaryRows = inventory.locationBalances ?? [];
+  const balanceByItemId = new Map(
+    (inventory.balances ?? []).map((row: any) => [row.id, row]),
+  );
 
   return (
     <s-page heading="Inventory">
@@ -44,22 +47,29 @@ export default function Inventory() {
         <div className="kit-toolbar">
           <s-heading>Inventory</s-heading>
           <div className="kit-toolbar-actions">
+            <s-link href="/app/inventory">
+              <s-button>Refresh</s-button>
+            </s-link>
             <Link to="/app/inventory/movements">
               <s-button>Open movements</s-button>
             </Link>
           </div>
         </div>
-        {summaryRows.length > 0 ? (
-          <DataTable
-            headings={[
-              "Item",
-              "Location",
-              "On hand",
-              "Available",
-              "QC hold",
-              "Last movement",
-            ]}
-            rows={summaryRows.map((row: any) => ({
+        <DataTable
+          headings={[
+            "Item",
+            "Location",
+            "On hand",
+            "Available",
+            "Reserved",
+            "Planned",
+            "Ordered / incoming",
+            "QC hold",
+            "Last movement",
+          ]}
+          rows={summaryRows.map((row: any) => {
+            const balance = balanceByItemId.get(row.item_id) as any;
+            return {
               id: `${row.item_id}-${row.location_code}`,
               href: `/app/inventory/${row.item_id}`,
               cells: [
@@ -69,18 +79,15 @@ export default function Inventory() {
                 row.location_code,
                 quantity(row.on_hand_quantity),
                 quantity(row.available_quantity),
+                quantity(balance?.reserved_quantity),
+                quantity(balance?.planned_quantity),
+                quantity(balance?.ordered_quantity),
                 quantity(row.qc_hold_quantity),
                 formatDate(row.last_movement_at),
               ],
-            }))}
-          />
-        ) : (
-          <s-box padding="base" borderWidth="base" borderRadius="base">
-            <s-paragraph>
-              Inventory movements appear after receiving, QC and putaway.
-            </s-paragraph>
-          </s-box>
-        )}
+            };
+          })}
+        />
       </s-section>
 
     </s-page>

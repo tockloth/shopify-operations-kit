@@ -90,7 +90,32 @@ Before test execution, verify:
 - The app configuration contains the expected scopes.
 - The connected database is the intended local/staging database.
 
-## 6. Required Product Setup
+## 6. Integration Smoke Test
+
+The Phase 0A integration smoke test reads the Operations Kit Postgres
+connection string from:
+
+- `OPERATIONS_KIT_DATABASE_URL`
+- fallback: `OPERATIONS_LEDGER_DATABASE_URL`
+
+It does not read `DATABASE_URL`.
+
+Run it against the local Supabase test database with:
+
+```sh
+OPERATIONS_KIT_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54332/postgres" npx vitest run tests/integration/operations-kit-scenario.test.ts
+```
+
+Run it against a Supabase staging test database with:
+
+```sh
+OPERATIONS_KIT_DATABASE_URL="<supabase-postgres-test-url>" npx vitest run tests/integration/operations-kit-scenario.test.ts
+```
+
+Do not commit real database URLs or secrets. Set the variable only in the local
+shell or CI environment.
+
+## 7. Required Product Setup
 
 For a trading-goods baseline product, configure the product in Operations Kit Product Detail:
 
@@ -112,7 +137,7 @@ Baseline recommendation:
 - Use one ordered quantity from the Shopify order.
 - Use default order quantity / lot size `1` unless testing lot rounding.
 
-## 7. Required Supplier Setup
+## 8. Required Supplier Setup
 
 Supplier master data must exist before Purchase Orders can be created.
 
@@ -136,77 +161,116 @@ Expected behavior:
 - Purchase Needs can be assigned to the preferred supplier.
 - Purchase Orders inherit supplier, unit price, currency and expected delivery date from product/supplier setup where available.
 
-## 8. Full Browser Test Path
+## 9. Current Browser Route Map
+
+The current clickable Phase 0A path follows the UX rule:
+
+List/Table -> row click -> detail page/form -> action on detail page.
+
+| Process step | Browser route | Current clickable action or target |
+| --- | --- | --- |
+| Dashboard / work board | `/app` | Status cards link into Orders, Order Lines, Procurement, Receiving or Logistics. |
+| Shopify products sync | `/app/items` | `Sync Shopify products` if the product is not already visible. |
+| Product master data | `/app/items`, `/app/items/:itemId` | Product row -> Product detail -> `Save`. |
+| Supplier master data | `/app/suppliers`, `/app/suppliers/new`, `/app/suppliers/:supplierId` | `Create supplier` or supplier row -> supplier form -> `Save supplier`. |
+| Shopify orders sync | `/app/orders` | `Sync Shopify orders`. |
+| Operations order detail | `/app/orders/:orderId` | Order row -> detail; `Refresh planning` is available. |
+| Operations order line detail | `/app/order-lines/:lineId` | `Open line`; links to product, procurement, receiving and logistics context; Procurement context shows need reason, supplier status, PO status and next action. |
+| Purchase Need planning | `/app/procurement` | Page load auto-runs planning; `Refresh` is also available. Purchase Need rows show source, reason, shortage, supplier status, PO status and next action. Minimum-stock and negative-stock shortages create Purchase Needs when product purchasing setup exists. |
+| Purchase Need supplier assignment | `/app/procurement` | `Assign preferred supplier` or `Assign supplier` when a need has no assigned supplier. |
+| Purchase Order creation | `/app/procurement` | `Create PO`. |
+| Purchase Order lifecycle | `/app/procurement/:purchaseOrderId` | PO detail shows supplier, total value, source Purchase Need / Order Line, need reason and receiving status; actions are `Approve` -> `Sent to supplier` -> `Supplier acknowledged` -> `Create Goods Receipt`. |
+| Goods Receipt list | `/app/receiving` | `Create Goods Receipt` for acknowledged POs, or open existing receipt row. |
+| Goods Receipt QC and putaway | `/app/receiving/:receiptId` | Receipt detail shows PO link, supplier, ordered / received / accepted / rejected / putaway quantities, source Order Line context and next action; use `Complete QC`, then `Put away to inventory`. |
+| Inventory verification | `/app/inventory`, `/app/inventory/:itemId` | Open inventory from navigation or receipt movement link; item detail shows physical / reserved / available / incoming quantities, receipt / PO / order-line movement sources and shipment next action. |
+| Shipment creation | `/app/logistics` | `Create shipment` when the order is address-ready and inventory-ready. |
+| Shipment detail | `/app/logistics/:shipmentId` | `Back to list`, `Mark packed`, `Mark shipped`, and if needed `Update Shopify fulfillment`. `Mark shipped` is blocked when physical MAIN inventory would become negative. |
+| Shopify fulfillment verification | Shopify Admin order page | The local `Mark shipped` action attempts Shopify fulfillment writeback; `Update Shopify fulfillment` is the retry action. |
+
+## 10. Full Browser Test Path
 
 1. Open Shopify Dev Store.
-2. Create an order with a product and a shipping address.
+2. Create a paid or otherwise operationally valid order with one test product and a usable shipping address.
 3. Open Shopify Admin.
 4. Open Operations Kit.
-5. Go to Orders.
-6. Click `Sync Shopify orders`.
-7. Verify customer name, customer email and shipping address are visible on the order or order detail.
-8. Verify products and ordered quantities are visible.
-9. Go to Products.
-10. Open the ordered product.
-11. Configure Product Detail as purchasable trading good:
-    - sellable
-    - purchased
-    - not produced
-    - minimum inventory
-    - default order quantity / lot size
-    - lead time
-    - QC after receipt if applicable
-12. Configure supplier relationship:
-    - preferred supplier
-    - supplier item data
-    - unit price
-    - currency
-13. Go to Procurement.
-14. Create or refresh Purchase Need for open demand.
-15. Verify Purchase Need quantity equals the shortage.
-16. Create Purchase Order.
-17. Open Purchase Order detail.
-18. Approve Purchase Order.
-19. Send Purchase Order.
-20. Mark Supplier acknowledged.
-21. Create Goods Receipt.
-22. Open Receipt detail.
-23. Complete QC for received quantity.
-24. Put away accepted quantity to inventory.
-25. Go to Inventory.
-26. Verify stock movement and inventory position.
-27. Go to Logistics.
-28. Create shipment for ready order.
-29. Open Shipment detail.
-30. Mark shipment shipped.
-31. Trigger or verify Shopify fulfillment writeback.
-32. Open Shopify order.
-33. Verify Shopify order is fulfilled.
+5. Optional if the product is not visible yet: go to Products and click `Sync Shopify products`.
+6. Go to Orders.
+7. Click `Sync Shopify orders`.
+8. Click the synced order row.
+9. Verify customer name, customer email and shipping address on the Order detail.
+10. In the Lines table, click `Open line`.
+11. From the Order Line detail, click `Open product`.
+12. On Product detail, configure the item as the trading-goods baseline product:
+    - `Sellable` checked
+    - `Purchasable` checked
+    - `Producible` unchecked
+    - `Minimum stock` according to the test scenario
+    - `Standard order qty` / lot size
+    - `Lead time`
+    - `QC required on receiving` checked if QC should be tested
+    - `QC required after production` unchecked
+13. In Product detail purchasing settings, select or keep the preferred supplier and maintain:
+    - Supplier SKU
+    - Preferred
+    - Supplier MOQ if needed
+    - Supplier price
+    - Currency
+14. Click `Save`.
+15. If no supplier exists, go to Suppliers, click `Create supplier`, save an active supplier, then return to the product and save the supplier purchasing settings.
+16. Go to Orders, open the order, and click `Refresh planning`, or go directly to Procurement.
+17. Go to Procurement.
+18. If the Purchase Need has no assigned supplier, click `Assign preferred supplier` or choose a supplier and click `Assign supplier`.
+19. Verify the Purchase Need quantity equals the shortage from the order line and stock position.
+20. Click `Create PO`.
+21. Open the created Purchase Order from the Procurement table.
+22. Verify the PO detail shows supplier, total value, source Purchase Need / Order Line, need reason and the next receiving action.
+23. If line terms are missing or wrong, update quantity, unit price, currency or expected delivery date and click `Update terms`.
+24. Click `Approve`.
+25. Click `Sent to supplier`.
+26. Click `Supplier acknowledged`.
+27. Click `Create Goods Receipt`.
+28. On Receipt detail, verify the Purchase Order link, supplier, ordered / received quantities, QC status and source Order Line context.
+29. Complete the QC action for the received line by entering accepted and rejected quantities and clicking `Complete QC`.
+30. Verify the Receipt line now shows accepted / rejected quantities and `Put away to inventory` as the next action.
+31. Click `Put away to inventory` for the accepted quantity.
+32. Verify the Receipt line shows the putaway quantity and that no further receiving step is open.
+33. Return to the PO detail and verify the line links to the Goods Receipt and shows received / accepted / rejected quantities.
+34. Open Inventory from the receipt movement link or the main navigation.
+35. Open the item detail and verify physical / reserved / available / incoming quantities, the putaway movement source Receipt / PO, and the related customer Order Line.
+36. Go to Logistics.
+37. For the ready order, click `Create shipment`.
+38. On Shipment detail, optionally click `Mark packed`.
+39. Click `Mark shipped`.
+40. If Shopify was not updated during `Mark shipped`, click `Update Shopify fulfillment`.
+41. Open the Shopify order and verify fulfillment status.
 
-## 9. Expected Status After Every Step
+## 11. Expected Status After Every Step
 
 | Step | Expected status/result |
 | --- | --- |
 | Shopify order created | Shopify order is paid or otherwise valid for operations sync; fulfillment is unfulfilled. |
+| Products synced or order synced | Operations item exists for the Shopify product or order line. |
 | Orders synced | Operations Order exists; Operations Order Lines exist. |
 | Customer data verified | Customer name, email and shipping address snapshot are present if protected data access is approved. |
-| Product configured | Product is sellable and purchased, not produced. |
+| Product configured | Product review state is ready for planning; product is sellable and purchasable, not producible. |
 | Supplier configured | Product has preferred supplier and purchasing data. |
-| Purchase Need created | Need quantity equals shortage from order demand, inventory and incoming supply. |
-| Purchase Order created | PO status is draft/created according to current workflow. |
-| PO approved | PO approval status is complete. |
-| PO sent | PO status indicates sent or awaiting supplier acknowledgement. |
-| Supplier acknowledged | PO is ready for receipt. |
+| Planning refreshed | Purchase Need exists for order shortage, minimum-stock shortage or existing negative-stock shortage when available plus incoming supply does not cover demand plus minimum stock. |
+| Supplier assigned | Purchase Need status is ready for PO. |
+| Purchase Order created | Purchase Order status is draft / Purchase Order created. |
+| PO approved | Purchase Order status is approved / PO approved. |
+| PO sent | Purchase Order status is sent / Sent to supplier. |
+| Supplier acknowledged | Purchase Order status is acknowledged / Awaiting receipt. |
 | Goods Receipt created | Receipt exists and references the Purchase Order. |
 | QC completed | Accepted and rejected quantities are recorded per receipt line. |
-| Putaway completed | Accepted quantity is posted into inventory. |
+| Putaway completed | Receipt line is put away and accepted quantity is posted into inventory. |
 | Inventory checked | Physical stock increased; reserved stock reflects customer demand; available stock is calculated. |
 | Shipment created | Shipment exists for the Operations Order. |
-| Shipment shipped | Local shipment status is shipped; inventory is reduced/reservation consumed. |
-| Shopify fulfillment writeback | Shopify fulfillment is created or confirmed already fulfilled. |
+| Shipment packed | Shipment status is packed if the optional pack step was used. |
+| Shipment shipped | Local shipment status is shipped; inventory is reduced/reservation consumed. If shipment quantity exceeds physical MAIN stock, shipping is blocked and no negative movement is posted. |
+| Shopify fulfillment writeback | Shopify fulfillment is created or confirmed already fulfilled; retry action remains available if Shopify writeback failed. |
 | Shopify order verified | Shopify order fulfillment status is fulfilled. |
 
-## 10. Expected Database Objects After Every Step
+## 12. Expected Database Objects After Every Step
 
 | Step | Expected database objects |
 | --- | --- |
@@ -215,7 +279,7 @@ Expected behavior:
 | Supplier setup | `suppliers`, `supplier_items`. |
 | Purchase planning | `mrp_runs`, `mrp_run_lines`, `purchase_needs`. |
 | Purchase Order creation | `purchase_orders`, `purchase_order_lines`; linked `purchase_needs` converted to PO. |
-| PO lifecycle | `purchase_orders.status` transitions through current approval/send/acknowledge states. |
+| PO lifecycle | `purchase_orders.status` transitions through `draft`, `approved`, `sent`, `acknowledged`. |
 | Goods Receipt | `goods_receipts`, `goods_receipt_lines`, initial QC hold state if QC applies. |
 | QC | `qc_checks`, updated `goods_receipt_lines.accepted_quantity` / `rejected_quantity`, QC inventory movements if implemented. |
 | Putaway | `inventory_movements` with putaway movement; receipt line status updated to putaway done. |
@@ -224,7 +288,13 @@ Expected behavior:
 | Shipment shipped | Shipping status updated; inventory movement for shipping; Operations Order can close. |
 | Shopify fulfillment writeback | Operations Order fulfillment status updated from Shopify result; Shopify fulfillment created via Admin API. |
 
-## 11. Known Gaps
+## 13. Baseline Documentation Gap Closed
+
+The previous browser-test section described the right business process, but it did not match the current clickable UI exactly. In particular, Procurement now auto-runs planning on page load and exposes `Refresh`; PO actions are performed from `/app/procurement/:purchaseOrderId`; Receiving uses `Complete QC` and `Put away to inventory`; and Logistics attempts Shopify fulfillment writeback when `Mark shipped` is clicked.
+
+No blocking code gap was found in the inspected baseline path. The current stabilization change is documentation-only.
+
+## 14. Known Gaps
 
 - Hosted staging deployment is not part of Phase 0A.
 - Tenant switch/global admin is not implemented in this baseline.
@@ -237,7 +307,7 @@ Expected behavior:
 - Live Shopify fulfillment writeback should be tested manually in the dev store even if automated tests mock it.
 - Protected customer data approval can make customer/address test results differ between stores.
 
-## 12. Troubleshooting
+## 15. Troubleshooting
 
 ### Customer name, email or address is missing
 

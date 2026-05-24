@@ -181,6 +181,121 @@ function formatLineValue(line: any) {
   ).toLocaleString()} ${line.currency_code ?? "EUR"}`;
 }
 
+function formatQuantity(value: unknown, unit?: string | null) {
+  const quantity = Number(value ?? 0);
+  return `${quantity.toLocaleString()} ${unit ?? "pcs"}`;
+}
+
+function lineValue(line: any) {
+  if (!hasUsablePrice(line)) return null;
+  return Number(line.quantity ?? 0) * Number(line.unit_price);
+}
+
+function formatAmount(value: number | null, currencyCode: string) {
+  if (value == null) return "Not calculated";
+  return `${value.toLocaleString()} ${currencyCode}`;
+}
+
+function receiptLineStatusLabel(status: string | null | undefined) {
+  if (status === "putaway_done") return "Put away";
+  if (status === "accepted") return "Accepted";
+  if (status === "rejected") return "Rejected";
+  if (status === "qc_hold") return "QC hold";
+  if (status === "received") return "Received";
+  return "Not received";
+}
+
+function purchaseOrderNextAction(
+  order: any,
+  hasOpenReceipt: boolean,
+  hasMissingPrices: boolean,
+  latestReceipt: any,
+) {
+  if (latestReceipt?.status === "closed") return "Continue with Inventory / Logistics";
+  if (latestReceipt?.status === "putaway_pending") return "Put away to inventory";
+  if (latestReceipt?.status === "posted" || latestReceipt?.status === "qc_required")
+    return "Complete QC";
+  if (order.status === "acknowledged" && !hasOpenReceipt) return "Create Goods Receipt";
+  if (order.status === "sent") return "Supplier acknowledged";
+  if (order.status === "approved") return "Sent to supplier";
+  if ((order.status === "draft" || order.status === "pending_approval") && hasMissingPrices)
+    return "Enter line terms";
+  if (order.status === "draft" || order.status === "pending_approval") return "Approve";
+  return "Review";
+}
+
+function lineNextAction(line: any, order: any, hasOpenReceipt: boolean) {
+  if (line.receipt_line_status === "putaway_done") return "Receiving complete";
+  if (line.receipt_line_status === "accepted") return "Put away to inventory";
+  if (line.receipt_line_status === "received" || line.receipt_line_status === "qc_hold")
+    return "Complete QC";
+  if (line.receipt_id) return "Open Goods Receipt";
+  if (order.status === "acknowledged" && !hasOpenReceipt) return "Create Goods Receipt";
+  if (order.status === "sent") return "Supplier acknowledged";
+  if (order.status === "approved") return "Sent to supplier";
+  if (!hasUsablePrice(line)) return "Enter line terms";
+  if (order.status === "draft" || order.status === "pending_approval") return "Approve";
+  return "Review";
+}
+
+function SourceCell({ line }: { line: any }) {
+  return (
+    <s-stack direction="block" gap="small">
+      <s-text>{line.purchase_need_id ? `Purchase Need ${String(line.purchase_need_id).slice(0, 8)}` : "No Purchase Need"}</s-text>
+      {line.source_order_line_id ? (
+        <Link to={`/app/order-lines/${line.source_order_line_id}`}>
+          {line.source_order_name ? `${line.source_order_name} line` : "Open source order line"}
+        </Link>
+      ) : line.source_order_id ? (
+        <Link to={`/app/orders/${line.source_order_id}`}>
+          {line.source_order_name ?? "Open source order"}
+        </Link>
+      ) : (
+        <s-text>Item-level planning</s-text>
+      )}
+      {line.source_line_sku || line.source_line_title ? (
+        <s-text>
+          {line.source_line_sku} {line.source_line_title}
+        </s-text>
+      ) : null}
+    </s-stack>
+  );
+}
+
+function NeedReasonCell({ line }: { line: any }) {
+  return (
+    <s-stack direction="block" gap="small">
+      <s-text>{line.need_explanation ?? "No planning reason stored."}</s-text>
+      <s-text>
+        Demand {formatQuantity(line.demand_quantity, line.unit)} / Available{" "}
+        {formatQuantity(line.available_quantity, line.unit)} / Short{" "}
+        {formatQuantity(line.shortage_quantity, line.unit)}
+      </s-text>
+      <MoneylessBadge>{line.recommended_action ?? "review"}</MoneylessBadge>
+    </s-stack>
+  );
+}
+
+function ReceivingCell({ line }: { line: any }) {
+  if (!line.receipt_id) {
+    return <MoneylessBadge tone="warning">Not received</MoneylessBadge>;
+  }
+
+  return (
+    <s-stack direction="block" gap="small">
+      <MoneylessBadge>{receiptLineStatusLabel(line.receipt_line_status)}</MoneylessBadge>
+      <Link to={`/app/receiving/${line.receipt_id}`}>
+        {line.receipt_number ?? "Open Goods Receipt"}
+      </Link>
+      <s-text>
+        Received {formatQuantity(line.received_quantity, line.unit)} / Accepted{" "}
+        {formatQuantity(line.accepted_quantity, line.unit)} / Rejected{" "}
+        {formatQuantity(line.rejected_quantity, line.unit)}
+      </s-text>
+    </s-stack>
+  );
+}
+
 function StatusAction({
   orderId,
   status,
@@ -253,6 +368,27 @@ export default function PurchaseOrderDetail() {
   const canReleaseForEditing =
     !["draft", "pending_approval", "cancelled"].includes(String(order.status)) &&
     !hasOpenReceipt;
+  const currencyCode =
+    detail.lines.find((line: any) => line.currency_code)?.currency_code ?? "EUR";
+  const totalValue = detail.lines.reduce((sum: number, line: any) => {
+    const value = lineValue(line);
+    return value == null ? sum : sum + value;
+  }, 0);
+  const hasAnyValue = detail.lines.some((line: any) => lineValue(line) != null);
+  const earliestExpectedDate = detail.lines
+    .map((line: any) => line.expected_delivery_date)
+    .filter(Boolean)
+    .sort()[0];
+  const maxLeadTimeDays = Math.max(
+    ...detail.lines.map((line: any) => Number(line.lead_time_days ?? 0)),
+    0,
+  );
+  const nextAction = purchaseOrderNextAction(
+    order,
+    hasOpenReceipt,
+    hasMissingPrices,
+    latestReceipt,
+  );
 
   return (
     <s-page heading={`Purchase order ${order.display_number}`}>
@@ -326,6 +462,45 @@ export default function PurchaseOrderDetail() {
         </s-stack>
       </s-section>
 
+      <s-section heading="Purchase order context">
+        <DataTable
+          headings={["Area", "Current state"]}
+          rows={[
+            [
+              "PO status",
+              <s-stack direction="inline" gap="small">
+                <MoneylessBadge tone={purchaseOrderStatusTone(businessStatus)}>
+                  {businessStatus}
+                </MoneylessBadge>
+                <MoneylessBadge>{order.status}</MoneylessBadge>
+              </s-stack>,
+            ],
+            ["Supplier", `${order.supplier_name}${order.supplier_email ? ` (${order.supplier_email})` : ""}`],
+            ["Total value", formatAmount(hasAnyValue ? totalValue : null, currencyCode)],
+            [
+              "Expected / lead time",
+              `${formatDate(earliestExpectedDate) || "Not set"} / ${
+                maxLeadTimeDays || 7
+              } days`,
+            ],
+            [
+              "Receiving",
+              latestReceipt ? (
+                <s-stack direction="inline" gap="small">
+                  <MoneylessBadge>{latestReceipt.status}</MoneylessBadge>
+                  <Link to={`/app/receiving/${latestReceipt.id}`}>
+                    {latestReceipt.receipt_number ?? "Open Goods Receipt"}
+                  </Link>
+                </s-stack>
+              ) : (
+                <MoneylessBadge tone="warning">No Goods Receipt yet</MoneylessBadge>
+              ),
+            ],
+            ["Next Action", nextAction],
+          ]}
+        />
+      </s-section>
+
       <s-section heading="Line items">
         <DataTable
           headings={[
@@ -333,10 +508,13 @@ export default function PurchaseOrderDetail() {
             "Quantity",
             "Unit price",
             "Line value",
+            "Source",
+            "Need reason",
+            "Receiving",
             "Lead time",
             "Expected",
             "Edit terms",
-            "Status",
+            "Next Action",
           ]}
           rows={detail.lines.map((line: any) => [
             <s-stack direction="block" gap="small">
@@ -348,6 +526,9 @@ export default function PurchaseOrderDetail() {
             `${Number(line.quantity).toLocaleString()} ${line.unit}`,
             formatLineUnitPrice(line),
             formatLineValue(line),
+            <SourceCell line={line} />,
+            <NeedReasonCell line={line} />,
+            <ReceivingCell line={line} />,
             `${line.lead_time_days ?? 7} days`,
             formatDate(line.expected_delivery_date) || "Not set",
             canEditLines ? (
@@ -396,7 +577,10 @@ export default function PurchaseOrderDetail() {
             ) : (
               "Locked"
             ),
-            line.status,
+            <s-stack direction="block" gap="small">
+              <MoneylessBadge>{line.status}</MoneylessBadge>
+              <s-text>{lineNextAction(line, order, hasOpenReceipt)}</s-text>
+            </s-stack>,
           ])}
         />
       </s-section>

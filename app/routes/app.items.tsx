@@ -133,6 +133,13 @@ export default function Items() {
         supplierId: "all",
       };
   const suppliers = "suppliers" in data ? (data.suppliers ?? []) : [];
+  const hasActiveFilters = Boolean(
+    filters.query ||
+      filters.source !== "all" ||
+      filters.shopifyStatus !== "all" ||
+      filters.role !== "all" ||
+      filters.supplierId !== "all",
+  );
 
   return (
     <s-page heading="Products">
@@ -147,6 +154,9 @@ export default function Items() {
             </div>
           </div>
           <div className="kit-toolbar-actions">
+            <s-link href="/app/items">
+              <s-button>Refresh</s-button>
+            </s-link>
             <s-link href="/app/items/new">Create operational component</s-link>
             <Form method="post">
               <input type="hidden" name="intent" value="syncShopifyProducts" />
@@ -160,48 +170,51 @@ export default function Items() {
           </s-box>
         ) : null}
         <Form method="get">
-          <div className="kit-filterbar kit-products-filterbar">
-            <s-text-field
-              label="Search products"
-              name="q"
-              value={filters.query}
-              placeholder="Name or SKU"
-            ></s-text-field>
-            <s-select label="Source / shop" name="source" value={filters.source}>
-              <s-option value="all">All products</s-option>
-              <s-option value="shop">Products on shop</s-option>
-              <s-option value="operations">Operational only</s-option>
-              <s-option value="components">Operational components</s-option>
-            </s-select>
-            <s-select label="Shopify status" name="shopifyStatus" value={filters.shopifyStatus}>
-              <s-option value="all">All statuses</s-option>
-              <s-option value="active">Active</s-option>
-              <s-option value="draft">Draft</s-option>
-              <s-option value="archived">Archived</s-option>
-              <s-option value="not_published">Active, not published</s-option>
-              <s-option value="missing">Stale / missing</s-option>
-              <s-option value="operational">Operations item</s-option>
-            </s-select>
-            <s-select label="Role" name="role" value={filters.role}>
-              <s-option value="all">All roles</s-option>
-              <s-option value="sellable">Sellable</s-option>
-              <s-option value="purchasable">Purchasable</s-option>
-              <s-option value="producible">Producible</s-option>
-              <s-option value="component">Component / material</s-option>
-              <s-option value="review">Needs classification</s-option>
-            </s-select>
-            <s-select label="Supplier" name="supplierId" value={filters.supplierId}>
-              <s-option value="all">All suppliers</s-option>
-              <s-option value="missing">Supplier missing</s-option>
-              {suppliers.map((supplier: any) => (
-                <s-option key={supplier.id} value={supplier.id}>
-                  {supplier.name}
-                </s-option>
-              ))}
-            </s-select>
-            <s-button type="submit">Apply filters</s-button>
-            <s-link href="/app/items">Clear</s-link>
-          </div>
+          <details className="kit-compact-disclosure" open={hasActiveFilters}>
+            <summary>Filters</summary>
+            <div className="kit-filterbar kit-products-filterbar">
+              <s-text-field
+                label="Search products"
+                name="q"
+                value={filters.query}
+                placeholder="Name or SKU"
+              ></s-text-field>
+              <s-select label="Source / shop" name="source" value={filters.source}>
+                <s-option value="all">All products</s-option>
+                <s-option value="shop">Products on shop</s-option>
+                <s-option value="operations">Operational only</s-option>
+                <s-option value="components">Operational components</s-option>
+              </s-select>
+              <s-select label="Shopify status" name="shopifyStatus" value={filters.shopifyStatus}>
+                <s-option value="all">All statuses</s-option>
+                <s-option value="active">Active</s-option>
+                <s-option value="draft">Draft</s-option>
+                <s-option value="archived">Archived</s-option>
+                <s-option value="not_published">Active, not published</s-option>
+                <s-option value="missing">Stale / missing</s-option>
+                <s-option value="operational">Operations item</s-option>
+              </s-select>
+              <s-select label="Role" name="role" value={filters.role}>
+                <s-option value="all">All roles</s-option>
+                <s-option value="sellable">Sellable</s-option>
+                <s-option value="purchasable">Purchasable</s-option>
+                <s-option value="producible">Producible</s-option>
+                <s-option value="component">Component / material</s-option>
+                <s-option value="review">Needs classification</s-option>
+              </s-select>
+              <s-select label="Supplier" name="supplierId" value={filters.supplierId}>
+                <s-option value="all">All suppliers</s-option>
+                <s-option value="missing">Supplier missing</s-option>
+                {suppliers.map((supplier: any) => (
+                  <s-option key={supplier.id} value={supplier.id}>
+                    {supplier.name}
+                  </s-option>
+                ))}
+              </s-select>
+              <s-button type="submit">Apply filters</s-button>
+              <s-link href="/app/items">Clear</s-link>
+            </div>
+          </details>
         </Form>
         <DataTable
           headings={[

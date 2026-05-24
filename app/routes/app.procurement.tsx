@@ -161,11 +161,14 @@ function purchaseOrderStatusTone(status: string): BadgeTone {
 }
 
 function purchaseNeedStatus(need: any) {
+  if (need.purchase_order_id) return "PO created";
   if (!need.supplier_id) return "Need supplier";
-  return "Ready for PO";
+  if (need.purchase_need_status === "ready_for_po") return "Ready for PO";
+  return "Supplier assigned";
 }
 
 function purchaseNeedStatusTone(need: any): BadgeTone {
+  if (need.purchase_order_id) return "success";
   return need.supplier_id ? "info" : "warning";
 }
 
@@ -224,7 +227,80 @@ function sourceSummary(need: any) {
     return `${need.source_order_name ?? "Order"} line ${need.source_line_sku ?? need.sku}`;
   }
   if (need.source_order_name) return need.source_order_name;
-  return "Item-level planning";
+  return "Min stock / item planning";
+}
+
+function compactText(value: unknown, maxLength = 120) {
+  const text = String(value ?? "");
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function sourceCell(need: any) {
+  return (
+    <s-stack direction="block" gap="small">
+      <strong>{sourceSummary(need)}</strong>
+      <s-text>
+        {compactText(need.need_explanation ?? "Need created by planning.")}
+      </s-text>
+      {need.source_order_line_id ? (
+        <s-link href={`/app/order-lines/${need.source_order_line_id}`}>
+          Open source line
+        </s-link>
+      ) : null}
+    </s-stack>
+  );
+}
+
+function needQuantityReason(need: any) {
+  const demand = Number(need.demand_quantity ?? 0);
+  const available = Number(need.available_quantity ?? 0);
+  const shortage = Number(need.shortage_quantity ?? need.quantity ?? 0);
+  return [
+    demand > 0 ? `Demand ${demand.toLocaleString()}` : null,
+    `available ${available.toLocaleString()}`,
+    `short ${shortage.toLocaleString()}`,
+  ]
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function supplierStatusCell(need: any) {
+  if (need.supplier_id) {
+    return (
+      <s-stack direction="block" gap="small">
+        <MoneylessBadge tone="info">Supplier assigned</MoneylessBadge>
+        <strong>{need.supplier_name}</strong>
+        {need.preferred_supplier_name &&
+        need.preferred_supplier_name !== need.supplier_name ? (
+          <s-text>Preferred: {need.preferred_supplier_name}</s-text>
+        ) : null}
+      </s-stack>
+    );
+  }
+
+  return (
+    <s-stack direction="block" gap="small">
+      <MoneylessBadge tone="warning">Supplier missing</MoneylessBadge>
+      {need.preferred_supplier_name ? (
+        <s-text>Preferred: {need.preferred_supplier_name}</s-text>
+      ) : (
+        <s-text>No preferred supplier set</s-text>
+      )}
+    </s-stack>
+  );
+}
+
+function purchaseNeedPoCell(need: any) {
+  if (!need.purchase_order_id) return "No PO yet";
+  return (
+    <s-stack direction="block" gap="small">
+      <s-link href={`/app/procurement/${need.purchase_order_id}`}>
+        {need.purchase_order_number ?? "Open Purchase Order"}
+      </s-link>
+      <MoneylessBadge>{need.purchase_order_status ?? "open"}</MoneylessBadge>
+    </s-stack>
+  );
 }
 
 function leadTimeDays(row: any) {
@@ -299,8 +375,7 @@ export default function Procurement() {
   )
     ? filters.tab
     : "active";
-  const openNeeds = (data.needs ?? []).filter((need: any) => {
-    if (need.purchase_order_id) return false;
+  const filteredNeeds = (data.needs ?? []).filter((need: any) => {
     if (
       filters.supplierId !== "all" &&
       String(need.supplier_id ?? need.preferred_supplier_id ?? "") !==
@@ -326,9 +401,9 @@ export default function Procurement() {
       "source_line_sku",
       "supplier_name",
       "preferred_supplier_name",
+      "purchase_order_number",
     ]);
   });
-
   const filteredPurchaseOrders = (data.purchaseOrders ?? []).filter((po: any) => {
     if (filters.supplierId !== "all" && String(po.supplier_id ?? "") !== filters.supplierId) {
       return false;
@@ -358,28 +433,24 @@ export default function Procurement() {
     const selectedSupplierId =
       need.supplier_id ?? need.preferred_supplier_id ?? suppliers[0]?.id;
 
-    const supplierCell = (
-      <s-stack direction="block" gap="small">
-        <strong>{need.supplier_name ?? "No assigned supplier"}</strong>
-        {need.preferred_supplier_name ? (
-          <s-text>Preferred supplier: {need.preferred_supplier_name}</s-text>
-        ) : (
-          <s-text>No preferred supplier set</s-text>
-        )}
-      </s-stack>
-    );
-
     const itemCell = (
       <s-stack direction="block" gap="small">
         <strong>
           {need.sku} {need.title}
         </strong>
+        <s-text>{needQuantityReason(need)}</s-text>
         <s-link href={`/app/items/${need.item_id}`}>Open product</s-link>
       </s-stack>
     );
 
     let actionCell;
-    if (assignedSupplier) {
+    if (need.purchase_order_id) {
+      actionCell = (
+        <s-link href={`/app/procurement/${need.purchase_order_id}`}>
+          Open Purchase Order
+        </s-link>
+      );
+    } else if (assignedSupplier) {
       actionCell = (
         <Form method="post">
           <input type="hidden" name="intent" value="createPoForNeed" />
@@ -445,49 +516,70 @@ export default function Procurement() {
       );
     }
 
-    return [
-      <strong>Purchase Need</strong>,
-      <MoneylessBadge tone={purchaseNeedStatusTone(need)}>
-        {purchaseNeedStatus(need)}
-      </MoneylessBadge>,
-      sourceSummary(need),
-      itemCell,
-      `${Number(need.quantity).toLocaleString()} ${need.unit}`,
-      supplierCell,
-      `${Number(need.preferred_unit_price ?? 0).toLocaleString()} ${need.preferred_currency_code ?? "EUR"}`,
-      `${(Number(need.quantity ?? 0) * Number(need.preferred_unit_price ?? 0)).toLocaleString()} ${need.preferred_currency_code ?? "EUR"}`,
-      needExpectedLabel(need),
-      actionCell,
-    ];
+    return {
+      id: `need-${need.id}`,
+      href: need.purchase_order_id
+        ? `/app/procurement/${need.purchase_order_id}`
+        : `/app/items/${need.item_id}`,
+      cells: [
+        <strong>Purchase Need</strong>,
+        <MoneylessBadge tone={purchaseNeedStatusTone(need)}>
+          {purchaseNeedStatus(need)}
+        </MoneylessBadge>,
+        sourceCell(need),
+        itemCell,
+        `${Number(need.quantity).toLocaleString()} ${need.unit}`,
+        <s-stack direction="block" gap="small">
+          {supplierStatusCell(need)}
+          <s-text>
+            {Number(need.preferred_unit_price ?? 0).toLocaleString()}{" "}
+            {need.preferred_currency_code ?? "EUR"} · line{" "}
+            {(
+              Number(need.quantity ?? 0) *
+              Number(need.preferred_unit_price ?? 0)
+            ).toLocaleString()}{" "}
+            {need.preferred_currency_code ?? "EUR"}
+          </s-text>
+        </s-stack>,
+        purchaseNeedPoCell(need),
+        needExpectedLabel(need),
+        actionCell,
+      ],
+    };
   }
 
   function purchaseOrderRow(po: any) {
     const businessStatus = purchaseOrderBusinessStatus(po);
-    return [
-      <Link to={`/app/procurement/${po.id}`}>
-        <strong>{po.display_number}</strong>
-      </Link>,
-      <MoneylessBadge tone={purchaseOrderStatusTone(businessStatus)}>
-        {businessStatus}
-      </MoneylessBadge>,
-      po.source_order_names ?? "Purchase Order",
-      <strong>{po.item_summary ?? `${po.line_count} line${po.line_count === 1 ? "" : "s"}`}</strong>,
-      `${Number(po.total_quantity ?? 0).toLocaleString()} ${po.unit ?? "pcs"}`,
-      <s-stack direction="block" gap="small">
-        <strong>{po.supplier_name}</strong>
-        {po.preferred_supplier_names ? (
-          <s-text>Preferred: {po.preferred_supplier_names}</s-text>
-        ) : null}
-      </s-stack>,
-      Number(po.unit_price ?? 0) > 0
-        ? `${Number(po.unit_price).toLocaleString()} ${po.currency_code ?? "EUR"}`
-        : "No price",
-      `${Number(po.net_amount ?? 0).toLocaleString()} ${po.currency_code ?? "EUR"}`,
-      formatDate(po.next_expected_delivery_date) || "Not set",
-      <s-link href={purchaseOrderActionHref(po)}>
-        {nextPurchaseOrderAction(po)}
-      </s-link>,
-    ];
+    return {
+      id: `po-${po.id}`,
+      href: `/app/procurement/${po.id}`,
+      cells: [
+        <strong>{po.display_number}</strong>,
+        <MoneylessBadge tone={purchaseOrderStatusTone(businessStatus)}>
+          {businessStatus}
+        </MoneylessBadge>,
+        po.source_order_names ?? "Purchase Order",
+        <strong>{po.item_summary ?? `${po.line_count} line${po.line_count === 1 ? "" : "s"}`}</strong>,
+        `${Number(po.total_quantity ?? 0).toLocaleString()} ${po.unit ?? "pcs"}`,
+        <s-stack direction="block" gap="small">
+          <strong>{po.supplier_name}</strong>
+          <s-text>
+            {Number(po.unit_price ?? 0) > 0
+              ? `${Number(po.unit_price).toLocaleString()} ${po.currency_code ?? "EUR"}`
+              : "No price"}{" "}
+            · line {Number(po.net_amount ?? 0).toLocaleString()}{" "}
+            {po.currency_code ?? "EUR"}
+          </s-text>
+        </s-stack>,
+        <s-link href={`/app/procurement/${po.id}`}>
+          {po.display_number}
+        </s-link>,
+        formatDate(po.next_expected_delivery_date) || "Not set",
+        <s-link href={purchaseOrderActionHref(po)}>
+          {nextPurchaseOrderAction(po)}
+        </s-link>,
+      ],
+    };
   }
 
   const activePurchaseOrders = filteredPurchaseOrders.filter(
@@ -496,10 +588,11 @@ export default function Procurement() {
   const completedPurchaseOrders = filteredPurchaseOrders.filter(
     (po: any) => isCompletedProcurement(po),
   );
-  const needRows = openNeeds.filter((need: any) => {
-    if (activeTab === "need_supplier") return !need.supplier_id;
-    if (activeTab === "ready_for_po") return Boolean(need.supplier_id);
-    return activeTab === "active" || activeTab === "needs";
+  const needRows = filteredNeeds.filter((need: any) => {
+    if (activeTab === "needs") return true;
+    if (activeTab === "need_supplier") return !need.purchase_order_id && !need.supplier_id;
+    if (activeTab === "ready_for_po") return !need.purchase_order_id && Boolean(need.supplier_id);
+    return activeTab === "active" && !need.purchase_order_id;
   });
   const visiblePurchaseOrders = activePurchaseOrders.filter((po: any) => {
     const businessStatus = purchaseOrderBusinessStatus(po);
@@ -554,19 +647,20 @@ export default function Procurement() {
   return (
     <s-page heading="Procurement">
       <s-section>
-        <div className="kit-toolbar">
-          <div />
-          <div className="kit-toolbar-actions">
-            <Form method="post">
-              <input type="hidden" name="intent" value="planPurchaseNeeds" />
-              <s-button variant="primary" type="submit">
-                Refresh purchasing needs
-              </s-button>
-            </Form>
-          </div>
-        </div>
         <details className="kit-compact-disclosure">
-          <summary>Procurement process</summary>
+          <summary>
+            <span className="kit-toolbar">
+              <span>Procurement process</span>
+              <span className="kit-toolbar-actions">
+                <Form method="post">
+                  <input type="hidden" name="intent" value="planPurchaseNeeds" />
+                  <s-button variant="primary" type="submit">
+                    Refresh
+                  </s-button>
+                </Form>
+              </span>
+            </span>
+          </summary>
           <div className="kit-process-guide kit-process-guide-compact">
             {[
               "Purchase proposal",
@@ -649,12 +743,11 @@ export default function Procurement() {
             headings={[
               "Reference",
               "Status",
-              "Source",
+              "Source / reason",
               "Item",
-              "Qty",
+            "Qty",
               "Supplier",
-              "Unit price",
-              "Line value",
+              "PO",
               "Expected",
               "Next action",
             ]}

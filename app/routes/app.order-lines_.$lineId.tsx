@@ -90,6 +90,52 @@ function putawayLabel(row: any) {
   return "Not ready";
 }
 
+function procurementStatus(row: any) {
+  if (row.receipt_id) return `Receipt ${row.receipt_status ?? "open"}`;
+  if (row.purchase_order_id) return `PO ${row.purchase_order_status ?? "open"}`;
+  if (!row.supplier_name) return "Need supplier";
+  return "Ready for PO";
+}
+
+function procurementNextAction(row: any) {
+  if (row.receipt_id) {
+    return {
+      label: "Open receipt",
+      href: `/app/receiving/${row.receipt_id}`,
+    };
+  }
+  if (row.purchase_order_id) {
+    return {
+      label: "Open Purchase Order",
+      href: `/app/procurement/${row.purchase_order_id}`,
+    };
+  }
+  return {
+    label: row.supplier_name ? "Create PO in Procurement" : "Assign supplier",
+    href: "/app/procurement",
+  };
+}
+
+function procurementReason(row: any) {
+  const demand = Number(row.demand_quantity ?? 0);
+  const available = Number(row.available_quantity ?? 0);
+  const shortage = Number(row.shortage_quantity ?? row.quantity ?? 0);
+  return (
+    <s-stack direction="block" gap="small">
+      <s-text>{row.need_explanation ?? "Need created by planning."}</s-text>
+      <s-text>
+        {[
+          demand > 0 ? `Demand ${demand.toLocaleString()}` : null,
+          `available ${available.toLocaleString()}`,
+          `short ${shortage.toLocaleString()}`,
+        ]
+          .filter(Boolean)
+          .join(" / ")}
+      </s-text>
+    </s-stack>
+  );
+}
+
 type Decision = {
   label: string;
   reason: string;
@@ -406,31 +452,48 @@ export default function OrderLineDetail() {
             headings={[
               "Purchase need",
               "Scope",
+              "Reason",
               "Supplier",
-              "Purchase Order",
+              "PO status",
               "Receipt",
               "Quantity",
+              "Next action",
             ]}
-            rows={procurementRows.map((row: any) => [
-              <MoneylessBadge>{row.purchase_need_status}</MoneylessBadge>,
-              scopeLabel(row.demand_link_scope),
-              row.supplier_name ?? "No supplier",
-              row.purchase_order_id ? (
-                <s-link href={`/app/procurement/${row.purchase_order_id}`}>
-                  {row.purchase_order_number}
-                </s-link>
-              ) : (
-                "No Purchase Order"
-              ),
-              row.receipt_id ? (
-                <s-link href={`/app/receiving/${row.receipt_id}`}>
-                  {row.receipt_number} · {row.receipt_status}
-                </s-link>
-              ) : (
-                "No receipt"
-              ),
-              `${quantity(row.quantity)} ${row.unit}`,
-            ])}
+            rows={procurementRows.map((row: any) => {
+              const next = procurementNextAction(row);
+              return [
+                <MoneylessBadge>{row.purchase_need_status}</MoneylessBadge>,
+                scopeLabel(row.demand_link_scope),
+                procurementReason(row),
+                row.supplier_name ? (
+                  <MoneylessBadge tone="info">{row.supplier_name}</MoneylessBadge>
+                ) : (
+                  <MoneylessBadge tone="warning">Supplier missing</MoneylessBadge>
+                ),
+                row.purchase_order_id ? (
+                  <s-stack direction="block" gap="small">
+                    <s-link href={`/app/procurement/${row.purchase_order_id}`}>
+                      {row.purchase_order_number}
+                    </s-link>
+                    <MoneylessBadge>{row.purchase_order_status}</MoneylessBadge>
+                  </s-stack>
+                ) : (
+                  "No PO yet"
+                ),
+                row.receipt_id ? (
+                  <s-link href={`/app/receiving/${row.receipt_id}`}>
+                    {row.receipt_number} · {row.receipt_status}
+                  </s-link>
+                ) : (
+                  "No receipt"
+                ),
+                `${quantity(row.quantity)} ${row.unit}`,
+                <s-stack direction="block" gap="small">
+                  <MoneylessBadge>{procurementStatus(row)}</MoneylessBadge>
+                  <s-link href={next.href}>{next.label}</s-link>
+                </s-stack>,
+              ];
+            })}
           />
         ) : (
           <s-paragraph>

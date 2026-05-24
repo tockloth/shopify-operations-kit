@@ -630,6 +630,8 @@ export async function syncShopifyOrders(
     let customerDefaultAddressAvailable = true;
     let protectedCustomerDataUnavailable = false;
     let fallbackQueryUsed = false;
+    let protectedCustomerDataDeniedAt: "none" | "full_order_query" | "customer_fallback_query" =
+      "none";
     let data: OrderSyncData;
     try {
       data = await graphqlJson<OrderSyncData>(admin, ORDER_SYNC_QUERY, { first: 25 });
@@ -639,6 +641,7 @@ export async function syncShopifyOrders(
       protectedCustomerDataUnavailable = true;
       fallbackQueryUsed = true;
       shippingAddressAvailable = false;
+      protectedCustomerDataDeniedAt = "full_order_query";
       try {
         data = await graphqlJson<OrderSyncData>(
           admin,
@@ -652,6 +655,7 @@ export async function syncShopifyOrders(
         fallbackQueryUsed = true;
         customerDataAvailable = false;
         customerDefaultAddressAvailable = false;
+        protectedCustomerDataDeniedAt = "customer_fallback_query";
         data = await graphqlJson<OrderSyncData>(
           admin,
           ORDER_SYNC_WITHOUT_CUSTOMER_QUERY,
@@ -822,6 +826,7 @@ export async function syncShopifyOrders(
       customerDefaultAddressAvailable,
       protectedCustomerDataUnavailable,
       fallbackQueryUsed,
+      protectedCustomerDataDeniedAt,
       shippingAddressesStored,
       orderShippingAddressesStored,
       customerDefaultAddressesStored,

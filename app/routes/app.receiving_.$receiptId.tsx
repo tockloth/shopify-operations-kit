@@ -78,6 +78,14 @@ function formatQuantity(value: unknown) {
   return Number(value ?? 0).toLocaleString();
 }
 
+function formatQuantityWithUnit(value: unknown, unit?: string | null) {
+  return `${formatQuantity(value)} ${unit ?? "pcs"}`;
+}
+
+function sumQuantity(lines: any[], field: string) {
+  return lines.reduce((sum, line) => sum + Number(line[field] ?? 0), 0);
+}
+
 function receiptNextAction(receipt: any, lines: any[]) {
   if (receipt.status === "closed") return "Complete / closed";
   if (
@@ -96,6 +104,20 @@ function receiptNextAction(receipt: any, lines: any[]) {
   return "Review";
 }
 
+function lineNextAction(line: any) {
+  if (
+    line.qc_status === "open" ||
+    line.qc_status === "in_progress" ||
+    line.status === "qc_hold"
+  ) {
+    return "Complete QC";
+  }
+  if (line.status === "accepted") return "Put away to inventory";
+  if (line.status === "putaway_done") return "Inventory updated";
+  if (line.status === "rejected") return "No receiving action open";
+  return "Review";
+}
+
 function qcLabel(line: any) {
   if (!line.qc_status) return "Not required";
   if (line.qc_result) return `${line.qc_status} · ${line.qc_result}`;
@@ -111,6 +133,12 @@ function putawayLabel(line: any) {
   }
   if (line.status === "rejected") return "Not required";
   return "Waiting for QC";
+}
+
+function sourceLabelForLine(line: any) {
+  if (line.source_order_line_id) return "Order Line";
+  if (line.source_order_id) return "Order";
+  return "Item-level planning";
 }
 
 function sourceLabel(movement: any) {
@@ -157,6 +185,19 @@ export default function ReceiptDetail() {
     (line: any) => line.status === "accepted",
   );
   const inventoryMovements = (detail.inventoryMovements ?? []) as any[];
+  const receiptLines = (detail.lines ?? []) as any[];
+  const totals = {
+    ordered: sumQuantity(receiptLines, "ordered_quantity"),
+    received: sumQuantity(receiptLines, "received_quantity"),
+    accepted: sumQuantity(receiptLines, "accepted_quantity"),
+    rejected: sumQuantity(receiptLines, "rejected_quantity"),
+    putaway: sumQuantity(receiptLines, "putaway_quantity"),
+  };
+  const summaryUnit = receiptLines[0]?.unit ?? "pcs";
+  const earliestExpectedDate = receiptLines
+    .map((line: any) => line.expected_delivery_date)
+    .filter(Boolean)
+    .sort()[0];
 
   return (
     <s-page heading={`Receipt ${receipt.receipt_number}`}>
@@ -178,7 +219,8 @@ export default function ReceiptDetail() {
             "Purchase Order",
             "Supplier",
             "Status",
-            "Received",
+            "Expected",
+            "Received at",
             "Next action",
           ]}
           rows={[
@@ -187,10 +229,26 @@ export default function ReceiptDetail() {
               <s-link href={`/app/procurement/${receipt.purchase_order_id}`}>
                 {receipt.purchase_order_number}
               </s-link>,
-              receipt.supplier_name,
+              `${receipt.supplier_name}${receipt.supplier_email ? ` (${receipt.supplier_email})` : ""}`,
               <MoneylessBadge>{receipt.status}</MoneylessBadge>,
+              formatDate(earliestExpectedDate) || "Not set",
               formatDate(receipt.received_at ?? receipt.created_at),
               receiptNextAction(receipt, detail.lines ?? []),
+            ],
+          ]}
+        />
+      </s-section>
+
+      <s-section heading="Quantity summary">
+        <DataTable
+          headings={["Ordered", "Received", "Accepted", "Rejected", "Put away"]}
+          rows={[
+            [
+              formatQuantityWithUnit(totals.ordered, summaryUnit),
+              formatQuantityWithUnit(totals.received, summaryUnit),
+              formatQuantityWithUnit(totals.accepted, summaryUnit),
+              formatQuantityWithUnit(totals.rejected, summaryUnit),
+              formatQuantityWithUnit(totals.putaway, summaryUnit),
             ],
           ]}
         />
@@ -200,23 +258,56 @@ export default function ReceiptDetail() {
         <DataTable
           headings={[
             "Item",
+            "Ordered",
             "Received",
             "Accepted",
             "Rejected",
+            "Put away",
             "QC",
             "Putaway",
-            "Status",
+            "Source",
+            "Next action",
           ]}
           rows={(detail.lines ?? []).map((line: any) => [
-            <strong>
-              {line.sku} {line.title}
-            </strong>,
-            `${formatQuantity(line.received_quantity)} ${line.unit}`,
-            `${formatQuantity(line.accepted_quantity)} ${line.unit}`,
-            `${formatQuantity(line.rejected_quantity)} ${line.unit}`,
+            <s-stack direction="block" gap="small">
+              <strong>
+                {line.sku} {line.title}
+              </strong>
+              <s-link href={`/app/inventory/${line.item_id}`}>
+                Open inventory
+              </s-link>
+            </s-stack>,
+            formatQuantityWithUnit(line.ordered_quantity, line.unit),
+            formatQuantityWithUnit(line.received_quantity, line.unit),
+            formatQuantityWithUnit(line.accepted_quantity, line.unit),
+            formatQuantityWithUnit(line.rejected_quantity, line.unit),
+            formatQuantityWithUnit(line.putaway_quantity, line.unit),
             qcLabel(line),
             putawayLabel(line),
-            <MoneylessBadge>{line.status}</MoneylessBadge>,
+            <s-stack direction="block" gap="small">
+              <MoneylessBadge>{sourceLabelForLine(line)}</MoneylessBadge>
+              <s-link href={`/app/procurement/${receipt.purchase_order_id}`}>
+                PO line
+              </s-link>
+              {line.source_order_line_id ? (
+                <s-link href={`/app/order-lines/${line.source_order_line_id}`}>
+                  {line.source_order_name
+                    ? `${line.source_order_name} order line`
+                    : "Source order line"}
+                </s-link>
+              ) : line.source_order_id ? (
+                <s-link href={`/app/orders/${line.source_order_id}`}>
+                  {line.source_order_name ?? "Source order"}
+                </s-link>
+              ) : null}
+              {line.need_explanation ? (
+                <s-text>{line.need_explanation}</s-text>
+              ) : null}
+            </s-stack>,
+            <s-stack direction="block" gap="small">
+              <MoneylessBadge>{line.status}</MoneylessBadge>
+              <s-text>{lineNextAction(line)}</s-text>
+            </s-stack>,
           ])}
         />
       </s-section>

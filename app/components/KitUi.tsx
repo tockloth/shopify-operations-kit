@@ -47,20 +47,20 @@ export function DataTable({
   rows,
 }: {
   headings: string[];
-  rows: Array<React.ReactNode[] | { id?: string; href?: string; cells: React.ReactNode[] }>;
+  rows: Array<
+    | React.ReactNode[]
+    | {
+        id?: string;
+        href?: string;
+        clickDelegateId?: string;
+        cells: React.ReactNode[];
+      }
+  >;
 }) {
   const renderCell = (cell: React.ReactNode) => {
     if (cell instanceof Date) return cell.toLocaleDateString();
     return cell;
   };
-
-  if (rows.length === 0) {
-    return (
-      <s-box padding="base" borderWidth="base" borderRadius="base">
-        <s-paragraph>No records yet.</s-paragraph>
-      </s-box>
-    );
-  }
 
   return (
     <div className="kit-resource-table">
@@ -71,20 +71,35 @@ export function DataTable({
         ))}
       </s-table-header-row>
       <s-table-body>
+        {rows.length === 0 ? (
+          <s-table-row>
+            <s-table-cell>
+              <s-text>No records yet.</s-text>
+            </s-table-cell>
+            {headings.slice(1).map((heading) => (
+              <s-table-cell key={`empty-${heading}`}></s-table-cell>
+            ))}
+          </s-table-row>
+        ) : null}
         {rows.map((row, index) => {
           const cells = Array.isArray(row) ? row : row.cells;
           const href = Array.isArray(row) ? undefined : row.href;
           const rowId = Array.isArray(row) ? `row-${index}` : (row.id ?? `row-${index}`);
-          const delegateId = href ? `${rowId}-primary-action` : undefined;
+          const delegateId = Array.isArray(row)
+            ? undefined
+            : (row.clickDelegateId ?? (href ? `${rowId}-primary-action` : undefined));
+          const primaryLinkId = href && !Array.isArray(row) && !row.clickDelegateId
+            ? delegateId
+            : undefined;
 
           return (
           <s-table-row key={rowId} clickDelegate={delegateId}>
             {cells.map((cell, cellIndex) => (
               <s-table-cell key={cellIndex}>
                 {cellIndex === 0 && href ? (
-                  <s-link id={delegateId} href={href}>
+                  <Link id={primaryLinkId} to={href}>
                     {renderCell(cell)}
-                  </s-link>
+                  </Link>
                 ) : (
                   renderCell(cell)
                 )}

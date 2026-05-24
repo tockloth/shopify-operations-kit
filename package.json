@@ -25,6 +25,7 @@
     "db:status": "supabase status",
     "db:migrate": "supabase migration up",
     "db:reset": "supabase db reset",
+    "tenant:audit": "test -n \"$OPERATIONS_KIT_DATABASE_URL\" && psql \"$OPERATIONS_KIT_DATABASE_URL\" -v ON_ERROR_STOP=1 -f supabase/audit/phase-0a-tenant-integrity.sql",
     "shopify": "shopify",
     "prisma": "prisma",
     "graphql-codegen": "graphql-codegen",

@@ -241,44 +241,48 @@ export default function Receiving() {
     });
 
   const workRows = [
-    ...readyPurchaseOrders.map((po: any) => [
-      <Link to={`/app/procurement/${po.id}`}>
-        <strong>{po.display_number}</strong>
-      </Link>,
-      <MoneylessBadge>Awaiting receipt</MoneylessBadge>,
-      po.supplier_name,
-      po.item_summary ?? `${po.line_count} line${po.line_count === 1 ? "" : "s"}`,
-      `${Number(po.total_quantity ?? 0).toLocaleString()} ${po.unit ?? "pcs"}`,
-      priceSummary(po),
-      "No receipt yet",
-      formatDate(po.next_expected_delivery_date) || "Not set",
-      Number(po.missing_price_count ?? 0) > 0 ? (
-        <Link to={`/app/procurement/${po.id}`}>Open Purchase Order</Link>
-      ) : (
-        <Form method="post">
-        <input type="hidden" name="intent" value="createGoodsReceipt" />
-        <input type="hidden" name="purchaseOrderId" value={po.id} />
-        <s-button type="submit">Create Goods Receipt</s-button>
-        </Form>
-      ),
-    ]),
-    ...receiptRows.map((receipt: any) => [
-      <Link to={`/app/receiving/${receipt.id}`}>
-        <strong>{receipt.receipt_number}</strong>
-      </Link>,
-      <MoneylessBadge tone={toneForStatus(receipt.business_status) as any}>
-        {receipt.business_status}
-      </MoneylessBadge>,
-      receipt.supplier_name,
-      receipt.item_summary ?? `${receipt.line_count} line${receipt.line_count === 1 ? "" : "s"}`,
-      `${Number(receipt.received_quantity ?? 0).toLocaleString()} ${receipt.unit ?? "pcs"}`,
-      "",
-      receipt.purchase_order_number,
-      formatDate(receipt.received_at ?? receipt.created_at),
-      <Link to={`/app/receiving/${receipt.id}`}>
-        {nextReceiptAction(receipt.business_status)}
-      </Link>,
-    ]),
+    ...readyPurchaseOrders.map((po: any) => ({
+      id: `po-${po.id}`,
+      href: `/app/procurement/${po.id}`,
+      cells: [
+        <strong>{po.display_number}</strong>,
+        <MoneylessBadge>Awaiting receipt</MoneylessBadge>,
+        po.supplier_name,
+        po.item_summary ?? `${po.line_count} line${po.line_count === 1 ? "" : "s"}`,
+        `${Number(po.total_quantity ?? 0).toLocaleString()} ${po.unit ?? "pcs"}`,
+        priceSummary(po),
+        "No receipt yet",
+        formatDate(po.next_expected_delivery_date) || "Not set",
+        Number(po.missing_price_count ?? 0) > 0 ? (
+          <Link to={`/app/procurement/${po.id}`}>Open Purchase Order</Link>
+        ) : (
+          <Form method="post">
+          <input type="hidden" name="intent" value="createGoodsReceipt" />
+          <input type="hidden" name="purchaseOrderId" value={po.id} />
+          <s-button type="submit">Create Goods Receipt</s-button>
+          </Form>
+        ),
+      ],
+    })),
+    ...receiptRows.map((receipt: any) => ({
+      id: `receipt-${receipt.id}`,
+      href: `/app/receiving/${receipt.id}`,
+      cells: [
+        <strong>{receipt.receipt_number}</strong>,
+        <MoneylessBadge tone={toneForStatus(receipt.business_status) as any}>
+          {receipt.business_status}
+        </MoneylessBadge>,
+        receipt.supplier_name,
+        receipt.item_summary ?? `${receipt.line_count} line${receipt.line_count === 1 ? "" : "s"}`,
+        `${Number(receipt.received_quantity ?? 0).toLocaleString()} ${receipt.unit ?? "pcs"}`,
+        "",
+        receipt.purchase_order_number,
+        formatDate(receipt.received_at ?? receipt.created_at),
+        <Link to={`/app/receiving/${receipt.id}`}>
+          {nextReceiptAction(receipt.business_status)}
+        </Link>,
+      ],
+    })),
   ];
 
   const hasActiveFilters = Boolean(
@@ -289,7 +293,16 @@ export default function Receiving() {
     <s-page heading="Receiving">
       <s-section>
         <details className="kit-compact-disclosure">
-          <summary>Receiving process</summary>
+          <summary>
+            <span className="kit-toolbar">
+              <span>Receiving</span>
+              <span className="kit-toolbar-actions">
+                <s-link href="/app/receiving">
+                  <s-button>Refresh</s-button>
+                </s-link>
+              </span>
+            </span>
+          </summary>
           <div className="kit-process-guide kit-process-guide-compact">
             {[
               "Purchase Order acknowledged",

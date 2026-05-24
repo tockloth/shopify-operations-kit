@@ -4,7 +4,6 @@ import { Form, Link, redirect, useActionData, useLoaderData } from "react-router
 import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
 import {
-  backfillTestShippingAddressForOpenOrders,
   createShippingOrdersFromOpenOperationsOrders,
   loadOperationsOrdersList,
   loadShippableOperationsOrders,
@@ -60,21 +59,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     };
   }
 
-  if (intent === "backfillTestShippingAddress") {
-    const result = await backfillTestShippingAddressForOpenOrders(
-      context.pool,
-      context.ctx.tenantId,
-    );
-    return {
-      message: `${result.updated} open order(s) backfilled with a local test shipping address.`,
-    };
-  }
-
   return { message: "No action was performed." };
 };
 
 function hasUsableShippingAddress(address?: any) {
   return Boolean(address?.address1 && address.city && address.countryCodeV2);
+}
+
+function formatAddress(address?: any) {
+  return address
+    ? [
+        address.name,
+        address.address1,
+        address.address2,
+        address.city,
+        address.zip,
+        address.provinceCode,
+        address.countryCodeV2,
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : "No shipping address";
 }
 
 function matchesSearch(row: any, query: string, fields: string[]) {
@@ -180,6 +185,7 @@ export default function Logistics() {
         "customer_name",
         "customer_email",
         "skus",
+        "product_summary",
       ]);
     });
 
@@ -201,31 +207,38 @@ export default function Logistics() {
     );
 
   const workRows = [
-    ...orderRows.map((order: any) => ({
-      id: `order-${order.id}`,
-      href: order.blocker ? `/app/orders/${order.id}` : undefined,
-      cells: [
-        <strong>{order.order_name}</strong>,
-        <MoneylessBadge tone={order.blocker ? "warning" : "success"}>
-          {order.logistics_status}
-        </MoneylessBadge>,
-        order.customer_name ?? "No customer",
-        order.skus ?? "",
-        hasUsableShippingAddress(order.shipping_address) ? "Ready" : "Missing",
-        order.blocker || "Inventory and address ready",
-        order.blocker ? (
-          <Link to={`/app/orders/${order.id}`}>Open order</Link>
-        ) : (
-          <Form method="post">
-            <input type="hidden" name="intent" value="createShipping" />
-            <input type="hidden" name="operationsOrderId" value={order.id} />
-            <s-button variant="primary" type="submit">
-              Create shipment
-            </s-button>
-          </Form>
-        ),
-      ],
-    })),
+    ...orderRows.map((order: any) => {
+      const createShipmentActionId = `create-shipment-${order.id}`;
+      return {
+        id: `order-${order.id}`,
+        href: order.blocker ? `/app/orders/${order.id}` : undefined,
+        clickDelegateId: order.blocker ? undefined : createShipmentActionId,
+        cells: [
+          <strong>{order.order_name}</strong>,
+          <MoneylessBadge tone={order.blocker ? "warning" : "success"}>
+            {order.logistics_status}
+          </MoneylessBadge>,
+          <div>
+            <strong>{order.customer_name ?? "No customer"}</strong>
+            <div className="kit-muted">{order.customer_email ?? "No email"}</div>
+            <div className="kit-muted">{formatAddress(order.shipping_address)}</div>
+          </div>,
+          order.product_summary ?? order.skus ?? "",
+          order.blocker || "Inventory and address ready",
+          order.blocker ? (
+            <Link to={`/app/orders/${order.id}`}>Open order</Link>
+          ) : (
+            <Form method="post">
+              <input type="hidden" name="intent" value="createShipping" />
+              <input type="hidden" name="operationsOrderId" value={order.id} />
+              <s-button id={createShipmentActionId} variant="primary" type="submit">
+                Create and open shipment
+              </s-button>
+            </Form>
+          ),
+        ],
+      };
+    }),
     ...shipmentRows.map((shipment: any) => {
       const lines = linesByShipment.get(shipment.id) ?? [];
       const products = lines
@@ -243,13 +256,18 @@ export default function Logistics() {
           <MoneylessBadge tone={shipmentStatusTone(shipment.status) as any}>
             {shipmentStatusLabel(shipment.status)}
           </MoneylessBadge>,
-          shipment.customer_name ?? "No customer",
+          <div>
+            <strong>{shipment.customer_name ?? "No customer"}</strong>
+            <div className="kit-muted">
+              {shipment.customer_email ?? "No email"}
+            </div>
+            <div className="kit-muted">
+              {formatAddress(shipment.shipping_address)}
+            </div>
+          </div>,
           lines.length > 2
             ? `${products}; +${lines.length - 2} more`
             : products,
-          hasUsableShippingAddress(shipment.shipping_address)
-            ? "Ready"
-            : "Missing",
           shipment.order_name,
           <Link to={`/app/logistics/${shipment.id}`}>
             {shipmentNextAction(shipment.status)}
@@ -264,6 +282,14 @@ export default function Logistics() {
   return (
     <s-page heading="Logistics">
       <s-section>
+        <div className="kit-toolbar">
+          <s-heading>Logistics</s-heading>
+          <div className="kit-toolbar-actions">
+            <s-link href="/app/logistics">
+              <s-button>Refresh</s-button>
+            </s-link>
+          </div>
+        </div>
         {actionData?.message ? (
           <s-box padding="base" borderWidth="base" borderRadius="base">
             <s-paragraph>{actionData.message}</s-paragraph>
@@ -299,29 +325,12 @@ export default function Logistics() {
             </div>
           </details>
         </Form>
-        {process.env.NODE_ENV !== "production" ? (
-          <details className="kit-compact-disclosure">
-            <summary>Development tools</summary>
-            <Form method="post">
-              <input
-                type="hidden"
-                name="intent"
-                value="backfillTestShippingAddress"
-              />
-              <s-button type="submit">
-                Backfill test shipping address for open local test orders
-              </s-button>
-            </Form>
-          </details>
-        ) : null}
-
         <DataTable
           headings={[
             "Reference",
             "Status",
-            "Customer",
+            "Customer / address",
             "Products / quantities",
-            "Address",
             "Reason",
             "Next action",
           ]}

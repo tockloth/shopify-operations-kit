@@ -501,6 +501,24 @@ async function linkPreferredSupplier(
   supplierId: string,
   itemId: string,
 ) {
+  const tenantScope = await db.query<{ exists: boolean }>(
+    `
+      select exists (
+        select 1
+        from items
+        join suppliers
+          on suppliers.tenant_id = items.tenant_id
+          and suppliers.id = $3
+        where items.tenant_id = $1
+          and items.id = $2
+      ) as exists
+    `,
+    [tenantId, itemId, supplierId],
+  );
+  if (!tenantScope.rows[0]?.exists) {
+    throw new Error("Select a tenant item and supplier before linking them.");
+  }
+
   await db.query(
     "update supplier_items set is_preferred = false where tenant_id = $1 and item_id = $2",
     [tenantId, itemId],
@@ -662,6 +680,25 @@ export async function seedOperationsKitScenario(
     await linkPreferredSupplier(tx, tenantId, supplierBeta, compB);
     await linkPreferredSupplier(tx, tenantId, printSupplier, box);
     await linkPreferredSupplier(tx, tenantId, printSupplier, manual);
+
+    await tx.query(
+      `
+        update items
+        set min_inventory_quantity = case
+              when id = $2 then 3
+              when id = $3 then 2
+              else min_inventory_quantity
+            end,
+            default_order_quantity = case
+              when id = $2 then 5
+              when id = $3 then 4
+              else default_order_quantity
+            end,
+            updated_at = now()
+        where tenant_id = $1 and id in ($2, $3)
+      `,
+      [tenantId, compB, box],
+    );
 
     const order = await tx.query<{ id: string }>(
       `
@@ -917,7 +954,9 @@ async function loadBomLinesForKit(db: QueryExecutor, tenantId: string) {
       from items parent
       join boms on boms.parent_item_id = parent.id and boms.tenant_id = parent.tenant_id and boms.is_active
       join bom_lines on bom_lines.bom_id = boms.id and bom_lines.tenant_id = parent.tenant_id
-      join items component on component.id = bom_lines.component_item_id
+      join items component
+        on component.id = bom_lines.component_item_id
+        and component.tenant_id = bom_lines.tenant_id
       left join balances on balances.item_id = component.id
       where parent.tenant_id = $1 and parent.sku = 'KIT-001'
       order by component.sku
@@ -966,7 +1005,9 @@ async function loadBomLinesForItem(
       from items parent
       join boms on boms.parent_item_id = parent.id and boms.tenant_id = parent.tenant_id and boms.is_active
       join bom_lines on bom_lines.bom_id = boms.id and bom_lines.tenant_id = parent.tenant_id
-      join items component on component.id = bom_lines.component_item_id
+      join items component
+        on component.id = bom_lines.component_item_id
+        and component.tenant_id = bom_lines.tenant_id
       left join balances on balances.item_id = component.id
       where parent.tenant_id = $1 and parent.id = $2
       order by component.sku
@@ -1010,7 +1051,9 @@ export async function runOperationsMrp(db: QueryExecutor, tenantId: string) {
             coalesce(sum(operations_order_lines.quantity), 0) as customer_demand_quantity,
             string_agg(distinct operations_orders.order_name, ', ') as order_names
           from operations_order_lines
-          join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+          join operations_orders
+            on operations_orders.id = operations_order_lines.operations_order_id
+            and operations_orders.tenant_id = operations_order_lines.tenant_id
           where operations_order_lines.tenant_id = $1
             and operations_order_lines.supply_status <> 'cancelled'
             and operations_orders.status in ('open', 'planned', 'in_progress')
@@ -1021,7 +1064,9 @@ export async function runOperationsMrp(db: QueryExecutor, tenantId: string) {
             purchase_order_lines.item_id,
             coalesce(sum(purchase_order_lines.quantity), 0) as ordered_quantity
           from purchase_order_lines
-          join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+          join purchase_orders
+            on purchase_orders.id = purchase_order_lines.purchase_order_id
+            and purchase_orders.tenant_id = purchase_order_lines.tenant_id
           where purchase_order_lines.tenant_id = $1
             and purchase_order_lines.status = 'open'
             and purchase_orders.status in ('draft', 'pending_approval', 'approved', 'sent', 'acknowledged')
@@ -1036,19 +1081,24 @@ export async function runOperationsMrp(db: QueryExecutor, tenantId: string) {
           items.min_inventory_quantity,
           items.default_order_quantity,
           items.default_production_quantity,
-          customer_demand.customer_demand_quantity,
+          coalesce(customer_demand.customer_demand_quantity, 0) as customer_demand_quantity,
           coalesce(movement_balances.physical_quantity, 0) as physical_quantity,
           greatest(
-            customer_demand.customer_demand_quantity,
+            coalesce(customer_demand.customer_demand_quantity, 0),
             coalesce(movement_balances.movement_reserved_quantity, 0)
           ) as reserved_quantity,
           coalesce(open_purchase_orders.ordered_quantity, 0) as ordered_quantity,
           customer_demand.order_names
-        from customer_demand
-        join items on items.id = customer_demand.item_id
+        from items
+        left join customer_demand on customer_demand.item_id = items.id
         left join movement_balances on movement_balances.item_id = items.id
         left join open_purchase_orders on open_purchase_orders.item_id = items.id
         where items.tenant_id = $1
+          and (
+            coalesce(customer_demand.customer_demand_quantity, 0) > 0
+            or coalesce(items.min_inventory_quantity, 0) > 0
+            or coalesce(movement_balances.physical_quantity, 0) < 0
+          )
         order by items.sku
       `,
       [tenantId],
@@ -1143,6 +1193,10 @@ export async function runOperationsMrp(db: QueryExecutor, tenantId: string) {
         explanation:
           shortage <= 0
             ? `${requirementLine.sku}: customer demand ${customerDemand}, minimum ${minStock}, physical ${physical}, incoming ${incoming}; no procurement shortage.`
+            : physical < 0
+              ? `${requirementLine.sku}: Negative stock shortage. Physical stock is ${physical}; purchase ${plannedPurchaseQuantity} using lot size ${lotSize}.`
+            : customerDemand <= 0 && minStock > 0
+              ? `${requirementLine.sku}: Min stock shortage. Minimum ${minStock} exceeds physical ${physical} and incoming ${incoming}; purchase ${plannedPurchaseQuantity} using lot size ${lotSize}.`
             : `${requirementLine.sku}: demand ${customerDemand} plus minimum ${minStock} exceeds physical ${physical} and incoming ${incoming}; purchase ${plannedPurchaseQuantity} using lot size ${lotSize}.`,
       });
     }
@@ -1461,7 +1515,9 @@ export async function createProductionWorkForLatestNeed(
       `
         select production_needs.id, production_needs.item_id, production_needs.quantity, items.sku
         from production_needs
-        join items on items.id = production_needs.item_id
+        join items
+          on items.id = production_needs.item_id
+          and items.tenant_id = production_needs.tenant_id
         where production_needs.tenant_id = $1 and production_needs.status in ('open', 'planned')
           and ($2::uuid is null or production_needs.id = $2::uuid)
         order by production_needs.created_at desc
@@ -1584,7 +1640,16 @@ export async function createPurchaseOrderFromNeed(
     let supplierId = row.supplier_id;
     if (!supplierId) {
       const preferred = await tx.query<{ supplier_id: string }>(
-        "select supplier_id from supplier_items where tenant_id = $1 and item_id = $2 and is_preferred",
+        `
+          select supplier_items.supplier_id
+          from supplier_items
+          join suppliers
+            on suppliers.id = supplier_items.supplier_id
+            and suppliers.tenant_id = supplier_items.tenant_id
+          where supplier_items.tenant_id = $1
+            and supplier_items.item_id = $2
+            and supplier_items.is_preferred
+        `,
         [tenantId, row.item_id],
       );
       supplierId = preferred.rows[0]?.supplier_id ?? null;
@@ -1592,6 +1657,15 @@ export async function createPurchaseOrderFromNeed(
     if (!supplierId) {
       throw new Error(
         "Assign a preferred supplier before creating a purchase order.",
+      );
+    }
+    const supplier = await tx.query<{ id: string }>(
+      "select id from suppliers where tenant_id = $1 and id = $2",
+      [tenantId, supplierId],
+    );
+    if (!supplier.rows[0]) {
+      throw new Error(
+        "Assign a tenant supplier before creating a purchase order.",
       );
     }
 
@@ -1703,6 +1777,12 @@ export async function createPurchaseOrdersFromReadyNeeds(
 
     const created: string[] = [];
     for (const [supplierId, needs] of bySupplier.entries()) {
+      const supplier = await tx.query<{ id: string }>(
+        "select id from suppliers where tenant_id = $1 and id = $2",
+        [tenantId, supplierId],
+      );
+      if (!supplier.rows[0]) continue;
+
       const displayNumber = `PO-${supplierId.slice(0, 4).toUpperCase()}-${needs.length}`;
       const po = await tx.query<{ id: string }>(
         `
@@ -1979,8 +2059,12 @@ export async function completeReceiptLineQc(
       `
         select qc_checks.*, goods_receipt_lines.received_quantity, items.sku
         from qc_checks
-        join goods_receipt_lines on goods_receipt_lines.id = qc_checks.goods_receipt_line_id
-        join items on items.id = qc_checks.item_id
+        join goods_receipt_lines
+          on goods_receipt_lines.id = qc_checks.goods_receipt_line_id
+          and goods_receipt_lines.tenant_id = qc_checks.tenant_id
+        join items
+          on items.id = qc_checks.item_id
+          and items.tenant_id = qc_checks.tenant_id
         where qc_checks.tenant_id = $1 and qc_checks.goods_receipt_line_id = $2
       `,
       [tenantId, input.goodsReceiptLineId],
@@ -2137,7 +2221,9 @@ export async function putawayReceiptLine(
           goods_receipt_lines.item_id, goods_receipt_lines.accepted_quantity,
           goods_receipt_lines.status, items.sku
         from goods_receipt_lines
-        join items on items.id = goods_receipt_lines.item_id
+        join items
+          on items.id = goods_receipt_lines.item_id
+          and items.tenant_id = goods_receipt_lines.tenant_id
         where goods_receipt_lines.tenant_id = $1 and goods_receipt_lines.id = $2
       `,
       [tenantId, goodsReceiptLineId],
@@ -2268,8 +2354,12 @@ async function ensurePurchasePaymentForReceipt(
         coalesce(max(purchase_order_lines.currency_code), 'EUR') as currency_code,
         (coalesce(min(purchase_order_lines.expected_delivery_date), current_date) + interval '14 days')::date as due_date
       from goods_receipts
-      join purchase_orders on purchase_orders.id = goods_receipts.purchase_order_id
-      join purchase_order_lines on purchase_order_lines.purchase_order_id = purchase_orders.id
+      join purchase_orders
+        on purchase_orders.id = goods_receipts.purchase_order_id
+        and purchase_orders.tenant_id = goods_receipts.tenant_id
+      join purchase_order_lines
+        on purchase_order_lines.purchase_order_id = purchase_orders.id
+        and purchase_order_lines.tenant_id = purchase_orders.tenant_id
       where goods_receipts.tenant_id = $1 and goods_receipts.id = $2
       group by purchase_orders.id, purchase_orders.display_number, purchase_orders.supplier_id
     `,
@@ -2324,6 +2414,7 @@ export async function loadAccessControlSettings(
         and operation_user_groups.user_id = operation_users.id
       left join operation_groups
         on operation_groups.id = operation_user_groups.group_id
+        and operation_groups.tenant_id = operation_user_groups.tenant_id
       where operation_users.tenant_id = $1
       group by operation_users.id
       order by operation_users.is_admin desc, operation_users.email
@@ -2349,6 +2440,7 @@ export async function loadAccessControlSettings(
         and operation_group_roles.group_id = operation_groups.id
       left join operation_roles
         on operation_roles.id = operation_group_roles.role_id
+        and operation_roles.tenant_id = operation_group_roles.tenant_id
       where operation_groups.tenant_id = $1
       group by operation_groups.id
       order by operation_groups.key
@@ -2497,7 +2589,9 @@ export async function completeProductionOrder(
         select production_orders.id, production_orders.item_id, production_orders.display_number,
           production_orders.quantity, items.qc_required_after_production
         from production_orders
-        join items on items.id = production_orders.item_id
+        join items
+          on items.id = production_orders.item_id
+          and items.tenant_id = production_orders.tenant_id
         where production_orders.tenant_id = $1 and production_orders.status in ('ready', 'in_progress', 'approved')
           and ($2::uuid is null or production_orders.id = $2::uuid)
         order by production_orders.created_at desc
@@ -2633,7 +2727,9 @@ export async function completeProductionQc(
         select production_orders.id, production_orders.item_id, production_orders.display_number,
           production_orders.quantity, items.sku
         from production_orders
-        join items on items.id = production_orders.item_id
+        join items
+          on items.id = production_orders.item_id
+          and items.tenant_id = production_orders.tenant_id
         where production_orders.tenant_id = $1 and production_orders.id = $2
       `,
       [tenantId, input.productionOrderId],
@@ -2958,7 +3054,9 @@ export async function loadItems(
             suppliers.id as preferred_supplier_id,
             suppliers.name as preferred_supplier_name
           from supplier_items
-          join suppliers on suppliers.id = supplier_items.supplier_id
+          join suppliers
+            on suppliers.id = supplier_items.supplier_id
+            and suppliers.tenant_id = supplier_items.tenant_id
           where supplier_items.tenant_id = $1
             and supplier_items.is_preferred
             and supplier_items.is_active
@@ -2997,9 +3095,9 @@ export async function loadItems(
             else 'not_in_shop'
           end as shop_product_flag
         from items
-        left join balances on balances.item_id = items.id
-        left join preferred_supplier on preferred_supplier.item_id = items.id
-        left join bom_summary on bom_summary.parent_item_id = items.id
+      left join balances on balances.item_id = items.id
+      left join preferred_supplier on preferred_supplier.item_id = items.id
+      left join bom_summary on bom_summary.parent_item_id = items.id
         where items.tenant_id = $1
           and (
             $2 = ''
@@ -3290,8 +3388,12 @@ export async function loadItemDetail(
         bom_lines.quantity,
         bom_lines.unit
       from boms
-      left join bom_lines on bom_lines.bom_id = boms.id
-      left join items component on component.id = bom_lines.component_item_id
+      left join bom_lines
+        on bom_lines.bom_id = boms.id
+        and bom_lines.tenant_id = boms.tenant_id
+      left join items component
+        on component.id = bom_lines.component_item_id
+        and component.tenant_id = bom_lines.tenant_id
       left join component_balances on component_balances.item_id = component.id
       where boms.tenant_id = $1 and boms.parent_item_id = $2
       order by component.sku
@@ -3310,7 +3412,9 @@ export async function loadItemDetail(
         supplier_items.minimum_order_quantity,
         supplier_items.is_active as supplier_item_is_active
       from supplier_items
-      join suppliers on suppliers.id = supplier_items.supplier_id
+      join suppliers
+        on suppliers.id = supplier_items.supplier_id
+        and suppliers.tenant_id = supplier_items.tenant_id
       where supplier_items.tenant_id = $1 and supplier_items.item_id = $2
       order by supplier_items.is_preferred desc, suppliers.name
     `,
@@ -3346,7 +3450,9 @@ export async function loadItemDetail(
         operations_orders.status as order_status,
         operations_orders.fulfillment_status
       from operations_order_lines
-      join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+      join operations_orders
+        on operations_orders.id = operations_order_lines.operations_order_id
+        and operations_orders.tenant_id = operations_order_lines.tenant_id
       where operations_order_lines.tenant_id = $1
         and operations_order_lines.item_id = $2
         and operations_order_lines.supply_status <> 'cancelled'
@@ -3368,9 +3474,15 @@ export async function loadItemDetail(
         purchase_orders.display_number as purchase_order_number,
         purchase_orders.status as purchase_order_status
       from purchase_needs
-      left join suppliers on suppliers.id = purchase_needs.supplier_id
-      left join purchase_order_lines on purchase_order_lines.purchase_need_id = purchase_needs.id
-      left join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+      left join suppliers
+        on suppliers.id = purchase_needs.supplier_id
+        and suppliers.tenant_id = purchase_needs.tenant_id
+      left join purchase_order_lines
+        on purchase_order_lines.purchase_need_id = purchase_needs.id
+        and purchase_order_lines.tenant_id = purchase_needs.tenant_id
+      left join purchase_orders
+        on purchase_orders.id = purchase_order_lines.purchase_order_id
+        and purchase_orders.tenant_id = purchase_order_lines.tenant_id
       where purchase_needs.tenant_id = $1 and purchase_needs.item_id = $2
       order by purchase_needs.created_at desc
       limit 8
@@ -3387,7 +3499,9 @@ export async function loadItemDetail(
         production_orders.display_number as production_order_number,
         production_orders.status as production_order_status
       from production_needs
-      left join production_orders on production_orders.production_need_id = production_needs.id
+      left join production_orders
+        on production_orders.production_need_id = production_needs.id
+        and production_orders.tenant_id = production_needs.tenant_id
       where production_needs.tenant_id = $1 and production_needs.item_id = $2
       order by production_needs.created_at desc
       limit 8
@@ -3486,6 +3600,24 @@ export async function saveSupplierForItem(
   }
 
   return withKitTransaction(db, async (tx) => {
+    const tenantScope = await tx.query<{ exists: boolean }>(
+      `
+        select exists (
+          select 1
+          from items
+          join suppliers
+            on suppliers.tenant_id = items.tenant_id
+            and suppliers.id = $3
+          where items.tenant_id = $1
+            and items.id = $2
+        ) as exists
+      `,
+      [tenantId, input.itemId, input.supplierId],
+    );
+    if (!tenantScope.rows[0]?.exists) {
+      throw new Error("Select a tenant item and supplier before saving purchasing terms.");
+    }
+
     if (input.isPreferred) {
       await tx.query(
         "update supplier_items set is_preferred = false, updated_at = now() where tenant_id = $1 and item_id = $2",
@@ -3551,12 +3683,28 @@ export async function addBomLineToItem(
       throw new Error("A product cannot be a component of itself.");
     }
 
-    const parent = await tx.query<{ is_producible: boolean }>(
-      "select is_producible from items where tenant_id = $1 and id = $2",
-      [tenantId, input.parentItemId],
+    const parent = await tx.query<{
+      is_producible: boolean;
+      component_is_same_tenant: boolean;
+    }>(
+      `
+        select
+          parent.is_producible,
+          component.id is not null as component_is_same_tenant
+        from items parent
+        left join items component
+          on component.tenant_id = parent.tenant_id
+          and component.id = $3
+        where parent.tenant_id = $1
+          and parent.id = $2
+      `,
+      [tenantId, input.parentItemId, input.componentItemId],
     );
     if (!parent.rows[0]?.is_producible) {
       throw new Error("Only producible items can have an active BOM.");
+    }
+    if (!parent.rows[0]?.component_is_same_tenant) {
+      throw new Error("Select a tenant component before saving the BOM line.");
     }
 
     const bom = await tx.query<{ id: string }>(
@@ -3730,7 +3878,9 @@ export async function loadOperationsOrdersList(
             purchase_order_lines.item_id,
             coalesce(sum(purchase_order_lines.quantity), 0) as ordered_quantity
           from purchase_order_lines
-          join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+          join purchase_orders
+            on purchase_orders.id = purchase_order_lines.purchase_order_id
+            and purchase_orders.tenant_id = purchase_order_lines.tenant_id
           where purchase_order_lines.tenant_id = $1
             and purchase_order_lines.status = 'open'
             and purchase_orders.status in ('draft', 'pending_approval', 'approved', 'sent', 'acknowledged')
@@ -3801,7 +3951,9 @@ export async function loadOperationsOrdersList(
             max(shipping_orders.shipped_at) filter (where shipping_orders.status = 'shipped') as latest_shipped_at,
             string_agg(distinct shipping_orders.shipment_number, ', ' order by shipping_orders.shipment_number) as shipment_numbers
           from shipping_order_lines
-          join shipping_orders on shipping_orders.id = shipping_order_lines.shipping_order_id
+          join shipping_orders
+            on shipping_orders.id = shipping_order_lines.shipping_order_id
+            and shipping_orders.tenant_id = shipping_order_lines.tenant_id
           where shipping_order_lines.tenant_id = $1
           group by shipping_order_lines.operations_order_line_id
         ),
@@ -3839,8 +3991,12 @@ export async function loadOperationsOrdersList(
             line_logistics.latest_shipped_at,
             line_logistics.shipment_numbers
           from operations_order_lines
-          join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
-          join items on items.id = operations_order_lines.item_id
+          join operations_orders
+            on operations_orders.id = operations_order_lines.operations_order_id
+            and operations_orders.tenant_id = operations_order_lines.tenant_id
+          join items
+            on items.id = operations_order_lines.item_id
+            and items.tenant_id = operations_order_lines.tenant_id
           left join item_availability on item_availability.item_id = operations_order_lines.item_id
           left join procurement_context direct_line_procurement
             on direct_line_procurement.source_order_line_id = operations_order_lines.id
@@ -4008,6 +4164,10 @@ export async function loadOperationsOrdersList(
             else concat('Short ', trim(to_char(order_summary.planned_shortage_quantity, 'FM999999990.####')))
           end as stock_label,
           case
+            when upper(coalesce(operations_orders.fulfillment_status, '')) = 'FULFILLED'
+              then 'Complete'
+            when upper(coalesce(operations_orders.fulfillment_status, '')) = 'CLOSED'
+              then 'Complete'
             when (
               operations_orders.status = 'closed'
               or coalesce(order_summary.shipment_shipped_count, 0) > 0
@@ -4044,6 +4204,8 @@ export async function loadOperationsOrdersList(
             else 'Needs planning'
           end as operational_status,
           case
+            when upper(coalesce(operations_orders.fulfillment_status, '')) in ('FULFILLED', 'CLOSED')
+              then 'success'
             when (
               operations_orders.status = 'closed'
               or coalesce(order_summary.shipment_shipped_count, 0) > 0
@@ -4079,6 +4241,10 @@ export async function loadOperationsOrdersList(
             else 'info'
           end as operational_status_tone,
           case
+            when upper(coalesce(operations_orders.fulfillment_status, '')) = 'FULFILLED'
+              then 'Shopify already reports this order as fulfilled.'
+            when upper(coalesce(operations_orders.fulfillment_status, '')) = 'CLOSED'
+              then 'Shopify already reports this order as closed.'
             when (
               operations_orders.status = 'closed'
               or coalesce(order_summary.shipment_shipped_count, 0) > 0
@@ -4143,6 +4309,8 @@ export async function loadOperationsOrdersList(
             else 'Open Procurement to plan required trading-goods purchasing.'
           end as next_reason,
           case
+            when upper(coalesce(operations_orders.fulfillment_status, '')) in ('FULFILLED', 'CLOSED')
+              then 'Open order'
             when operations_orders.status = 'closed'
               or coalesce(order_summary.shipment_shipped_count, 0) > 0 then 'Open order'
             when coalesce(order_summary.shipment_open_count, 0) > 0
@@ -4162,6 +4330,8 @@ export async function loadOperationsOrdersList(
             else 'Open Procurement'
           end as next_action_label,
           case
+            when upper(coalesce(operations_orders.fulfillment_status, '')) in ('FULFILLED', 'CLOSED')
+              then concat('/app/orders/', operations_orders.id)
             when operations_orders.status = 'closed'
               or coalesce(order_summary.shipment_shipped_count, 0) > 0 then concat('/app/orders/', operations_orders.id)
             when coalesce(order_summary.shipment_open_count, 0) > 0
@@ -4216,8 +4386,12 @@ export async function loadOperationsOrderLinesList(
           items.default_production_quantity,
           items.min_inventory_quantity
         from operations_order_lines
-        join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
-        join items on items.id = operations_order_lines.item_id
+        join operations_orders
+          on operations_orders.id = operations_order_lines.operations_order_id
+          and operations_orders.tenant_id = operations_order_lines.tenant_id
+        join items
+          on items.id = operations_order_lines.item_id
+          and items.tenant_id = operations_order_lines.tenant_id
         where operations_order_lines.tenant_id = $1
         order by operations_orders.processed_at desc nulls last,
           operations_orders.created_at desc,
@@ -4638,7 +4812,9 @@ export async function loadOperationsCustomerDetail(
             left join operations_order_lines
               on operations_order_lines.operations_order_id = operations_orders.id
               and operations_order_lines.tenant_id = operations_orders.tenant_id
-            left join items on items.id = operations_order_lines.item_id
+            left join items
+              on items.id = operations_order_lines.item_id
+              and items.tenant_id = operations_order_lines.tenant_id
             where operations_orders.tenant_id = $1
               and operations_orders.customer_lookup_hash = $2
             group by operations_orders.id
@@ -4682,7 +4858,9 @@ export async function loadOperationsOrderLineDetail(
           operations_order_lines.item_id,
           coalesce(sum(operations_order_lines.quantity), 0) as open_order_quantity
         from operations_order_lines
-        join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+        join operations_orders
+          on operations_orders.id = operations_order_lines.operations_order_id
+          and operations_orders.tenant_id = operations_order_lines.tenant_id
         where operations_order_lines.tenant_id = $1
           and operations_orders.status in ('open', 'planned', 'in_progress')
           and operations_order_lines.supply_status <> 'cancelled'
@@ -4693,7 +4871,9 @@ export async function loadOperationsOrderLineDetail(
           purchase_order_lines.item_id,
           coalesce(sum(purchase_order_lines.quantity), 0) as ordered_quantity
         from purchase_order_lines
-        join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+        join purchase_orders
+          on purchase_orders.id = purchase_order_lines.purchase_order_id
+          and purchase_orders.tenant_id = purchase_order_lines.tenant_id
         where purchase_order_lines.tenant_id = $1
           and purchase_order_lines.status = 'open'
           and purchase_orders.status in ('draft', 'pending_approval', 'approved', 'sent', 'acknowledged')
@@ -4726,7 +4906,9 @@ export async function loadOperationsOrderLineDetail(
             0
           ) as prior_open_demand_quantity
         from operations_order_lines
-        join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+        join operations_orders
+          on operations_orders.id = operations_order_lines.operations_order_id
+          and operations_orders.tenant_id = operations_order_lines.tenant_id
         where operations_order_lines.tenant_id = $1
       )
       select
@@ -4777,8 +4959,12 @@ export async function loadOperationsOrderLineDetail(
         ) as allocated_available_quantity,
         coalesce(active_boms.active_bom_count, 0) as active_bom_count
       from operations_order_lines
-      join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
-      join items on items.id = operations_order_lines.item_id
+      join operations_orders
+        on operations_orders.id = operations_order_lines.operations_order_id
+        and operations_orders.tenant_id = operations_order_lines.tenant_id
+      join items
+        on items.id = operations_order_lines.item_id
+        and items.tenant_id = operations_order_lines.tenant_id
       left join balances on balances.item_id = items.id
       left join open_demand on open_demand.item_id = items.id
       left join open_purchase_orders on open_purchase_orders.item_id = items.id
@@ -4788,7 +4974,9 @@ export async function loadOperationsOrderLineDetail(
         on preferred.item_id = items.id
         and preferred.tenant_id = items.tenant_id
         and preferred.is_preferred
-      left join suppliers on suppliers.id = preferred.supplier_id
+      left join suppliers
+        on suppliers.id = preferred.supplier_id
+        and suppliers.tenant_id = preferred.tenant_id
       where operations_order_lines.tenant_id = $1 and operations_order_lines.id = $2
     `,
     [tenantId, lineId],
@@ -4807,6 +4995,11 @@ export async function loadOperationsOrderLineDetail(
         purchase_needs.status as purchase_need_status,
         purchase_needs.quantity,
         purchase_needs.unit,
+        mrp_run_lines.explanation as need_explanation,
+        mrp_run_lines.demand_quantity,
+        mrp_run_lines.available_quantity,
+        mrp_run_lines.shortage_quantity,
+        mrp_run_lines.recommended_action,
         case
           when purchase_needs.source_order_line_id = $3 then 'order_line'
           when mrp_runs.operations_order_id = $4 then 'order'
@@ -4824,10 +5017,21 @@ export async function loadOperationsOrderLineDetail(
       join mrp_runs
         on mrp_runs.id = purchase_needs.mrp_run_id
         and mrp_runs.tenant_id = purchase_needs.tenant_id
-      left join suppliers on suppliers.id = purchase_needs.supplier_id
-      left join purchase_order_lines on purchase_order_lines.purchase_need_id = purchase_needs.id
-      left join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
-      left join goods_receipts on goods_receipts.purchase_order_id = purchase_orders.id
+      left join mrp_run_lines
+        on mrp_run_lines.id = purchase_needs.mrp_run_line_id
+        and mrp_run_lines.tenant_id = purchase_needs.tenant_id
+      left join suppliers
+        on suppliers.id = purchase_needs.supplier_id
+        and suppliers.tenant_id = purchase_needs.tenant_id
+      left join purchase_order_lines
+        on purchase_order_lines.purchase_need_id = purchase_needs.id
+        and purchase_order_lines.tenant_id = purchase_needs.tenant_id
+      left join purchase_orders
+        on purchase_orders.id = purchase_order_lines.purchase_order_id
+        and purchase_orders.tenant_id = purchase_order_lines.tenant_id
+      left join goods_receipts
+        on goods_receipts.purchase_order_id = purchase_orders.id
+        and goods_receipts.tenant_id = purchase_orders.tenant_id
       where purchase_needs.tenant_id = $1
         and purchase_needs.item_id = $2
         and (
@@ -4871,13 +5075,21 @@ export async function loadOperationsOrderLineDetail(
         purchase_orders.id as purchase_order_id,
         purchase_orders.display_number as purchase_order_number
       from goods_receipt_lines
-      join goods_receipts on goods_receipts.id = goods_receipt_lines.goods_receipt_id
-      join purchase_order_lines on purchase_order_lines.id = goods_receipt_lines.purchase_order_line_id
-      join purchase_needs on purchase_needs.id = purchase_order_lines.purchase_need_id
+      join goods_receipts
+        on goods_receipts.id = goods_receipt_lines.goods_receipt_id
+        and goods_receipts.tenant_id = goods_receipt_lines.tenant_id
+      join purchase_order_lines
+        on purchase_order_lines.id = goods_receipt_lines.purchase_order_line_id
+        and purchase_order_lines.tenant_id = goods_receipt_lines.tenant_id
+      join purchase_needs
+        on purchase_needs.id = purchase_order_lines.purchase_need_id
+        and purchase_needs.tenant_id = purchase_order_lines.tenant_id
       join mrp_runs
         on mrp_runs.id = purchase_needs.mrp_run_id
         and mrp_runs.tenant_id = purchase_needs.tenant_id
-      join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+      join purchase_orders
+        on purchase_orders.id = purchase_order_lines.purchase_order_id
+        and purchase_orders.tenant_id = purchase_order_lines.tenant_id
       where goods_receipt_lines.tenant_id = $1
         and goods_receipt_lines.item_id = $2
         and (
@@ -4923,7 +5135,9 @@ export async function loadOperationsOrderLineDetail(
         production_orders.display_number as production_order_number,
         production_orders.status as production_order_status
       from production_needs
-      left join production_orders on production_orders.production_need_id = production_needs.id
+      left join production_orders
+        on production_orders.production_need_id = production_needs.id
+        and production_orders.tenant_id = production_needs.tenant_id
       where production_needs.tenant_id = $1 and production_needs.item_id = $2
       order by production_needs.created_at desc
       limit 5
@@ -4937,7 +5151,9 @@ export async function loadOperationsOrderLineDetail(
         shipping_orders.shipment_number,
         shipping_orders.status as shipping_order_status
       from shipping_order_lines
-      join shipping_orders on shipping_orders.id = shipping_order_lines.shipping_order_id
+      join shipping_orders
+        on shipping_orders.id = shipping_order_lines.shipping_order_id
+        and shipping_orders.tenant_id = shipping_order_lines.tenant_id
       where shipping_order_lines.tenant_id = $1
         and shipping_order_lines.operations_order_line_id = $2
       order by shipping_order_lines.created_at desc
@@ -5002,8 +5218,12 @@ export async function createPurchaseNeedForOrderLine(
           coalesce(balances.available_quantity, 0) as available_quantity,
           preferred.supplier_id as preferred_supplier_id
         from operations_order_lines
-        join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
-        join items on items.id = operations_order_lines.item_id
+        join operations_orders
+          on operations_orders.id = operations_order_lines.operations_order_id
+          and operations_orders.tenant_id = operations_order_lines.tenant_id
+        join items
+          on items.id = operations_order_lines.item_id
+          and items.tenant_id = operations_order_lines.tenant_id
         left join balances on balances.item_id = items.id
         left join supplier_items preferred
           on preferred.item_id = items.id
@@ -5292,7 +5512,9 @@ export async function consolidateOpenOrdersByCustomer(
             max(operations_order_lines.sku) as sku,
             max(operations_order_lines.title) as title
           from operations_order_lines
-          join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+          join operations_orders
+            on operations_orders.id = operations_order_lines.operations_order_id
+            and operations_orders.tenant_id = operations_order_lines.tenant_id
           where operations_orders.tenant_id = $1
             and operations_orders.status = 'open'
             and operations_orders.order_name <> $2
@@ -5379,7 +5601,9 @@ export async function loadOperationsOrderDetail(
           operations_order_lines.item_id,
           coalesce(sum(operations_order_lines.quantity), 0) as open_order_quantity
         from operations_order_lines
-        join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+        join operations_orders
+          on operations_orders.id = operations_order_lines.operations_order_id
+          and operations_orders.tenant_id = operations_order_lines.tenant_id
         where operations_order_lines.tenant_id = $1
           and operations_orders.status in ('open', 'planned', 'in_progress')
           and operations_order_lines.supply_status <> 'cancelled'
@@ -5390,7 +5614,9 @@ export async function loadOperationsOrderDetail(
           purchase_order_lines.item_id,
           coalesce(sum(purchase_order_lines.quantity), 0) as ordered_quantity
         from purchase_order_lines
-        join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+        join purchase_orders
+          on purchase_orders.id = purchase_order_lines.purchase_order_id
+          and purchase_orders.tenant_id = purchase_order_lines.tenant_id
         where purchase_order_lines.tenant_id = $1
           and purchase_order_lines.status = 'open'
           and purchase_orders.status in ('draft', 'pending_approval', 'approved', 'sent', 'acknowledged')
@@ -5423,7 +5649,9 @@ export async function loadOperationsOrderDetail(
             0
           ) as prior_open_demand_quantity
         from operations_order_lines
-        join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+        join operations_orders
+          on operations_orders.id = operations_order_lines.operations_order_id
+          and operations_orders.tenant_id = operations_order_lines.tenant_id
         where operations_order_lines.tenant_id = $1
       )
       select operations_order_lines.*, items.sku as item_sku, items.title as item_title,
@@ -5448,7 +5676,9 @@ export async function loadOperationsOrderDetail(
         ) as allocated_available_quantity,
         coalesce(active_boms.active_bom_count, 0) as active_bom_count
       from operations_order_lines
-      join items on items.id = operations_order_lines.item_id
+      join items
+        on items.id = operations_order_lines.item_id
+        and items.tenant_id = operations_order_lines.tenant_id
       left join balances on balances.item_id = items.id
       left join open_demand on open_demand.item_id = items.id
       left join open_purchase_orders on open_purchase_orders.item_id = items.id
@@ -5458,7 +5688,9 @@ export async function loadOperationsOrderDetail(
         on preferred.item_id = items.id
         and preferred.tenant_id = items.tenant_id
         and preferred.is_preferred
-      left join suppliers on suppliers.id = preferred.supplier_id
+      left join suppliers
+        on suppliers.id = preferred.supplier_id
+        and suppliers.tenant_id = preferred.tenant_id
       where operations_order_lines.tenant_id = $1 and operations_order_lines.operations_order_id = $2
       order by coalesce(operations_order_lines.sku, items.sku)
     `,
@@ -5488,10 +5720,18 @@ export async function loadOperationsOrderDetail(
       join mrp_runs
         on mrp_runs.id = purchase_needs.mrp_run_id
         and mrp_runs.tenant_id = purchase_needs.tenant_id
-      left join suppliers on suppliers.id = purchase_needs.supplier_id
-      left join purchase_order_lines on purchase_order_lines.purchase_need_id = purchase_needs.id
-      left join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
-      left join goods_receipts on goods_receipts.purchase_order_id = purchase_orders.id
+      left join suppliers
+        on suppliers.id = purchase_needs.supplier_id
+        and suppliers.tenant_id = purchase_needs.tenant_id
+      left join purchase_order_lines
+        on purchase_order_lines.purchase_need_id = purchase_needs.id
+        and purchase_order_lines.tenant_id = purchase_needs.tenant_id
+      left join purchase_orders
+        on purchase_orders.id = purchase_order_lines.purchase_order_id
+        and purchase_orders.tenant_id = purchase_order_lines.tenant_id
+      left join goods_receipts
+        on goods_receipts.purchase_order_id = purchase_orders.id
+        and goods_receipts.tenant_id = purchase_orders.tenant_id
       where purchase_needs.tenant_id = $1
         and purchase_needs.item_id in (
           select item_id
@@ -5543,13 +5783,21 @@ export async function loadOperationsOrderDetail(
         purchase_orders.id as purchase_order_id,
         purchase_orders.display_number as purchase_order_number
       from goods_receipt_lines
-      join goods_receipts on goods_receipts.id = goods_receipt_lines.goods_receipt_id
-      join purchase_order_lines on purchase_order_lines.id = goods_receipt_lines.purchase_order_line_id
-      join purchase_needs on purchase_needs.id = purchase_order_lines.purchase_need_id
+      join goods_receipts
+        on goods_receipts.id = goods_receipt_lines.goods_receipt_id
+        and goods_receipts.tenant_id = goods_receipt_lines.tenant_id
+      join purchase_order_lines
+        on purchase_order_lines.id = goods_receipt_lines.purchase_order_line_id
+        and purchase_order_lines.tenant_id = goods_receipt_lines.tenant_id
+      join purchase_needs
+        on purchase_needs.id = purchase_order_lines.purchase_need_id
+        and purchase_needs.tenant_id = purchase_order_lines.tenant_id
       join mrp_runs
         on mrp_runs.id = purchase_needs.mrp_run_id
         and mrp_runs.tenant_id = purchase_needs.tenant_id
-      join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+      join purchase_orders
+        on purchase_orders.id = purchase_order_lines.purchase_order_id
+        and purchase_orders.tenant_id = purchase_order_lines.tenant_id
       where goods_receipt_lines.tenant_id = $1
         and goods_receipt_lines.item_id in (
           select item_id
@@ -5592,7 +5840,9 @@ export async function loadOperationsOrderDetail(
         production_orders.display_number as production_order_number,
         production_orders.status as production_order_status
       from production_needs
-      left join production_orders on production_orders.production_need_id = production_needs.id
+      left join production_orders
+        on production_orders.production_need_id = production_needs.id
+        and production_orders.tenant_id = production_needs.tenant_id
       where production_needs.tenant_id = $1
         and production_needs.item_id in (
           select item_id
@@ -5610,7 +5860,9 @@ export async function loadOperationsOrderDetail(
         shipping_orders.shipment_number,
         shipping_orders.status as shipping_order_status
       from shipping_order_lines
-      join shipping_orders on shipping_orders.id = shipping_order_lines.shipping_order_id
+      join shipping_orders
+        on shipping_orders.id = shipping_order_lines.shipping_order_id
+        and shipping_orders.tenant_id = shipping_order_lines.tenant_id
       where shipping_order_lines.tenant_id = $1
         and shipping_orders.operations_order_id = $2
       order by shipping_order_lines.created_at desc
@@ -5725,8 +5977,12 @@ export async function loadBoms(db: QueryExecutor, tenantId: string) {
           parent.is_producible,
           count(bom_lines.id)::int as line_count
         from boms
-        join items parent on parent.id = boms.parent_item_id
-        left join bom_lines on bom_lines.bom_id = boms.id
+        join items parent
+          on parent.id = boms.parent_item_id
+          and parent.tenant_id = boms.tenant_id
+        left join bom_lines
+          on bom_lines.bom_id = boms.id
+          and bom_lines.tenant_id = boms.tenant_id
         where boms.tenant_id = $1
         group by boms.id, parent.sku, parent.title, parent.is_producible
         order by parent.sku
@@ -5807,7 +6063,9 @@ export async function loadBomProductContext(
             component.is_purchasable,
             component.is_producible
           from bom_lines
-          join items component on component.id = bom_lines.component_item_id
+          join items component
+            on component.id = bom_lines.component_item_id
+            and component.tenant_id = bom_lines.tenant_id
           where bom_lines.tenant_id = $1 and bom_lines.bom_id = $2
           order by component.sku
         `,
@@ -5874,7 +6132,9 @@ export async function loadMrpRunDetail(
     `
       select mrp_run_lines.*, items.sku, items.title
       from mrp_run_lines
-      join items on items.id = mrp_run_lines.item_id
+      join items
+        on items.id = mrp_run_lines.item_id
+        and items.tenant_id = mrp_run_lines.tenant_id
       where mrp_run_lines.tenant_id = $1 and mrp_run_lines.mrp_run_id = $2
       order by line_type desc, items.sku
     `,
@@ -5901,8 +6161,14 @@ export async function loadPurchaseNeeds(db: QueryExecutor, tenantId: string) {
           supplier_items.supplier_sku as preferred_supplier_sku,
           supplier_items.unit_price as preferred_unit_price,
           supplier_items.currency_code as preferred_currency_code,
+          mrp_run_lines.explanation as need_explanation,
+          mrp_run_lines.demand_quantity,
+          mrp_run_lines.available_quantity,
+          mrp_run_lines.shortage_quantity,
+          mrp_run_lines.recommended_action,
           purchase_order_lines.purchase_order_id,
           purchase_orders.display_number as purchase_order_number,
+          purchase_orders.status as purchase_order_status,
           purchase_needs.source_order_line_id,
           mrp_runs.operations_order_id as source_order_id,
           operations_orders.order_name as source_order_name,
@@ -5914,18 +6180,33 @@ export async function loadPurchaseNeeds(db: QueryExecutor, tenantId: string) {
             else 'item_fallback'
           end as demand_link_scope
         from purchase_needs
-        join items on items.id = purchase_needs.item_id
+        join items
+          on items.id = purchase_needs.item_id
+          and items.tenant_id = purchase_needs.tenant_id
         join mrp_runs on mrp_runs.id = purchase_needs.mrp_run_id
           and mrp_runs.tenant_id = purchase_needs.tenant_id
-        left join operations_orders on operations_orders.id = mrp_runs.operations_order_id
+        left join mrp_run_lines
+          on mrp_run_lines.id = purchase_needs.mrp_run_line_id
+          and mrp_run_lines.tenant_id = purchase_needs.tenant_id
+        left join operations_orders
+          on operations_orders.id = mrp_runs.operations_order_id
+          and operations_orders.tenant_id = mrp_runs.tenant_id
         left join operations_order_lines source_order_lines
           on source_order_lines.id = purchase_needs.source_order_line_id
           and source_order_lines.tenant_id = purchase_needs.tenant_id
-        left join suppliers on suppliers.id = purchase_needs.supplier_id
+        left join suppliers
+          on suppliers.id = purchase_needs.supplier_id
+          and suppliers.tenant_id = purchase_needs.tenant_id
         left join supplier_items on supplier_items.item_id = items.id and supplier_items.tenant_id = items.tenant_id and supplier_items.is_preferred
-        left join suppliers preferred on preferred.id = supplier_items.supplier_id
-        left join purchase_order_lines on purchase_order_lines.purchase_need_id = purchase_needs.id
-        left join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+        left join suppliers preferred
+          on preferred.id = supplier_items.supplier_id
+          and preferred.tenant_id = supplier_items.tenant_id
+        left join purchase_order_lines
+          on purchase_order_lines.purchase_need_id = purchase_needs.id
+          and purchase_order_lines.tenant_id = purchase_needs.tenant_id
+        left join purchase_orders
+          on purchase_orders.id = purchase_order_lines.purchase_order_id
+          and purchase_orders.tenant_id = purchase_order_lines.tenant_id
         where purchase_needs.tenant_id = $1
         order by purchase_needs.created_at desc
       `,
@@ -5987,13 +6268,18 @@ export async function assignSupplierToPurchaseNeed(
   await db.query(
     `
       update purchase_needs
-      set supplier_id = $3,
+      set supplier_id = suppliers.id,
           status = case
             when status in ('open', 'assigned') then 'assigned'
             else status
           end,
           updated_at = now()
-      where tenant_id = $1 and id = $2 and status <> 'converted_to_po'
+      from suppliers
+      where purchase_needs.tenant_id = $1
+        and purchase_needs.id = $2
+        and purchase_needs.status <> 'converted_to_po'
+        and suppliers.tenant_id = purchase_needs.tenant_id
+        and suppliers.id = $3
     `,
     [tenantId, purchaseNeedId, supplierId],
   );
@@ -6028,7 +6314,9 @@ export async function loadPurchaseOrders(db: QueryExecutor, tenantId: string) {
             coalesce(sum(purchase_order_lines.quantity * coalesce(purchase_order_lines.unit_price, 0)), 0) as net_amount,
             coalesce(max(purchase_order_lines.currency_code), 'EUR') as currency_code
           from purchase_order_lines
-          left join items on items.id = purchase_order_lines.item_id
+          left join items
+            on items.id = purchase_order_lines.item_id
+            and items.tenant_id = purchase_order_lines.tenant_id
           left join purchase_needs
             on purchase_needs.id = purchase_order_lines.purchase_need_id
             and purchase_needs.tenant_id = purchase_order_lines.tenant_id
@@ -6048,7 +6336,9 @@ export async function loadPurchaseOrders(db: QueryExecutor, tenantId: string) {
             on preferred_item.tenant_id = items.tenant_id
             and preferred_item.item_id = items.id
             and preferred_item.is_preferred
-          left join suppliers preferred on preferred.id = preferred_item.supplier_id
+          left join suppliers preferred
+            on preferred.id = preferred_item.supplier_id
+            and preferred.tenant_id = preferred_item.tenant_id
           where purchase_order_lines.tenant_id = $1
           group by purchase_order_lines.purchase_order_id
         ),
@@ -6085,7 +6375,9 @@ export async function loadPurchaseOrders(db: QueryExecutor, tenantId: string) {
           receipt_summary.latest_receipt_number,
           coalesce(receipt_summary.receipt_count, 0) as receipt_count
         from purchase_orders
-        join suppliers on suppliers.id = purchase_orders.supplier_id
+        join suppliers
+          on suppliers.id = purchase_orders.supplier_id
+          and suppliers.tenant_id = purchase_orders.tenant_id
         left join line_summary on line_summary.purchase_order_id = purchase_orders.id
         left join receipt_summary on receipt_summary.purchase_order_id = purchase_orders.id
         where purchase_orders.tenant_id = $1
@@ -6103,8 +6395,12 @@ export async function loadPaymentEntries(db: QueryExecutor, tenantId: string) {
         select purchase_payments.*, suppliers.name as supplier_name,
           purchase_orders.display_number as purchase_order_number
         from purchase_payments
-        join purchase_orders on purchase_orders.id = purchase_payments.purchase_order_id
-        left join suppliers on suppliers.id = purchase_payments.supplier_id
+        join purchase_orders
+          on purchase_orders.id = purchase_payments.purchase_order_id
+          and purchase_orders.tenant_id = purchase_payments.tenant_id
+        left join suppliers
+          on suppliers.id = purchase_payments.supplier_id
+          and suppliers.tenant_id = purchase_payments.tenant_id
         where purchase_payments.tenant_id = $1
         order by purchase_payments.exported_at nulls first, purchase_payments.created_at desc
       `,
@@ -6182,10 +6478,18 @@ export async function loadReceivablePurchaseOrders(
           coalesce(max(purchase_order_lines.currency_code), 'EUR') as currency_code,
           coalesce(sum(purchase_order_lines.quantity * coalesce(purchase_order_lines.unit_price, 0)), 0) as net_amount
         from purchase_orders
-        join suppliers on suppliers.id = purchase_orders.supplier_id
-        left join purchase_order_lines on purchase_order_lines.purchase_order_id = purchase_orders.id
-        left join items on items.id = purchase_order_lines.item_id
-        left join goods_receipts on goods_receipts.purchase_order_id = purchase_orders.id
+        join suppliers
+          on suppliers.id = purchase_orders.supplier_id
+          and suppliers.tenant_id = purchase_orders.tenant_id
+        left join purchase_order_lines
+          on purchase_order_lines.purchase_order_id = purchase_orders.id
+          and purchase_order_lines.tenant_id = purchase_orders.tenant_id
+        left join items
+          on items.id = purchase_order_lines.item_id
+          and items.tenant_id = purchase_order_lines.tenant_id
+        left join goods_receipts
+          on goods_receipts.purchase_order_id = purchase_orders.id
+          and goods_receipts.tenant_id = purchase_orders.tenant_id
         where purchase_orders.tenant_id = $1
           and purchase_orders.status = 'acknowledged'
           and goods_receipts.id is null
@@ -6219,7 +6523,9 @@ export async function loadPurchaseOrderDetail(
             and goods_receipts.purchase_order_id = purchase_orders.id
         ) as receipt_status
       from purchase_orders
-      join suppliers on suppliers.id = purchase_orders.supplier_id
+      join suppliers
+        on suppliers.id = purchase_orders.supplier_id
+        and suppliers.tenant_id = purchase_orders.tenant_id
       where purchase_orders.tenant_id = $1 and purchase_orders.id = $2
     `,
     [tenantId, purchaseOrderId],
@@ -6235,11 +6541,81 @@ export async function loadPurchaseOrderDetail(
     expected_delivery_date: string | null;
     lead_time_days: number | null;
     status: string;
+    purchase_need_status: string | null;
+    source_order_line_id: string | null;
+    source_order_id: string | null;
+    source_order_name: string | null;
+    source_line_sku: string | null;
+    source_line_title: string | null;
+    demand_link_scope: string | null;
+    need_explanation: string | null;
+    demand_quantity: string | null;
+    available_quantity: string | null;
+    shortage_quantity: string | null;
+    recommended_action: string | null;
+    receipt_id: string | null;
+    receipt_number: string | null;
+    receipt_status: string | null;
+    receipt_line_id: string | null;
+    receipt_line_status: string | null;
+    received_quantity: string | null;
+    accepted_quantity: string | null;
+    rejected_quantity: string | null;
   }>(
     `
-      select purchase_order_lines.*, items.sku, items.title
+      select purchase_order_lines.*, items.sku, items.title,
+        purchase_needs.status as purchase_need_status,
+        purchase_needs.source_order_line_id,
+        coalesce(source_orders.id, mrp_orders.id) as source_order_id,
+        coalesce(source_orders.order_name, mrp_orders.order_name) as source_order_name,
+        source_order_lines.sku as source_line_sku,
+        source_order_lines.title as source_line_title,
+        case
+          when purchase_needs.source_order_line_id is not null then 'order_line'
+          when mrp_runs.operations_order_id is not null then 'order'
+          else 'item_fallback'
+        end as demand_link_scope,
+        mrp_run_lines.explanation as need_explanation,
+        mrp_run_lines.demand_quantity,
+        mrp_run_lines.available_quantity,
+        mrp_run_lines.shortage_quantity,
+        mrp_run_lines.recommended_action,
+        goods_receipts.id as receipt_id,
+        goods_receipts.receipt_number,
+        goods_receipts.status as receipt_status,
+        goods_receipt_lines.id as receipt_line_id,
+        goods_receipt_lines.status as receipt_line_status,
+        goods_receipt_lines.received_quantity,
+        goods_receipt_lines.accepted_quantity,
+        goods_receipt_lines.rejected_quantity
       from purchase_order_lines
-      join items on items.id = purchase_order_lines.item_id
+      join items
+        on items.id = purchase_order_lines.item_id
+        and items.tenant_id = purchase_order_lines.tenant_id
+      left join purchase_needs
+        on purchase_needs.id = purchase_order_lines.purchase_need_id
+        and purchase_needs.tenant_id = purchase_order_lines.tenant_id
+      left join mrp_run_lines
+        on mrp_run_lines.id = purchase_needs.mrp_run_line_id
+        and mrp_run_lines.tenant_id = purchase_needs.tenant_id
+      left join mrp_runs
+        on mrp_runs.id = purchase_needs.mrp_run_id
+        and mrp_runs.tenant_id = purchase_needs.tenant_id
+      left join operations_order_lines source_order_lines
+        on source_order_lines.id = purchase_needs.source_order_line_id
+        and source_order_lines.tenant_id = purchase_needs.tenant_id
+      left join operations_orders source_orders
+        on source_orders.id = source_order_lines.operations_order_id
+        and source_orders.tenant_id = source_order_lines.tenant_id
+      left join operations_orders mrp_orders
+        on mrp_orders.id = mrp_runs.operations_order_id
+        and mrp_orders.tenant_id = mrp_runs.tenant_id
+      left join goods_receipt_lines
+        on goods_receipt_lines.purchase_order_line_id = purchase_order_lines.id
+        and goods_receipt_lines.tenant_id = purchase_order_lines.tenant_id
+      left join goods_receipts
+        on goods_receipts.id = goods_receipt_lines.goods_receipt_id
+        and goods_receipts.tenant_id = goods_receipt_lines.tenant_id
       where purchase_order_lines.tenant_id = $1 and purchase_order_lines.purchase_order_id = $2
       order by items.sku
     `,
@@ -6250,7 +6626,9 @@ export async function loadPurchaseOrderDetail(
       select goods_receipts.*,
         count(goods_receipt_lines.id)::int as line_count
       from goods_receipts
-      left join goods_receipt_lines on goods_receipt_lines.goods_receipt_id = goods_receipts.id
+      left join goods_receipt_lines
+        on goods_receipt_lines.goods_receipt_id = goods_receipts.id
+        and goods_receipt_lines.tenant_id = goods_receipts.tenant_id
       where goods_receipts.tenant_id = $1
         and goods_receipts.purchase_order_id = $2
       group by goods_receipts.id
@@ -6275,8 +6653,12 @@ export async function loadProductionOrders(
         select production_orders.*, items.sku, items.title,
           count(production_components.id)::int as component_count
         from production_orders
-        join items on items.id = production_orders.item_id
-        left join production_components on production_components.production_order_id = production_orders.id
+        join items
+          on items.id = production_orders.item_id
+          and items.tenant_id = production_orders.tenant_id
+        left join production_components
+          on production_components.production_order_id = production_orders.id
+          and production_components.tenant_id = production_orders.tenant_id
         where production_orders.tenant_id = $1
         group by production_orders.id, items.sku, items.title
         order by production_orders.created_at desc
@@ -6295,8 +6677,12 @@ export async function loadProductionNeeds(db: QueryExecutor, tenantId: string) {
           production_orders.display_number as production_order_number,
           production_orders.status as production_order_status
         from production_needs
-        join items on items.id = production_needs.item_id
-        left join production_orders on production_orders.production_need_id = production_needs.id
+        join items
+          on items.id = production_needs.item_id
+          and items.tenant_id = production_needs.tenant_id
+        left join production_orders
+          on production_orders.production_need_id = production_needs.id
+          and production_orders.tenant_id = production_needs.tenant_id
         where production_needs.tenant_id = $1
         order by production_needs.created_at desc
       `,
@@ -6375,7 +6761,9 @@ export async function createShippingOrdersFromOpenOperationsOrders(
             operations_order_lines.quantity, operations_order_lines.unit,
             coalesce(operations_order_lines.sku, items.sku) as sku
           from operations_order_lines
-          join items on items.id = operations_order_lines.item_id
+          join items
+            on items.id = operations_order_lines.item_id
+            and items.tenant_id = operations_order_lines.tenant_id
           where operations_order_lines.tenant_id = $1
             and operations_order_lines.operations_order_id = $2
             and operations_order_lines.supply_status <> 'cancelled'
@@ -6496,10 +6884,24 @@ export async function loadShippableOperationsOrders(
     await db.query(
       `
         select operations_orders.*, count(operations_order_lines.id)::int as line_count,
-          string_agg(coalesce(operations_order_lines.sku, items.sku), ', ' order by coalesce(operations_order_lines.sku, items.sku)) as skus
+          string_agg(coalesce(operations_order_lines.sku, items.sku), ', ' order by coalesce(operations_order_lines.sku, items.sku)) as skus,
+          string_agg(
+            concat(
+              trim(to_char(operations_order_lines.quantity, 'FM999999990.####')),
+              ' × ',
+              coalesce(operations_order_lines.sku, items.sku),
+              ' ',
+              coalesce(operations_order_lines.title, items.title)
+            ),
+            '; ' order by coalesce(operations_order_lines.sku, items.sku)
+          ) as product_summary
         from operations_orders
-        join operations_order_lines on operations_order_lines.operations_order_id = operations_orders.id
-        join items on items.id = operations_order_lines.item_id
+        join operations_order_lines
+          on operations_order_lines.operations_order_id = operations_orders.id
+          and operations_order_lines.tenant_id = operations_orders.tenant_id
+        join items
+          on items.id = operations_order_lines.item_id
+          and items.tenant_id = operations_order_lines.tenant_id
         left join shipping_orders on shipping_orders.operations_order_id = operations_orders.id
           and shipping_orders.tenant_id = operations_orders.tenant_id
           and shipping_orders.status <> 'cancelled'
@@ -6513,6 +6915,68 @@ export async function loadShippableOperationsOrders(
     )
   ).rows;
   return rows.map((row) => decryptOrderRow(row as CustomerEncryptedRow));
+}
+
+export async function validateShippingOrderInventoryAvailability(
+  db: QueryExecutor,
+  tenantId: string,
+  shippingOrderId: string,
+) {
+  const shortages = await db.query<{
+    sku: string;
+    title: string;
+    ordered_quantity: string;
+    physical_quantity: string;
+  }>(
+    `
+      with movement_balances as (
+        select
+          inventory_movements.item_id,
+          coalesce(sum(inventory_movements.quantity_delta), 0) as physical_quantity
+        from inventory_movements
+        where inventory_movements.tenant_id = $1
+          and inventory_movements.location_code = 'MAIN'
+        group by inventory_movements.item_id
+      )
+      select items.sku,
+        items.title,
+        shipping_order_lines.ordered_quantity,
+        coalesce(movement_balances.physical_quantity, 0) as physical_quantity
+      from shipping_order_lines
+        join items
+          on items.id = shipping_order_lines.item_id
+          and items.tenant_id = shipping_order_lines.tenant_id
+      left join movement_balances on movement_balances.item_id = shipping_order_lines.item_id
+      where shipping_order_lines.tenant_id = $1
+        and shipping_order_lines.shipping_order_id = $2
+        and not exists (
+          select 1
+          from inventory_movements shipped
+          where shipped.tenant_id = shipping_order_lines.tenant_id
+            and shipped.source_type = 'shipping_order_line'
+            and shipped.source_id = shipping_order_lines.id::text
+            and shipped.movement_type = 'ship'
+        )
+        and coalesce(movement_balances.physical_quantity, 0) < shipping_order_lines.ordered_quantity
+    `,
+    [tenantId, shippingOrderId],
+  );
+
+  if (shortages.rows.length > 0) {
+    const shortageList = shortages.rows
+      .map(
+        (line) =>
+          `${line.sku} ${line.title}: need ${Number(
+            line.ordered_quantity,
+          ).toLocaleString()}, on hand ${Number(
+            line.physical_quantity,
+          ).toLocaleString()}`,
+      )
+      .join("; ");
+    throw new Error(
+      `Shipment cannot be marked shipped because physical inventory would become negative. ${shortageList}`,
+    );
+  }
 }
 
 export async function transitionShippingOrder(
@@ -6539,7 +7003,19 @@ export async function transitionShippingOrder(
       packed_quantity: string;
       status: string;
     }>(
-      "select id, item_id, ordered_quantity, packed_quantity, status from shipping_order_lines where tenant_id = $1 and shipping_order_id = $2",
+      `
+        select shipping_order_lines.id,
+          shipping_order_lines.item_id,
+          shipping_order_lines.ordered_quantity,
+          shipping_order_lines.packed_quantity,
+          shipping_order_lines.status
+        from shipping_order_lines
+        join items
+          on items.id = shipping_order_lines.item_id
+          and items.tenant_id = shipping_order_lines.tenant_id
+        where shipping_order_lines.tenant_id = $1
+          and shipping_order_lines.shipping_order_id = $2
+      `,
       [tenantId, shippingOrderId],
     );
 
@@ -6575,6 +7051,11 @@ export async function transitionShippingOrder(
     }
 
     if (transition === "shipped") {
+      await validateShippingOrderInventoryAvailability(
+        tx,
+        tenantId,
+        shippingOrderId,
+      );
       for (const line of lines.rows) {
         const orderedQuantity = Number(line.ordered_quantity);
         const packedQuantity = Number(line.packed_quantity ?? 0);
@@ -6652,7 +7133,9 @@ export async function updateShippingOrderLineQuantity(
           shipping_orders.status as shipping_status,
           shipping_order_lines.status as line_status
         from shipping_order_lines
-        join shipping_orders on shipping_orders.id = shipping_order_lines.shipping_order_id
+        join shipping_orders
+          on shipping_orders.id = shipping_order_lines.shipping_order_id
+          and shipping_orders.tenant_id = shipping_order_lines.tenant_id
         where shipping_order_lines.tenant_id = $1
           and shipping_order_lines.id = $2
       `,
@@ -6707,8 +7190,12 @@ export async function loadShippingOrders(db: QueryExecutor, tenantId: string) {
         operations_orders.shipping_address_encrypted,
         count(shipping_order_lines.id)::int as line_count
       from shipping_orders
-      join operations_orders on operations_orders.id = shipping_orders.operations_order_id
-      left join shipping_order_lines on shipping_order_lines.shipping_order_id = shipping_orders.id
+      join operations_orders
+        on operations_orders.id = shipping_orders.operations_order_id
+        and operations_orders.tenant_id = shipping_orders.tenant_id
+      left join shipping_order_lines
+        on shipping_order_lines.shipping_order_id = shipping_orders.id
+        and shipping_order_lines.tenant_id = shipping_orders.tenant_id
       where shipping_orders.tenant_id = $1
       group by shipping_orders.id, operations_orders.order_name,
         operations_orders.shopify_order_gid,
@@ -6725,8 +7212,12 @@ export async function loadShippingOrders(db: QueryExecutor, tenantId: string) {
     `
       select shipping_order_lines.*, shipping_orders.shipment_number, items.sku, items.title
       from shipping_order_lines
-      join shipping_orders on shipping_orders.id = shipping_order_lines.shipping_order_id
-      join items on items.id = shipping_order_lines.item_id
+      join shipping_orders
+        on shipping_orders.id = shipping_order_lines.shipping_order_id
+        and shipping_orders.tenant_id = shipping_order_lines.tenant_id
+      join items
+        on items.id = shipping_order_lines.item_id
+        and items.tenant_id = shipping_order_lines.tenant_id
       where shipping_order_lines.tenant_id = $1
       order by coalesce(shipping_orders.shipped_at, shipping_orders.updated_at, shipping_orders.created_at) desc, items.sku
     `,
@@ -6756,8 +7247,12 @@ export async function loadShippingOrderDetail(
         operations_orders.shipping_address_encrypted,
         count(shipping_order_lines.id)::int as line_count
       from shipping_orders
-      join operations_orders on operations_orders.id = shipping_orders.operations_order_id
-      left join shipping_order_lines on shipping_order_lines.shipping_order_id = shipping_orders.id
+      join operations_orders
+        on operations_orders.id = shipping_orders.operations_order_id
+        and operations_orders.tenant_id = shipping_orders.tenant_id
+      left join shipping_order_lines
+        on shipping_order_lines.shipping_order_id = shipping_orders.id
+        and shipping_order_lines.tenant_id = shipping_orders.tenant_id
       where shipping_orders.tenant_id = $1 and shipping_orders.id = $2
       group by shipping_orders.id, operations_orders.order_name,
         operations_orders.shopify_order_gid,
@@ -6772,7 +7267,9 @@ export async function loadShippingOrderDetail(
     `
       select shipping_order_lines.*, items.sku, items.title
       from shipping_order_lines
-      join items on items.id = shipping_order_lines.item_id
+      join items
+        on items.id = shipping_order_lines.item_id
+        and items.tenant_id = shipping_order_lines.tenant_id
       where shipping_order_lines.tenant_id = $1
         and shipping_order_lines.shipping_order_id = $2
       order by items.sku
@@ -6794,7 +7291,9 @@ export async function loadWarehouseTasks(db: QueryExecutor, tenantId: string) {
       `
         select warehouse_tasks.*, items.sku, items.title as item_title
         from warehouse_tasks
-        left join items on items.id = warehouse_tasks.item_id
+        left join items
+          on items.id = warehouse_tasks.item_id
+          and items.tenant_id = warehouse_tasks.tenant_id
         where warehouse_tasks.tenant_id = $1
         order by warehouse_tasks.created_at desc
       `,
@@ -6812,7 +7311,9 @@ export async function loadOperationsOrders(
       `
         select operations_orders.*, count(operations_order_lines.id)::int as line_count
         from operations_orders
-        left join operations_order_lines on operations_order_lines.operations_order_id = operations_orders.id
+        left join operations_order_lines
+          on operations_order_lines.operations_order_id = operations_orders.id
+          and operations_order_lines.tenant_id = operations_orders.tenant_id
         where operations_orders.tenant_id = $1
         group by operations_orders.id
         order by operations_orders.created_at desc
@@ -6877,8 +7378,12 @@ export async function loadOrderProcess(db: QueryExecutor, tenantId: string) {
     `
       select operations_orders.*, items.sku, items.title, operations_order_lines.quantity, operations_order_lines.unit
       from operations_orders
-      join operations_order_lines on operations_order_lines.operations_order_id = operations_orders.id
-      join items on items.id = operations_order_lines.item_id
+      join operations_order_lines
+        on operations_order_lines.operations_order_id = operations_orders.id
+        and operations_order_lines.tenant_id = operations_orders.tenant_id
+      join items
+        on items.id = operations_order_lines.item_id
+        and items.tenant_id = operations_order_lines.tenant_id
       where operations_orders.tenant_id = $1 and operations_orders.order_name = '#1001'
       order by operations_orders.created_at desc
       limit 1
@@ -6900,8 +7405,12 @@ export async function loadOrderProcess(db: QueryExecutor, tenantId: string) {
     `
       select production_components.*, production_orders.display_number, items.sku, items.title
       from production_components
-      join production_orders on production_orders.id = production_components.production_order_id
-      join items on items.id = production_components.item_id
+      join production_orders
+        on production_orders.id = production_components.production_order_id
+        and production_orders.tenant_id = production_components.tenant_id
+      join items
+        on items.id = production_components.item_id
+        and items.tenant_id = production_components.tenant_id
       where production_components.tenant_id = $1
       order by production_orders.created_at desc, items.sku
     `,
@@ -6911,7 +7420,9 @@ export async function loadOrderProcess(db: QueryExecutor, tenantId: string) {
     `
       select inventory_movements.*, items.sku, items.title
       from inventory_movements
-      join items on items.id = inventory_movements.item_id
+      join items
+        on items.id = inventory_movements.item_id
+        and items.tenant_id = inventory_movements.tenant_id
       where inventory_movements.tenant_id = $1
       order by inventory_movements.occurred_at desc
       limit 12
@@ -6956,10 +7467,18 @@ export async function loadReceipts(db: QueryExecutor, tenantId: string) {
         coalesce(max(goods_receipt_lines.unit), 'pcs') as unit,
         string_agg(distinct items.sku || ' ' || items.title, ', ' order by items.sku || ' ' || items.title) as item_summary
       from goods_receipts
-      join purchase_orders on purchase_orders.id = goods_receipts.purchase_order_id
-      join suppliers on suppliers.id = purchase_orders.supplier_id
-      left join goods_receipt_lines on goods_receipt_lines.goods_receipt_id = goods_receipts.id
-      left join items on items.id = goods_receipt_lines.item_id
+      join purchase_orders
+        on purchase_orders.id = goods_receipts.purchase_order_id
+        and purchase_orders.tenant_id = goods_receipts.tenant_id
+      join suppliers
+        on suppliers.id = purchase_orders.supplier_id
+        and suppliers.tenant_id = purchase_orders.tenant_id
+      left join goods_receipt_lines
+        on goods_receipt_lines.goods_receipt_id = goods_receipts.id
+        and goods_receipt_lines.tenant_id = goods_receipts.tenant_id
+      left join items
+        on items.id = goods_receipt_lines.item_id
+        and items.tenant_id = goods_receipt_lines.tenant_id
       where goods_receipts.tenant_id = $1
       group by goods_receipts.id, purchase_orders.display_number, suppliers.id, suppliers.name
       order by goods_receipts.created_at desc
@@ -6971,9 +7490,15 @@ export async function loadReceipts(db: QueryExecutor, tenantId: string) {
       select goods_receipt_lines.*, goods_receipts.receipt_number, items.sku, items.title,
         qc_checks.status as qc_status, qc_checks.result as qc_result
       from goods_receipt_lines
-      join goods_receipts on goods_receipts.id = goods_receipt_lines.goods_receipt_id
-      join items on items.id = goods_receipt_lines.item_id
-      left join qc_checks on qc_checks.goods_receipt_line_id = goods_receipt_lines.id
+      join goods_receipts
+        on goods_receipts.id = goods_receipt_lines.goods_receipt_id
+        and goods_receipts.tenant_id = goods_receipt_lines.tenant_id
+      join items
+        on items.id = goods_receipt_lines.item_id
+        and items.tenant_id = goods_receipt_lines.tenant_id
+      left join qc_checks
+        on qc_checks.goods_receipt_line_id = goods_receipt_lines.id
+        and qc_checks.tenant_id = goods_receipt_lines.tenant_id
       where goods_receipt_lines.tenant_id = $1
       order by goods_receipt_lines.created_at desc
     `,
@@ -6992,10 +7517,16 @@ export async function loadReceiptDetail(
     `
       select goods_receipts.*, purchase_orders.id as purchase_order_id,
         purchase_orders.display_number as purchase_order_number,
-        suppliers.name as supplier_name
+        purchase_orders.status as purchase_order_status,
+        suppliers.name as supplier_name,
+        suppliers.email as supplier_email
       from goods_receipts
-      join purchase_orders on purchase_orders.id = goods_receipts.purchase_order_id
-      join suppliers on suppliers.id = purchase_orders.supplier_id
+      join purchase_orders
+        on purchase_orders.id = goods_receipts.purchase_order_id
+        and purchase_orders.tenant_id = goods_receipts.tenant_id
+      join suppliers
+        on suppliers.id = purchase_orders.supplier_id
+        and suppliers.tenant_id = purchase_orders.tenant_id
       where goods_receipts.tenant_id = $1 and goods_receipts.id = $2
     `,
     [tenantId, receiptId],
@@ -7003,17 +7534,62 @@ export async function loadReceiptDetail(
   const lines = await db.query(
     `
       select goods_receipt_lines.*, items.sku, items.title,
+        purchase_order_lines.id as purchase_order_line_id,
+        purchase_order_lines.quantity as ordered_quantity,
+        purchase_order_lines.expected_delivery_date,
+        purchase_order_lines.lead_time_days,
+        purchase_needs.id as purchase_need_id,
+        purchase_needs.source_order_line_id,
+        coalesce(source_orders.id, mrp_orders.id) as source_order_id,
+        coalesce(source_orders.order_name, mrp_orders.order_name) as source_order_name,
+        source_order_lines.sku as source_line_sku,
+        source_order_lines.title as source_line_title,
+        mrp_run_lines.explanation as need_explanation,
         qc_checks.id as qc_check_id,
         qc_checks.status as qc_status, qc_checks.result as qc_result,
         qc_checks.notes as qc_notes, qc_checks.completed_at as qc_completed_at,
-        warehouse_tasks.status as putaway_task_status
+        warehouse_tasks.status as putaway_task_status,
+        coalesce(putaway_movements.putaway_quantity, 0) as putaway_quantity
       from goods_receipt_lines
-      join items on items.id = goods_receipt_lines.item_id
-      left join qc_checks on qc_checks.goods_receipt_line_id = goods_receipt_lines.id
+      join items
+        on items.id = goods_receipt_lines.item_id
+        and items.tenant_id = goods_receipt_lines.tenant_id
+      join purchase_order_lines
+        on purchase_order_lines.id = goods_receipt_lines.purchase_order_line_id
+        and purchase_order_lines.tenant_id = goods_receipt_lines.tenant_id
+      left join purchase_needs
+        on purchase_needs.id = purchase_order_lines.purchase_need_id
+        and purchase_needs.tenant_id = purchase_order_lines.tenant_id
+      left join mrp_run_lines
+        on mrp_run_lines.id = purchase_needs.mrp_run_line_id
+        and mrp_run_lines.tenant_id = purchase_needs.tenant_id
+      left join mrp_runs
+        on mrp_runs.id = purchase_needs.mrp_run_id
+        and mrp_runs.tenant_id = purchase_needs.tenant_id
+      left join operations_order_lines source_order_lines
+        on source_order_lines.id = purchase_needs.source_order_line_id
+        and source_order_lines.tenant_id = purchase_needs.tenant_id
+      left join operations_orders source_orders
+        on source_orders.id = source_order_lines.operations_order_id
+        and source_orders.tenant_id = source_order_lines.tenant_id
+      left join operations_orders mrp_orders
+        on mrp_orders.id = mrp_runs.operations_order_id
+        and mrp_orders.tenant_id = mrp_runs.tenant_id
+      left join qc_checks
+        on qc_checks.goods_receipt_line_id = goods_receipt_lines.id
+        and qc_checks.tenant_id = goods_receipt_lines.tenant_id
       left join warehouse_tasks on warehouse_tasks.tenant_id = goods_receipt_lines.tenant_id
         and warehouse_tasks.task_type = 'putaway'
         and warehouse_tasks.source_type = 'goods_receipt_line'
         and warehouse_tasks.source_id = goods_receipt_lines.id
+      left join lateral (
+        select coalesce(sum(inventory_movements.quantity_delta), 0) as putaway_quantity
+        from inventory_movements
+        where inventory_movements.tenant_id = goods_receipt_lines.tenant_id
+          and inventory_movements.source_type = 'goods_receipt_line'
+          and inventory_movements.source_id = goods_receipt_lines.id::text
+          and inventory_movements.movement_type = 'putaway'
+      ) putaway_movements on true
       where goods_receipt_lines.tenant_id = $1
         and goods_receipt_lines.goods_receipt_id = $2
       order by items.sku
@@ -7025,7 +7601,9 @@ export async function loadReceiptDetail(
       select inventory_movements.*, items.sku, items.title,
         coalesce(source_receipt_lines.id, qc_receipt_lines.id) as goods_receipt_line_id
       from inventory_movements
-      join items on items.id = inventory_movements.item_id
+      join items
+        on items.id = inventory_movements.item_id
+        and items.tenant_id = inventory_movements.tenant_id
       left join goods_receipt_lines source_receipt_lines
         on source_receipt_lines.tenant_id = inventory_movements.tenant_id
         and inventory_movements.source_type = 'goods_receipt_line'
@@ -7036,6 +7614,7 @@ export async function loadReceiptDetail(
         and inventory_movements.source_id = source_qc_checks.id::text
       left join goods_receipt_lines qc_receipt_lines
         on qc_receipt_lines.id = source_qc_checks.goods_receipt_line_id
+        and qc_receipt_lines.tenant_id = source_qc_checks.tenant_id
       where inventory_movements.tenant_id = $1
         and (
           source_receipt_lines.goods_receipt_id = $2
@@ -7072,7 +7651,9 @@ export async function loadInventoryLedger(db: QueryExecutor, tenantId: string) {
           operations_order_lines.item_id,
           coalesce(sum(operations_order_lines.quantity), 0) as reserved_quantity
         from operations_order_lines
-        join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+        join operations_orders
+          on operations_orders.id = operations_order_lines.operations_order_id
+          and operations_orders.tenant_id = operations_order_lines.tenant_id
         where operations_order_lines.tenant_id = $1
           and operations_order_lines.supply_status <> 'cancelled'
           and operations_orders.status in ('open', 'planned', 'in_progress')
@@ -7084,7 +7665,9 @@ export async function loadInventoryLedger(db: QueryExecutor, tenantId: string) {
           coalesce(sum(purchase_order_lines.quantity), 0) as ordered_quantity,
           min(purchase_order_lines.expected_delivery_date) as next_expected_delivery_date
         from purchase_order_lines
-        join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
+        join purchase_orders
+          on purchase_orders.id = purchase_order_lines.purchase_order_id
+          and purchase_orders.tenant_id = purchase_order_lines.tenant_id
         where purchase_order_lines.tenant_id = $1
           and purchase_order_lines.status = 'open'
           and purchase_orders.status in ('draft', 'pending_approval', 'approved', 'sent', 'acknowledged')
@@ -7144,7 +7727,9 @@ export async function loadInventoryLedger(db: QueryExecutor, tenantId: string) {
         end as qc_hold_quantity,
         max(inventory_movements.occurred_at) as last_movement_at
       from inventory_movements
-      join items on items.id = inventory_movements.item_id
+      join items
+        on items.id = inventory_movements.item_id
+        and items.tenant_id = inventory_movements.tenant_id
       where inventory_movements.tenant_id = $1
       group by items.id, items.sku, items.title, inventory_movements.location_code
       having coalesce(sum(inventory_movements.quantity_delta), 0) <> 0
@@ -7161,25 +7746,32 @@ export async function loadInventoryLedger(db: QueryExecutor, tenantId: string) {
         coalesce(source_purchase_orders.id, qc_purchase_orders.id) as source_purchase_order_id,
         coalesce(source_purchase_orders.display_number, qc_purchase_orders.display_number) as source_purchase_order_number
       from inventory_movements
-      join items on items.id = inventory_movements.item_id
+      join items
+        on items.id = inventory_movements.item_id
+        and items.tenant_id = inventory_movements.tenant_id
       left join goods_receipt_lines source_receipt_lines
         on source_receipt_lines.tenant_id = inventory_movements.tenant_id
         and inventory_movements.source_type = 'goods_receipt_line'
         and inventory_movements.source_id = source_receipt_lines.id::text
       left join goods_receipts source_receipts
         on source_receipts.id = source_receipt_lines.goods_receipt_id
+        and source_receipts.tenant_id = source_receipt_lines.tenant_id
       left join purchase_orders source_purchase_orders
         on source_purchase_orders.id = source_receipts.purchase_order_id
+        and source_purchase_orders.tenant_id = source_receipts.tenant_id
       left join qc_checks source_qc_checks
         on source_qc_checks.tenant_id = inventory_movements.tenant_id
         and inventory_movements.source_type = 'qc_check'
         and inventory_movements.source_id = source_qc_checks.id::text
       left join goods_receipt_lines qc_receipt_lines
         on qc_receipt_lines.id = source_qc_checks.goods_receipt_line_id
+        and qc_receipt_lines.tenant_id = source_qc_checks.tenant_id
       left join goods_receipts qc_receipts
         on qc_receipts.id = qc_receipt_lines.goods_receipt_id
+        and qc_receipts.tenant_id = qc_receipt_lines.tenant_id
       left join purchase_orders qc_purchase_orders
         on qc_purchase_orders.id = qc_receipts.purchase_order_id
+        and qc_purchase_orders.tenant_id = qc_receipts.tenant_id
       where inventory_movements.tenant_id = $1
       order by inventory_movements.occurred_at desc
       limit 50
@@ -7211,9 +7803,68 @@ export async function loadInventoryItemDetail(
   );
   const movements = await db.query(
     `
-      select inventory_movements.*, items.sku, items.title
+      select inventory_movements.*, items.sku, items.title,
+        coalesce(source_receipts.id, qc_receipts.id) as source_receipt_id,
+        coalesce(source_receipts.receipt_number, qc_receipts.receipt_number) as source_receipt_number,
+        coalesce(source_purchase_orders.id, qc_purchase_orders.id) as source_purchase_order_id,
+        coalesce(source_purchase_orders.display_number, qc_purchase_orders.display_number) as source_purchase_order_number,
+        coalesce(source_receipt_lines.id, qc_receipt_lines.id) as source_receipt_line_id,
+        coalesce(source_order_lines.id, qc_order_lines.id) as source_order_line_id,
+        coalesce(source_orders.id, qc_orders.id) as source_order_id,
+        coalesce(source_orders.order_name, qc_orders.order_name) as source_order_name,
+        coalesce(source_order_lines.sku, qc_order_lines.sku) as source_order_line_sku,
+        coalesce(source_order_lines.title, qc_order_lines.title) as source_order_line_title
       from inventory_movements
-      join items on items.id = inventory_movements.item_id
+      join items
+        on items.id = inventory_movements.item_id
+        and items.tenant_id = inventory_movements.tenant_id
+      left join goods_receipt_lines source_receipt_lines
+        on source_receipt_lines.tenant_id = inventory_movements.tenant_id
+        and inventory_movements.source_type = 'goods_receipt_line'
+        and inventory_movements.source_id = source_receipt_lines.id::text
+      left join goods_receipts source_receipts
+        on source_receipts.id = source_receipt_lines.goods_receipt_id
+        and source_receipts.tenant_id = source_receipt_lines.tenant_id
+      left join purchase_order_lines source_purchase_order_lines
+        on source_purchase_order_lines.id = source_receipt_lines.purchase_order_line_id
+        and source_purchase_order_lines.tenant_id = source_receipt_lines.tenant_id
+      left join purchase_orders source_purchase_orders
+        on source_purchase_orders.id = source_purchase_order_lines.purchase_order_id
+        and source_purchase_orders.tenant_id = source_purchase_order_lines.tenant_id
+      left join purchase_needs source_purchase_needs
+        on source_purchase_needs.id = source_purchase_order_lines.purchase_need_id
+        and source_purchase_needs.tenant_id = source_purchase_order_lines.tenant_id
+      left join operations_order_lines source_order_lines
+        on source_order_lines.id = source_purchase_needs.source_order_line_id
+        and source_order_lines.tenant_id = source_purchase_needs.tenant_id
+      left join operations_orders source_orders
+        on source_orders.id = source_order_lines.operations_order_id
+        and source_orders.tenant_id = source_order_lines.tenant_id
+      left join qc_checks source_qc_checks
+        on source_qc_checks.tenant_id = inventory_movements.tenant_id
+        and inventory_movements.source_type = 'qc_check'
+        and inventory_movements.source_id = source_qc_checks.id::text
+      left join goods_receipt_lines qc_receipt_lines
+        on qc_receipt_lines.id = source_qc_checks.goods_receipt_line_id
+        and qc_receipt_lines.tenant_id = source_qc_checks.tenant_id
+      left join goods_receipts qc_receipts
+        on qc_receipts.id = qc_receipt_lines.goods_receipt_id
+        and qc_receipts.tenant_id = qc_receipt_lines.tenant_id
+      left join purchase_order_lines qc_purchase_order_lines
+        on qc_purchase_order_lines.id = qc_receipt_lines.purchase_order_line_id
+        and qc_purchase_order_lines.tenant_id = qc_receipt_lines.tenant_id
+      left join purchase_orders qc_purchase_orders
+        on qc_purchase_orders.id = qc_purchase_order_lines.purchase_order_id
+        and qc_purchase_orders.tenant_id = qc_purchase_order_lines.tenant_id
+      left join purchase_needs qc_purchase_needs
+        on qc_purchase_needs.id = qc_purchase_order_lines.purchase_need_id
+        and qc_purchase_needs.tenant_id = qc_purchase_order_lines.tenant_id
+      left join operations_order_lines qc_order_lines
+        on qc_order_lines.id = qc_purchase_needs.source_order_line_id
+        and qc_order_lines.tenant_id = qc_purchase_needs.tenant_id
+      left join operations_orders qc_orders
+        on qc_orders.id = qc_order_lines.operations_order_id
+        and qc_orders.tenant_id = qc_order_lines.tenant_id
       where inventory_movements.tenant_id = $1 and inventory_movements.item_id = $2
       order by inventory_movements.occurred_at desc
       limit 50
@@ -7223,6 +7874,7 @@ export async function loadInventoryItemDetail(
   const demand = await db.query(
     `
       select operations_orders.id as order_id, operations_orders.order_name,
+        operations_order_lines.id as order_line_id,
         operations_orders.customer_name,
         operations_orders.customer_email,
         operations_orders.customer_name_encrypted,
@@ -7230,7 +7882,9 @@ export async function loadInventoryItemDetail(
         operations_order_lines.quantity,
         operations_order_lines.unit, operations_order_lines.supply_status as status
       from operations_order_lines
-      join operations_orders on operations_orders.id = operations_order_lines.operations_order_id
+      join operations_orders
+        on operations_orders.id = operations_order_lines.operations_order_id
+        and operations_orders.tenant_id = operations_order_lines.tenant_id
       where operations_order_lines.tenant_id = $1
         and operations_order_lines.item_id = $2
         and operations_order_lines.supply_status <> 'cancelled'
@@ -7247,8 +7901,12 @@ export async function loadInventoryItemDetail(
         purchase_order_lines.quantity, purchase_order_lines.unit,
         purchase_order_lines.expected_delivery_date
       from purchase_order_lines
-      join purchase_orders on purchase_orders.id = purchase_order_lines.purchase_order_id
-      join suppliers on suppliers.id = purchase_orders.supplier_id
+      join purchase_orders
+        on purchase_orders.id = purchase_order_lines.purchase_order_id
+        and purchase_orders.tenant_id = purchase_order_lines.tenant_id
+      join suppliers
+        on suppliers.id = purchase_orders.supplier_id
+        and suppliers.tenant_id = purchase_orders.tenant_id
       where purchase_order_lines.tenant_id = $1
         and purchase_order_lines.item_id = $2
         and purchase_order_lines.status = 'open'
@@ -7270,11 +7928,21 @@ export async function loadInventoryItemDetail(
         qc_checks.result as qc_result,
         warehouse_tasks.status as putaway_task_status
       from goods_receipt_lines
-      join goods_receipts on goods_receipts.id = goods_receipt_lines.goods_receipt_id
-      join purchase_orders on purchase_orders.id = goods_receipts.purchase_order_id
-      join suppliers on suppliers.id = purchase_orders.supplier_id
-      join items on items.id = goods_receipt_lines.item_id
-      left join qc_checks on qc_checks.goods_receipt_line_id = goods_receipt_lines.id
+      join goods_receipts
+        on goods_receipts.id = goods_receipt_lines.goods_receipt_id
+        and goods_receipts.tenant_id = goods_receipt_lines.tenant_id
+      join purchase_orders
+        on purchase_orders.id = goods_receipts.purchase_order_id
+        and purchase_orders.tenant_id = goods_receipts.tenant_id
+      join suppliers
+        on suppliers.id = purchase_orders.supplier_id
+        and suppliers.tenant_id = purchase_orders.tenant_id
+      join items
+        on items.id = goods_receipt_lines.item_id
+        and items.tenant_id = goods_receipt_lines.tenant_id
+      left join qc_checks
+        on qc_checks.goods_receipt_line_id = goods_receipt_lines.id
+        and qc_checks.tenant_id = goods_receipt_lines.tenant_id
       left join warehouse_tasks on warehouse_tasks.tenant_id = goods_receipt_lines.tenant_id
         and warehouse_tasks.task_type = 'putaway'
         and warehouse_tasks.source_type = 'goods_receipt_line'

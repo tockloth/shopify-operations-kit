@@ -8,6 +8,7 @@ import {
   transitionShippingOrder,
   updateOperationsOrderFulfillmentStatus,
   updateShippingOrderLineQuantity,
+  validateShippingOrderInventoryAvailability,
 } from "../lib/operations-kit.server";
 import { fulfillShopifyOrderForShipment } from "../lib/shopify-fulfillment.server";
 import { authenticate } from "../shopify.server";
@@ -88,6 +89,21 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const status = String(form.get("status")) === "shipped" ? "shipped" : "packed";
   let shopifyMessage: string | null = null;
   if (status === "shipped") {
+    try {
+      await validateShippingOrderInventoryAvailability(
+        context.pool,
+        context.ctx.tenantId,
+        params.shipmentId!,
+      );
+    } catch (error) {
+      return {
+        message:
+          error instanceof Error
+            ? error.message
+            : "Shipment cannot be marked shipped because inventory is not available.",
+        tone: "critical",
+      };
+    }
     const detail = await loadShippingOrderDetail(
       context.pool,
       context.ctx.tenantId,
@@ -125,12 +141,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
   }
 
-  await transitionShippingOrder(
-    context.pool,
-    context.ctx.tenantId,
-    params.shipmentId!,
-    status,
-  );
+  try {
+    await transitionShippingOrder(
+      context.pool,
+      context.ctx.tenantId,
+      params.shipmentId!,
+      status,
+    );
+  } catch (error) {
+    return {
+      message:
+        error instanceof Error ? error.message : "Shipment could not be updated.",
+      tone: "critical",
+    };
+  }
   return {
     message:
       status === "shipped"
@@ -205,7 +229,7 @@ export default function ShipmentDetail() {
       <s-section>
         <div className="kit-toolbar">
           <Link to="/app/logistics">
-            <s-button>Back to Logistics</s-button>
+            <s-button>Back to list</s-button>
           </Link>
           <div className="kit-toolbar-actions">
             {shipment.status !== "packed" && shipment.status !== "shipped" ? (

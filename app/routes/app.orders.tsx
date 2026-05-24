@@ -17,7 +17,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!context.configured) return { configured: false, setupError: context.setupError };
   const url = new URL(request.url);
   const filters = {
-    queue: url.searchParams.get("queue") ?? "all",
+    queue: url.searchParams.get("queue") ?? "active",
     query: url.searchParams.get("q")?.trim() ?? "",
     fulfillment: url.searchParams.get("fulfillment") ?? "all",
     payment: url.searchParams.get("payment") ?? "all",
@@ -101,11 +101,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     const result = await syncShopifyOrders(context.pool, context.ctx.tenantId, admin);
     const protectedDataMessage = result.protectedCustomerDataUnavailable
-      ? result.customerDataAvailable
-        ? result.customerDefaultAddressesStored > 0
-          ? " Shopify did not return order shipping addresses; customer default addresses were stored where available. Check Protected Customer Data access if checkout shipping addresses should be available."
-          : " Shopify did not return shipping addresses. Check Protected Customer Data access and app scopes."
-        : " Shopify did not return customer name, email, or shipping addresses. Check Protected Customer Data access and app scopes."
+      ? result.protectedCustomerDataDeniedAt === "customer_fallback_query"
+        ? " Shopify GraphQL denied protected customer fields for the current app installation/session, so Operations Kit used an orders-only fallback. Re-authorize or reinstall the app after confirming Protected Customer Data access for name, email, and address."
+        : result.customerDataAvailable
+          ? result.customerDefaultAddressesStored > 0
+            ? " Shopify GraphQL denied the full order customer/address query; customer default addresses were stored where available. Re-authorize or reinstall the app if checkout shipping addresses should be available."
+            : " Shopify GraphQL denied shipping-address fields. Check Protected Customer Data access for address fields, then re-authorize or reinstall the app."
+          : " Shopify GraphQL denied protected customer fields for the current app installation/session. Check Protected Customer Data access and re-authorize or reinstall the app."
       : result.shippingAddressesMissing > 0
         ? ` ${result.shippingAddressesMissing} order(s) did not include a usable Shopify shipping address.`
         : "";
@@ -152,9 +154,9 @@ function filterOrders(orders: any[], filters: any) {
   const query = String(filters.query ?? "").toLowerCase();
   const queue = ["active", "completed", "all"].includes(filters.queue)
     ? filters.queue
-    : "all";
+    : "active";
   return orders.filter((order) => {
-    const completed = String(order.operational_status) === "Complete";
+    const completed = isCompletedOrder(order);
     if (queue === "active" && completed) return false;
     if (queue === "completed" && !completed) return false;
     const searchable = [
@@ -196,6 +198,24 @@ function filterOrders(orders: any[], filters: any) {
       orderSortTime(left.latest_shipped_at ?? left.processed_at ?? left.created_at)
     );
   });
+}
+
+function normalizedQueueStatus(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+function isCompletedOrder(order: any) {
+  const fulfillmentStatus = normalizedQueueStatus(order.fulfillment_status);
+  const operationalStatus = normalizedQueueStatus(order.operational_status);
+  return (
+    fulfillmentStatus === "fulfilled" ||
+    fulfillmentStatus === "closed" ||
+    operationalStatus === "complete" ||
+    operationalStatus === "fulfilled_done"
+  );
 }
 
 function orderSortTime(value: unknown) {
@@ -294,7 +314,7 @@ export default function Orders() {
   const orders = data.orders ?? [];
   const filteredOrders = data.filteredOrders ?? orders;
   const filters = data.filters ?? {
-    queue: "all",
+    queue: "active",
     query: "",
     fulfillment: "all",
     payment: "all",
@@ -302,7 +322,7 @@ export default function Orders() {
   };
   const hasActiveFilters =
     filters.query ||
-    filters.queue !== "all" ||
+    filters.queue !== "active" ||
     filters.fulfillment !== "all" ||
     filters.payment !== "all" ||
     filters.addressMissing !== "all";

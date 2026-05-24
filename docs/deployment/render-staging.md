@@ -146,3 +146,9 @@ The current Shopify session store is Prisma SQLite. Render Free storage is ephem
 ### Supabase migrations are missing
 
 Apply `supabase/migrations` to the staging database before testing the app. The Render app does not currently run Supabase migrations automatically.
+
+For the tenant-isolation hardening rollout, use the dedicated staging runbook before applying remote migrations:
+
+```text
+docs/deployment/supabase-staging-tenant-migration.md
+```
