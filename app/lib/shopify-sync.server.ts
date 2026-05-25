@@ -6,7 +6,7 @@ import {
   hashCustomerLookup,
 } from "./customer-privacy.server";
 
-type ShopifyAdmin = {
+export type ShopifyAdmin = {
   graphql(query: string, options?: { variables?: Record<string, unknown> }): Promise<Response>;
 };
 
@@ -22,7 +22,10 @@ const PRODUCT_SYNC_QUERY = `#graphql
         legacyResourceId
         title
         handle
+        vendor
+        productType
         status
+        tags
         publishedAt
         onlineStoreUrl
         variants(first: 100) {
@@ -31,6 +34,42 @@ const PRODUCT_SYNC_QUERY = `#graphql
             legacyResourceId
             title
             sku
+            barcode
+            price
+            inventoryQuantity
+            inventoryItem {
+              id
+              legacyResourceId
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const PRODUCT_BY_ID_SYNC_QUERY = `#graphql
+  query OperationsKitProductById($id: ID!) {
+    node(id: $id) {
+      ... on Product {
+        id
+        legacyResourceId
+        title
+        handle
+        vendor
+        productType
+        status
+        tags
+        publishedAt
+        onlineStoreUrl
+        variants(first: 100) {
+          nodes {
+            id
+            legacyResourceId
+            title
+            sku
+            barcode
+            price
             inventoryQuantity
             inventoryItem {
               id
@@ -202,6 +241,165 @@ const ORDER_SYNC_WITHOUT_CUSTOMER_QUERY = `#graphql
   }
 `;
 
+const ORDER_BY_ID_SYNC_QUERY = `#graphql
+  query OperationsKitOrderById($id: ID!) {
+    node(id: $id) {
+      ... on Order {
+        id
+        legacyResourceId
+        name
+        processedAt
+        displayFinancialStatus
+        displayFulfillmentStatus
+        customer {
+          displayName
+          defaultEmailAddress {
+            emailAddress
+          }
+          defaultAddress {
+            name
+            address1
+            address2
+            city
+            provinceCode
+            zip
+            countryCodeV2
+          }
+        }
+        shippingAddress {
+          name
+          address1
+          address2
+          city
+          provinceCode
+          zip
+          countryCodeV2
+        }
+        lineItems(first: 100) {
+          nodes {
+            id
+            title
+            sku
+            quantity
+            variant {
+              id
+              legacyResourceId
+              title
+              sku
+              inventoryItem {
+                id
+                legacyResourceId
+              }
+              product {
+                id
+                legacyResourceId
+                title
+                handle
+                status
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const ORDER_BY_ID_WITH_CUSTOMER_QUERY = `#graphql
+  query OperationsKitOrderByIdWithCustomer($id: ID!) {
+    node(id: $id) {
+      ... on Order {
+        id
+        legacyResourceId
+        name
+        processedAt
+        displayFinancialStatus
+        displayFulfillmentStatus
+        customer {
+          displayName
+          defaultEmailAddress {
+            emailAddress
+          }
+          defaultAddress {
+            name
+            address1
+            address2
+            city
+            provinceCode
+            zip
+            countryCodeV2
+          }
+        }
+        lineItems(first: 100) {
+          nodes {
+            id
+            title
+            sku
+            quantity
+            variant {
+              id
+              legacyResourceId
+              title
+              sku
+              inventoryItem {
+                id
+                legacyResourceId
+              }
+              product {
+                id
+                legacyResourceId
+                title
+                handle
+                status
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const ORDER_BY_ID_WITHOUT_CUSTOMER_QUERY = `#graphql
+  query OperationsKitOrderByIdWithoutCustomer($id: ID!) {
+    node(id: $id) {
+      ... on Order {
+        id
+        legacyResourceId
+        name
+        processedAt
+        displayFinancialStatus
+        displayFulfillmentStatus
+        lineItems(first: 100) {
+          nodes {
+            id
+            title
+            sku
+            quantity
+            variant {
+              id
+              legacyResourceId
+              title
+              sku
+              inventoryItem {
+                id
+                legacyResourceId
+              }
+              product {
+                id
+                legacyResourceId
+                title
+                handle
+                status
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
 const CURRENT_APP_INSTALLATION_ACCESS_SCOPES_QUERY = `#graphql
   query OperationsKitCurrentAppInstallationAccessScopes {
     currentAppInstallation {
@@ -280,6 +478,114 @@ type ShopifyShippingAddress = {
   countryCodeV2: string | null;
   phone?: string | null;
 } | null;
+
+type ShopifyOrderNode = {
+  id: string;
+  legacyResourceId: string | null;
+  name: string;
+  processedAt: string | null;
+  displayFinancialStatus: string | null;
+  displayFulfillmentStatus: string | null;
+  customer?: {
+    displayName: string | null;
+    defaultEmailAddress: {
+      emailAddress: string | null;
+    } | null;
+    defaultAddress: ShopifyShippingAddress;
+  } | null;
+  shippingAddress?: ShopifyShippingAddress;
+  lineItems: {
+    nodes: Array<{
+      id: string;
+      title: string;
+      sku: string | null;
+      quantity: number;
+      variant: {
+        id: string;
+        legacyResourceId: string | null;
+        title: string | null;
+        sku: string | null;
+        inventoryItem: {
+          id: string;
+          legacyResourceId: string | null;
+        } | null;
+        product: {
+          id: string;
+          legacyResourceId: string | null;
+          title: string;
+          handle: string | null;
+          status: string | null;
+        } | null;
+      } | null;
+    }>;
+  };
+};
+
+type OrderSyncAvailability = {
+  customerDataAvailable: boolean;
+  shippingAddressAvailable: boolean;
+  customerDefaultAddressAvailable: boolean;
+};
+
+type SingleOrderUpsertResult = {
+  lines: number;
+  customerDataReturnedCount: number;
+  customerDataEncryptedCount: number;
+  customerDataStoredCount: number;
+  customerNameStoredCount: number;
+  customerEmailStoredCount: number;
+  shippingAddressEncryptedCount: number;
+  shippingAddressStoredCount: number;
+  shippingAddressesStored: number;
+  orderShippingAddressesStored: number;
+  customerDefaultAddressesStored: number;
+  shippingAddressesMissing: number;
+  ordersMissingShippingAddress: string[];
+};
+
+type ShopifyProductVariantNode = {
+  id: string;
+  legacyResourceId: string | null;
+  title: string | null;
+  sku: string | null;
+  barcode?: string | null;
+  price?: string | null;
+  inventoryQuantity: number | null;
+  inventoryItem: {
+    id: string;
+    legacyResourceId: string | null;
+  } | null;
+};
+
+type ShopifyProductNode = {
+  id: string;
+  legacyResourceId: string | null;
+  title: string;
+  handle: string | null;
+  vendor?: string | null;
+  productType?: string | null;
+  status: string | null;
+  tags?: string[] | null;
+  publishedAt: string | null;
+  onlineStoreUrl: string | null;
+  variants: {
+    nodes: ShopifyProductVariantNode[];
+  };
+};
+
+type ShopifyInstallationSnapshot = {
+  shop_installation_id: string | null;
+  shop_domain: string;
+};
+
+type ProductUpsertResult = {
+  productsFetched: number;
+  productsUpserted: number;
+  variantsFetched: number;
+  variantsUpserted: number;
+  itemsCreatedOrLinked: number;
+  errors: string[];
+};
 
 function hasUsableShopifyShippingAddress(address: ShopifyShippingAddress) {
   return Boolean(address?.address1 && address.city && address.countryCodeV2);
@@ -767,6 +1073,435 @@ function customerDataRetentionUntil(processedAt: string | null, retentionDays: n
   return new Date(baseDate.getTime() + retentionDays * 24 * 60 * 60 * 1000);
 }
 
+async function loadShopifyInstallationSnapshot(
+  db: QueryExecutor,
+  tenantId: string,
+): Promise<ShopifyInstallationSnapshot> {
+  const result = await db.query<ShopifyInstallationSnapshot>(
+    `
+      select id as shop_installation_id, shop_domain
+      from shopify_installations
+      where tenant_id = $1
+      order by updated_at desc
+      limit 1
+    `,
+    [tenantId],
+  );
+
+  return result.rows[0] ?? {
+    shop_installation_id: null,
+    shop_domain: "unknown-shop.myshopify.com",
+  };
+}
+
+async function upsertShopifyProductRecord(
+  db: QueryExecutor,
+  tenantId: string,
+  installation: ShopifyInstallationSnapshot,
+  product: ShopifyProductNode,
+) {
+  const result = await db.query<{ id: string }>(
+    `
+      insert into shopify_products (
+        tenant_id, shop_installation_id, shop_domain,
+        shopify_product_gid, shopify_product_legacy_id,
+        title, handle, vendor, product_type, status, tags_json,
+        raw_payload_json, synced_at, deleted_at
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), null)
+      on conflict (tenant_id, shopify_product_gid)
+      do update set
+        shop_installation_id = excluded.shop_installation_id,
+        shop_domain = excluded.shop_domain,
+        shopify_product_legacy_id = excluded.shopify_product_legacy_id,
+        title = excluded.title,
+        handle = excluded.handle,
+        vendor = excluded.vendor,
+        product_type = excluded.product_type,
+        status = excluded.status,
+        tags_json = excluded.tags_json,
+        raw_payload_json = excluded.raw_payload_json,
+        synced_at = now(),
+        deleted_at = null,
+        updated_at = now()
+      returning id
+    `,
+    [
+      tenantId,
+      installation.shop_installation_id,
+      installation.shop_domain,
+      product.id,
+      product.legacyResourceId,
+      product.title,
+      product.handle,
+      product.vendor ?? null,
+      product.productType ?? null,
+      product.status,
+      JSON.stringify(product.tags ?? []),
+      JSON.stringify({
+        id: product.id,
+        legacyResourceId: product.legacyResourceId,
+        title: product.title,
+        handle: product.handle,
+        vendor: product.vendor ?? null,
+        productType: product.productType ?? null,
+        status: product.status,
+        tags: product.tags ?? [],
+      }),
+    ],
+  );
+
+  return result.rows[0].id;
+}
+
+async function upsertShopifyProductVariantRecord(
+  db: QueryExecutor,
+  tenantId: string,
+  input: {
+    shopifyProductId: string;
+    itemId: string;
+    product: ShopifyProductNode;
+    variant: ShopifyProductVariantNode;
+  },
+) {
+  const price =
+    input.variant.price === null || input.variant.price === undefined
+      ? null
+      : Number(input.variant.price);
+  await db.query(
+    `
+      insert into shopify_product_variants (
+        tenant_id, shopify_product_id, item_id,
+        shopify_product_gid, shopify_variant_gid, shopify_variant_legacy_id,
+        sku, barcode, title, price,
+        inventory_item_gid, inventory_item_legacy_id,
+        raw_payload_json, synced_at, deleted_at
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now(), null)
+      on conflict (tenant_id, shopify_variant_gid)
+      do update set
+        shopify_product_id = excluded.shopify_product_id,
+        item_id = excluded.item_id,
+        shopify_product_gid = excluded.shopify_product_gid,
+        shopify_variant_legacy_id = excluded.shopify_variant_legacy_id,
+        sku = excluded.sku,
+        barcode = excluded.barcode,
+        title = excluded.title,
+        price = excluded.price,
+        inventory_item_gid = excluded.inventory_item_gid,
+        inventory_item_legacy_id = excluded.inventory_item_legacy_id,
+        raw_payload_json = excluded.raw_payload_json,
+        synced_at = now(),
+        deleted_at = null,
+        updated_at = now()
+    `,
+    [
+      tenantId,
+      input.shopifyProductId,
+      input.itemId,
+      input.product.id,
+      input.variant.id,
+      input.variant.legacyResourceId,
+      input.variant.sku,
+      input.variant.barcode ?? null,
+      input.variant.title,
+      Number.isFinite(price) ? price : null,
+      input.variant.inventoryItem?.id ?? null,
+      input.variant.inventoryItem?.legacyResourceId ?? null,
+      JSON.stringify({
+        id: input.variant.id,
+        legacyResourceId: input.variant.legacyResourceId,
+        sku: input.variant.sku,
+        barcode: input.variant.barcode ?? null,
+        title: input.variant.title,
+        price: input.variant.price ?? null,
+        inventoryItem: input.variant.inventoryItem ?? null,
+      }),
+    ],
+  );
+}
+
+async function upsertShopifyProductNode(
+  db: QueryExecutor,
+  tenantId: string,
+  installation: ShopifyInstallationSnapshot,
+  product: ShopifyProductNode,
+  syncSeenAt: string,
+): Promise<ProductUpsertResult> {
+  const shopifyProductId = await upsertShopifyProductRecord(
+    db,
+    tenantId,
+    installation,
+    product,
+  );
+  let variantsUpserted = 0;
+  let itemsCreatedOrLinked = 0;
+
+  for (const variant of product.variants.nodes) {
+    const itemId = await upsertShopifyVariantItem(db, tenantId, {
+      productGid: product.id,
+      productLegacyId: product.legacyResourceId,
+      productTitle: product.title,
+      productHandle: product.handle,
+      productStatus: product.status,
+      productPublishedAt: product.publishedAt,
+      onlineStoreUrl: product.onlineStoreUrl,
+      variantGid: variant.id,
+      variantLegacyId: variant.legacyResourceId,
+      variantTitle: variant.title,
+      sku: variant.sku,
+      inventoryItemGid: variant.inventoryItem?.id ?? null,
+      inventoryItemLegacyId: variant.inventoryItem?.legacyResourceId ?? null,
+      inventoryQuantity: variant.inventoryQuantity,
+      syncSeenAt,
+    });
+    await upsertShopifyProductVariantRecord(db, tenantId, {
+      shopifyProductId,
+      itemId,
+      product,
+      variant,
+    });
+    variantsUpserted += 1;
+    itemsCreatedOrLinked += 1;
+  }
+
+  return {
+    productsFetched: 1,
+    productsUpserted: 1,
+    variantsFetched: product.variants.nodes.length,
+    variantsUpserted,
+    itemsCreatedOrLinked,
+    errors: [],
+  };
+}
+
+async function upsertShopifyOrderNode(
+  tx: QueryExecutor,
+  tenantId: string,
+  order: ShopifyOrderNode,
+  retentionDays: number,
+  availability: OrderSyncAvailability,
+): Promise<SingleOrderUpsertResult> {
+  const selectedAddress = selectShopifyOrderAddress(order);
+  const addressDataAvailable =
+    availability.shippingAddressAvailable ||
+    availability.customerDefaultAddressAvailable;
+  const ordersMissingShippingAddress: string[] = [];
+  let shippingAddressesStored = 0;
+  let orderShippingAddressesStored = 0;
+  let customerDefaultAddressesStored = 0;
+  let shippingAddressesMissing = 0;
+  let customerDataReturnedCount = 0;
+  let customerDataEncryptedCount = 0;
+  let customerDataStoredCount = 0;
+  let customerNameStoredCount = 0;
+  let customerEmailStoredCount = 0;
+  let shippingAddressEncryptedCount = 0;
+  let shippingAddressStoredCount = 0;
+
+  if (selectedAddress.address) {
+    shippingAddressesStored += 1;
+    if (selectedAddress.source === "order_shipping") {
+      orderShippingAddressesStored += 1;
+    }
+    if (selectedAddress.source === "customer_default") {
+      customerDefaultAddressesStored += 1;
+    }
+  } else if (addressDataAvailable) {
+    shippingAddressesMissing += 1;
+    ordersMissingShippingAddress.push(order.name);
+  }
+  if (
+    order.customer?.displayName ||
+    order.customer?.defaultEmailAddress?.emailAddress
+  ) {
+    customerDataReturnedCount += 1;
+  }
+
+  const encryptedCustomerName = availability.customerDataAvailable
+    ? encryptCustomerDataForSync(order.customer?.displayName, "order customer name")
+    : null;
+  const encryptedCustomerEmail = availability.customerDataAvailable
+    ? encryptCustomerDataForSync(
+        order.customer?.defaultEmailAddress?.emailAddress,
+        "order customer email",
+      )
+    : null;
+  const encryptedShippingAddress = selectedAddress.address
+    ? encryptCustomerDataForSync(
+        JSON.stringify(selectedAddress.address),
+        "order shipping address",
+      )
+    : null;
+  if (encryptedCustomerName || encryptedCustomerEmail) {
+    customerDataEncryptedCount += 1;
+  }
+  if (encryptedShippingAddress) {
+    shippingAddressEncryptedCount += 1;
+  }
+
+  const orderResult = await tx.query<{
+    id: string;
+    has_customer_name: boolean;
+    has_customer_email: boolean;
+    has_shipping_address: boolean;
+  }>(
+    `
+      insert into operations_orders (
+        tenant_id, shopify_order_gid, shopify_order_legacy_id,
+        order_name, status, customer_name, customer_email,
+        customer_name_encrypted, customer_email_encrypted, customer_lookup_hash,
+        customer_data_retention_until, shipping_address_encrypted,
+        financial_status, fulfillment_status, processed_at
+      )
+      values ($1, $2, $3, $4, 'open', null, null, $5, $6, $7, $8, $9, $10, $11, $12)
+      on conflict (tenant_id, order_name)
+      do update set
+        shopify_order_gid = excluded.shopify_order_gid,
+        shopify_order_legacy_id = excluded.shopify_order_legacy_id,
+        customer_name = null,
+        customer_email = null,
+        customer_name_encrypted = coalesce(
+          excluded.customer_name_encrypted,
+          operations_orders.customer_name_encrypted
+        ),
+        customer_email_encrypted = coalesce(
+          excluded.customer_email_encrypted,
+          operations_orders.customer_email_encrypted
+        ),
+        customer_lookup_hash = coalesce(
+          excluded.customer_lookup_hash,
+          operations_orders.customer_lookup_hash
+        ),
+        customer_data_redacted_at = case
+          when excluded.customer_name_encrypted is not null
+            or excluded.customer_email_encrypted is not null
+          then null
+          else operations_orders.customer_data_redacted_at
+        end,
+        customer_data_retention_until = coalesce(
+          excluded.customer_data_retention_until,
+          operations_orders.customer_data_retention_until
+        ),
+        shipping_address_encrypted = coalesce(
+          excluded.shipping_address_encrypted,
+          operations_orders.shipping_address_encrypted
+        ),
+        financial_status = excluded.financial_status,
+        fulfillment_status = excluded.fulfillment_status,
+        processed_at = excluded.processed_at,
+        updated_at = now()
+      returning id,
+        customer_name_encrypted is not null as has_customer_name,
+        customer_email_encrypted is not null as has_customer_email,
+        shipping_address_encrypted is not null as has_shipping_address
+    `,
+    [
+      tenantId,
+      order.id,
+      order.legacyResourceId,
+      order.name,
+      encryptedCustomerName,
+      encryptedCustomerEmail,
+      availability.customerDataAvailable
+        ? hashCustomerLookup(
+            order.customer?.defaultEmailAddress?.emailAddress,
+            order.customer?.displayName,
+          )
+        : null,
+      customerDataRetentionUntil(order.processedAt, retentionDays),
+      encryptedShippingAddress,
+      order.displayFinancialStatus,
+      order.displayFulfillmentStatus,
+      order.processedAt,
+    ],
+  );
+  const storedOrder = orderResult.rows[0];
+  if (!storedOrder) {
+    throw new Error("Order sync did not return a stored order row.");
+  }
+  if (storedOrder.has_customer_name) customerNameStoredCount += 1;
+  if (storedOrder.has_customer_email) customerEmailStoredCount += 1;
+  if (storedOrder.has_customer_name || storedOrder.has_customer_email) {
+    customerDataStoredCount += 1;
+  }
+  if (storedOrder.has_shipping_address) shippingAddressStoredCount += 1;
+
+  let lines = 0;
+  for (const line of order.lineItems.nodes) {
+    const itemId =
+      line.variant && line.variant.product
+        ? await upsertShopifyVariantItem(tx, tenantId, {
+            productGid: line.variant.product.id,
+            productLegacyId: line.variant.product.legacyResourceId,
+            productTitle: line.variant.product.title,
+            productHandle: line.variant.product.handle,
+            productStatus: line.variant.product.status,
+            productPublishedAt: null,
+            onlineStoreUrl: null,
+            variantGid: line.variant.id,
+            variantLegacyId: line.variant.legacyResourceId,
+            variantTitle: line.variant.title,
+            sku: line.variant.sku ?? line.sku,
+            inventoryItemGid: line.variant.inventoryItem?.id ?? null,
+            inventoryItemLegacyId: line.variant.inventoryItem?.legacyResourceId ?? null,
+            inventoryQuantity: null,
+            syncSeenAt: new Date().toISOString(),
+          })
+        : await upsertShopifyOrderLineFallbackItem(tx, tenantId, {
+            lineItemGid: line.id,
+            title: line.title,
+            sku: line.sku,
+            variantGid: line.variant?.id ?? null,
+            variantLegacyId: line.variant?.legacyResourceId ?? null,
+          });
+
+    await tx.query(
+      `
+        insert into operations_order_lines (
+          tenant_id, operations_order_id, item_id, quantity, unit,
+          shopify_line_item_gid, shopify_variant_gid, sku, title
+        )
+        values ($1, $2, $3, $4, 'pcs', $5, $6, $7, $8)
+        on conflict (tenant_id, operations_order_id, item_id)
+        do update set
+          quantity = excluded.quantity,
+          shopify_line_item_gid = excluded.shopify_line_item_gid,
+          shopify_variant_gid = excluded.shopify_variant_gid,
+          sku = excluded.sku,
+          title = excluded.title
+      `,
+      [
+        tenantId,
+        storedOrder.id,
+        itemId,
+        line.quantity,
+        line.id,
+        line.variant?.id ?? null,
+        line.variant?.sku ?? line.sku,
+        line.title,
+      ],
+    );
+    lines += 1;
+  }
+
+  return {
+    lines,
+    customerDataReturnedCount,
+    customerDataEncryptedCount,
+    customerDataStoredCount,
+    customerNameStoredCount,
+    customerEmailStoredCount,
+    shippingAddressEncryptedCount,
+    shippingAddressStoredCount,
+    shippingAddressesStored,
+    orderShippingAddressesStored,
+    customerDefaultAddressesStored,
+    shippingAddressesMissing,
+    ordersMissingShippingAddress,
+  };
+}
+
 export async function syncShopifyProducts(
   db: QueryExecutor,
   tenantId: string,
@@ -779,36 +1514,20 @@ export async function syncShopifyProducts(
           hasNextPage: boolean;
           endCursor: string | null;
         };
-        nodes: Array<{
-          id: string;
-          legacyResourceId: string | null;
-          title: string;
-          handle: string | null;
-          status: string | null;
-          publishedAt: string | null;
-          onlineStoreUrl: string | null;
-          variants: {
-            nodes: Array<{
-              id: string;
-              legacyResourceId: string | null;
-              title: string | null;
-              sku: string | null;
-              inventoryQuantity: number | null;
-              inventoryItem: {
-                id: string;
-                legacyResourceId: string | null;
-              } | null;
-            }>;
-          };
-        }>;
+        nodes: ShopifyProductNode[];
       };
     };
 
+    const installation = await loadShopifyInstallationSnapshot(tx, tenantId);
     const syncSeenAt = new Date().toISOString();
     const syncedProductGids: string[] = [];
+    const errors: string[] = [];
     let after: string | null = null;
-    let products = 0;
-    let variants = 0;
+    let productsFetched = 0;
+    let productsUpserted = 0;
+    let variantsFetched = 0;
+    let variantsUpserted = 0;
+    let itemsCreatedOrLinked = 0;
 
     do {
       const data: ProductSyncData = await graphqlJson<ProductSyncData>(
@@ -816,31 +1535,22 @@ export async function syncShopifyProducts(
         PRODUCT_SYNC_QUERY,
         { first: 50, after },
       );
-      products += data.products.nodes.length;
+      productsFetched += data.products.nodes.length;
 
       for (const product of data.products.nodes) {
         syncedProductGids.push(product.id);
-        for (const variant of product.variants.nodes) {
-          await upsertShopifyVariantItem(tx, tenantId, {
-            productGid: product.id,
-            productLegacyId: product.legacyResourceId,
-            productTitle: product.title,
-            productHandle: product.handle,
-            productStatus: product.status,
-            productPublishedAt: product.publishedAt,
-            onlineStoreUrl: product.onlineStoreUrl,
-            variantGid: variant.id,
-            variantLegacyId: variant.legacyResourceId,
-            variantTitle: variant.title,
-            sku: variant.sku,
-            inventoryItemGid: variant.inventoryItem?.id ?? null,
-            inventoryItemLegacyId:
-              variant.inventoryItem?.legacyResourceId ?? null,
-            inventoryQuantity: variant.inventoryQuantity,
-            syncSeenAt,
-          });
-          variants += 1;
-        }
+        const upserted = await upsertShopifyProductNode(
+          tx,
+          tenantId,
+          installation,
+          product,
+          syncSeenAt,
+        );
+        productsUpserted += upserted.productsUpserted;
+        variantsFetched += upserted.variantsFetched;
+        variantsUpserted += upserted.variantsUpserted;
+        itemsCreatedOrLinked += upserted.itemsCreatedOrLinked;
+        errors.push(...upserted.errors);
       }
 
       after = data.products.pageInfo.hasNextPage
@@ -864,9 +1574,96 @@ export async function syncShopifyProducts(
     );
 
     return {
-      products,
-      variants,
+      products: productsFetched,
+      variants: variantsFetched,
+      productsFetched,
+      productsUpserted,
+      variantsFetched,
+      variantsUpserted,
+      itemsCreatedOrLinked,
+      errors,
       markedMissing: missing.rows.length,
+    };
+  });
+}
+
+export async function syncShopifyProductByGid(
+  db: QueryExecutor,
+  tenantId: string,
+  admin: ShopifyAdmin,
+  productGid: string,
+) {
+  return withKitTransaction(db, async (tx) => {
+    const installation = await loadShopifyInstallationSnapshot(tx, tenantId);
+    type ProductByIdData = { node: ShopifyProductNode | null };
+    const data = await graphqlJson<ProductByIdData>(
+      admin,
+      PRODUCT_BY_ID_SYNC_QUERY,
+      { id: productGid },
+    );
+
+    if (!data.node) {
+      throw new Error(`Shopify product ${productGid} was not found.`);
+    }
+
+    return upsertShopifyProductNode(
+      tx,
+      tenantId,
+      installation,
+      data.node,
+      new Date().toISOString(),
+    );
+  });
+}
+
+export async function markShopifyProductDeletedByGid(
+  db: QueryExecutor,
+  tenantId: string,
+  productGid: string,
+) {
+  return withKitTransaction(db, async (tx) => {
+    const product = await tx.query<{ id: string }>(
+      `
+        update shopify_products
+        set deleted_at = coalesce(deleted_at, now()),
+            synced_at = now(),
+            updated_at = now()
+        where tenant_id = $1
+          and shopify_product_gid = $2
+        returning id
+      `,
+      [tenantId, productGid],
+    );
+    const variants = await tx.query<{ id: string }>(
+      `
+        update shopify_product_variants
+        set deleted_at = coalesce(deleted_at, now()),
+            synced_at = now(),
+            updated_at = now()
+        where tenant_id = $1
+          and shopify_product_gid = $2
+        returning id
+      `,
+      [tenantId, productGid],
+    );
+    const items = await tx.query<{ id: string }>(
+      `
+        update items
+        set is_active = false,
+            product_status = 'MISSING',
+            shopify_inventory_available = null,
+            updated_at = now()
+        where tenant_id = $1
+          and shopify_product_gid = $2
+        returning id
+      `,
+      [tenantId, productGid],
+    );
+
+    return {
+      productsMarkedDeleted: product.rows.length,
+      variantsMarkedDeleted: variants.rows.length,
+      itemsMarkedMissing: items.rows.length,
     };
   });
 }
@@ -879,67 +1676,7 @@ export async function syncShopifyOrders(
   return withKitTransaction(db, async (tx) => {
     const retentionDays = await loadCustomerDataRetentionDays(tx, tenantId);
     type OrderSyncData = {
-      orders: {
-        nodes: Array<{
-          id: string;
-          legacyResourceId: string | null;
-          name: string;
-          processedAt: string | null;
-          displayFinancialStatus: string | null;
-          displayFulfillmentStatus: string | null;
-          customer: {
-            displayName: string | null;
-            defaultEmailAddress: {
-              emailAddress: string | null;
-            } | null;
-            defaultAddress: {
-              name: string | null;
-              address1: string | null;
-              address2: string | null;
-              city: string | null;
-              provinceCode: string | null;
-              zip: string | null;
-              countryCodeV2: string | null;
-              phone?: string | null;
-            } | null;
-          } | null;
-          shippingAddress: {
-            name: string | null;
-            address1: string | null;
-            address2: string | null;
-            city: string | null;
-            provinceCode: string | null;
-            zip: string | null;
-            countryCodeV2: string | null;
-            phone?: string | null;
-          } | null;
-          lineItems: {
-            nodes: Array<{
-              id: string;
-              title: string;
-              sku: string | null;
-              quantity: number;
-              variant: {
-                id: string;
-                legacyResourceId: string | null;
-                title: string | null;
-                sku: string | null;
-                inventoryItem: {
-                  id: string;
-                  legacyResourceId: string | null;
-                } | null;
-                product: {
-                  id: string;
-                  legacyResourceId: string | null;
-                  title: string;
-                  handle: string | null;
-                  status: string | null;
-                } | null;
-              } | null;
-            }>;
-          };
-        }>;
-      };
+      orders: { nodes: ShopifyOrderNode[] };
     };
 
     let customerDataAvailable = true;
@@ -995,192 +1732,30 @@ export async function syncShopifyOrders(
     let shippingAddressesMissing = 0;
     const ordersMissingShippingAddress: string[] = [];
     for (const order of data.orders.nodes) {
-      const selectedAddress = selectShopifyOrderAddress(order);
-      const addressDataAvailable =
-        shippingAddressAvailable || customerDefaultAddressAvailable;
-      if (selectedAddress.address) {
-        shippingAddressesStored += 1;
-        if (selectedAddress.source === "order_shipping") {
-          orderShippingAddressesStored += 1;
-        }
-        if (selectedAddress.source === "customer_default") {
-          customerDefaultAddressesStored += 1;
-        }
-      } else if (addressDataAvailable) {
-        shippingAddressesMissing += 1;
-        ordersMissingShippingAddress.push(order.name);
-      }
-      if (
-        order.customer?.displayName ||
-        order.customer?.defaultEmailAddress?.emailAddress
-      ) {
-        customerDataReturnedCount += 1;
-      }
-      const encryptedCustomerName = customerDataAvailable
-        ? encryptCustomerDataForSync(order.customer?.displayName, "order customer name")
-        : null;
-      const encryptedCustomerEmail = customerDataAvailable
-        ? encryptCustomerDataForSync(
-            order.customer?.defaultEmailAddress?.emailAddress,
-            "order customer email",
-          )
-        : null;
-      const encryptedShippingAddress = selectedAddress.address
-        ? encryptCustomerDataForSync(
-            JSON.stringify(selectedAddress.address),
-            "order shipping address",
-          )
-        : null;
-      if (encryptedCustomerName || encryptedCustomerEmail) {
-        customerDataEncryptedCount += 1;
-      }
-      if (encryptedShippingAddress) {
-        shippingAddressEncryptedCount += 1;
-      }
-
-      const orderResult = await tx.query<{
-        id: string;
-        has_customer_name: boolean;
-        has_customer_email: boolean;
-        has_shipping_address: boolean;
-      }>(
-        `
-          insert into operations_orders (
-            tenant_id, shopify_order_gid, shopify_order_legacy_id,
-            order_name, status, customer_name, customer_email,
-            customer_name_encrypted, customer_email_encrypted, customer_lookup_hash,
-            customer_data_retention_until, shipping_address_encrypted,
-            financial_status, fulfillment_status, processed_at
-          )
-          values ($1, $2, $3, $4, 'open', null, null, $5, $6, $7, $8, $9, $10, $11, $12)
-          on conflict (tenant_id, order_name)
-          do update set
-            shopify_order_gid = excluded.shopify_order_gid,
-            shopify_order_legacy_id = excluded.shopify_order_legacy_id,
-            customer_name = null,
-            customer_email = null,
-            customer_name_encrypted = coalesce(
-              excluded.customer_name_encrypted,
-              operations_orders.customer_name_encrypted
-            ),
-            customer_email_encrypted = coalesce(
-              excluded.customer_email_encrypted,
-              operations_orders.customer_email_encrypted
-            ),
-            customer_lookup_hash = coalesce(
-              excluded.customer_lookup_hash,
-              operations_orders.customer_lookup_hash
-            ),
-            customer_data_redacted_at = case
-              when excluded.customer_name_encrypted is not null
-                or excluded.customer_email_encrypted is not null
-              then null
-              else operations_orders.customer_data_redacted_at
-            end,
-            customer_data_retention_until = coalesce(
-              excluded.customer_data_retention_until,
-              operations_orders.customer_data_retention_until
-            ),
-            shipping_address_encrypted = coalesce(
-              excluded.shipping_address_encrypted,
-              operations_orders.shipping_address_encrypted
-            ),
-            financial_status = excluded.financial_status,
-            fulfillment_status = excluded.fulfillment_status,
-            processed_at = excluded.processed_at,
-            updated_at = now()
-          returning id,
-            customer_name_encrypted is not null as has_customer_name,
-            customer_email_encrypted is not null as has_customer_email,
-            shipping_address_encrypted is not null as has_shipping_address
-        `,
-        [
-          tenantId,
-          order.id,
-          order.legacyResourceId,
-          order.name,
-          encryptedCustomerName,
-          encryptedCustomerEmail,
-          customerDataAvailable
-            ? hashCustomerLookup(
-                order.customer?.defaultEmailAddress?.emailAddress,
-                order.customer?.displayName,
-              )
-            : null,
-          customerDataRetentionUntil(order.processedAt, retentionDays),
-          encryptedShippingAddress,
-          order.displayFinancialStatus,
-          order.displayFulfillmentStatus,
-          order.processedAt,
-        ],
+      const upserted = await upsertShopifyOrderNode(
+        tx,
+        tenantId,
+        order,
+        retentionDays,
+        {
+          customerDataAvailable,
+          shippingAddressAvailable,
+          customerDefaultAddressAvailable,
+        },
       );
-      const storedOrder = orderResult.rows[0];
-      if (!storedOrder) {
-        throw new Error("Order sync did not return a stored order row.");
-      }
-      if (storedOrder.has_customer_name) customerNameStoredCount += 1;
-      if (storedOrder.has_customer_email) customerEmailStoredCount += 1;
-      if (storedOrder.has_customer_name || storedOrder.has_customer_email) {
-        customerDataStoredCount += 1;
-      }
-      if (storedOrder.has_shipping_address) shippingAddressStoredCount += 1;
-
-      for (const line of order.lineItems.nodes) {
-        const itemId =
-          line.variant && line.variant.product
-            ? await upsertShopifyVariantItem(tx, tenantId, {
-                productGid: line.variant.product.id,
-                productLegacyId: line.variant.product.legacyResourceId,
-                productTitle: line.variant.product.title,
-                productHandle: line.variant.product.handle,
-                productStatus: line.variant.product.status,
-                productPublishedAt: null,
-                onlineStoreUrl: null,
-                variantGid: line.variant.id,
-                variantLegacyId: line.variant.legacyResourceId,
-                variantTitle: line.variant.title,
-                sku: line.variant.sku ?? line.sku,
-                inventoryItemGid: line.variant.inventoryItem?.id ?? null,
-                inventoryItemLegacyId: line.variant.inventoryItem?.legacyResourceId ?? null,
-                inventoryQuantity: null,
-                syncSeenAt: new Date().toISOString(),
-              })
-            : await upsertShopifyOrderLineFallbackItem(tx, tenantId, {
-                lineItemGid: line.id,
-                title: line.title,
-                sku: line.sku,
-                variantGid: line.variant?.id ?? null,
-                variantLegacyId: line.variant?.legacyResourceId ?? null,
-              });
-
-        await tx.query(
-          `
-            insert into operations_order_lines (
-              tenant_id, operations_order_id, item_id, quantity, unit,
-              shopify_line_item_gid, shopify_variant_gid, sku, title
-            )
-            values ($1, $2, $3, $4, 'pcs', $5, $6, $7, $8)
-            on conflict (tenant_id, operations_order_id, item_id)
-            do update set
-              quantity = excluded.quantity,
-              shopify_line_item_gid = excluded.shopify_line_item_gid,
-              shopify_variant_gid = excluded.shopify_variant_gid,
-              sku = excluded.sku,
-              title = excluded.title
-          `,
-          [
-            tenantId,
-            orderResult.rows[0].id,
-            itemId,
-            line.quantity,
-            line.id,
-            line.variant?.id ?? null,
-            line.variant?.sku ?? line.sku,
-            line.title,
-          ],
-        );
-        lines += 1;
-      }
+      lines += upserted.lines;
+      customerDataReturnedCount += upserted.customerDataReturnedCount;
+      customerDataEncryptedCount += upserted.customerDataEncryptedCount;
+      customerDataStoredCount += upserted.customerDataStoredCount;
+      customerNameStoredCount += upserted.customerNameStoredCount;
+      customerEmailStoredCount += upserted.customerEmailStoredCount;
+      shippingAddressEncryptedCount += upserted.shippingAddressEncryptedCount;
+      shippingAddressStoredCount += upserted.shippingAddressStoredCount;
+      shippingAddressesStored += upserted.shippingAddressesStored;
+      orderShippingAddressesStored += upserted.orderShippingAddressesStored;
+      customerDefaultAddressesStored += upserted.customerDefaultAddressesStored;
+      shippingAddressesMissing += upserted.shippingAddressesMissing;
+      ordersMissingShippingAddress.push(...upserted.ordersMissingShippingAddress);
     }
 
     return {
@@ -1204,6 +1779,99 @@ export async function syncShopifyOrders(
       customerDefaultAddressesStored,
       shippingAddressesMissing,
       ordersMissingShippingAddress,
+    };
+  });
+}
+
+export async function syncShopifyOrderByGid(
+  db: QueryExecutor,
+  tenantId: string,
+  admin: ShopifyAdmin,
+  orderGid: string,
+) {
+  return withKitTransaction(db, async (tx) => {
+    const retentionDays = await loadCustomerDataRetentionDays(tx, tenantId);
+    type OrderByIdData = { node: ShopifyOrderNode | null };
+
+    let customerDataAvailable = true;
+    let shippingAddressAvailable = true;
+    let customerDefaultAddressAvailable = true;
+    let protectedCustomerDataUnavailable = false;
+    let fallbackQueryUsed = false;
+    let protectedCustomerDataDeniedAt: "none" | "full_order_query" | "customer_fallback_query" =
+      "none";
+    let data: OrderByIdData;
+
+    try {
+      data = await graphqlJson<OrderByIdData>(admin, ORDER_BY_ID_SYNC_QUERY, {
+        id: orderGid,
+      });
+    } catch (error) {
+      if (!isProtectedCustomerDataError(error)) throw error;
+
+      protectedCustomerDataUnavailable = true;
+      fallbackQueryUsed = true;
+      shippingAddressAvailable = false;
+      protectedCustomerDataDeniedAt = "full_order_query";
+      try {
+        data = await graphqlJson<OrderByIdData>(
+          admin,
+          ORDER_BY_ID_WITH_CUSTOMER_QUERY,
+          { id: orderGid },
+        );
+      } catch (customerError) {
+        if (!isProtectedCustomerDataError(customerError)) throw customerError;
+
+        protectedCustomerDataUnavailable = true;
+        fallbackQueryUsed = true;
+        customerDataAvailable = false;
+        customerDefaultAddressAvailable = false;
+        protectedCustomerDataDeniedAt = "customer_fallback_query";
+        data = await graphqlJson<OrderByIdData>(
+          admin,
+          ORDER_BY_ID_WITHOUT_CUSTOMER_QUERY,
+          { id: orderGid },
+        );
+      }
+    }
+
+    if (!data.node) {
+      throw new Error(`Shopify order ${orderGid} was not found.`);
+    }
+
+    const upserted = await upsertShopifyOrderNode(
+      tx,
+      tenantId,
+      data.node,
+      retentionDays,
+      {
+        customerDataAvailable,
+        shippingAddressAvailable,
+        customerDefaultAddressAvailable,
+      },
+    );
+
+    return {
+      orders: 1,
+      lines: upserted.lines,
+      customerDataAvailable,
+      customerDataReturnedCount: upserted.customerDataReturnedCount,
+      customerDataEncryptedCount: upserted.customerDataEncryptedCount,
+      customerDataStoredCount: upserted.customerDataStoredCount,
+      customerNameStoredCount: upserted.customerNameStoredCount,
+      customerEmailStoredCount: upserted.customerEmailStoredCount,
+      shippingAddressAvailable,
+      customerDefaultAddressAvailable,
+      protectedCustomerDataUnavailable,
+      fallbackQueryUsed,
+      protectedCustomerDataDeniedAt,
+      shippingAddressesStored: upserted.shippingAddressesStored,
+      shippingAddressEncryptedCount: upserted.shippingAddressEncryptedCount,
+      shippingAddressStoredCount: upserted.shippingAddressStoredCount,
+      orderShippingAddressesStored: upserted.orderShippingAddressesStored,
+      customerDefaultAddressesStored: upserted.customerDefaultAddressesStored,
+      shippingAddressesMissing: upserted.shippingAddressesMissing,
+      ordersMissingShippingAddress: upserted.ordersMissingShippingAddress,
     };
   });
 }

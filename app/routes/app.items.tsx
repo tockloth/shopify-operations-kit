@@ -33,9 +33,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const context = await requireOperationsKitContext(request);
   if (!context.configured) return { message: context.setupError };
 
+  const form = await request.formData();
+  const intent = String(form.get("intent") || "");
+  if (intent !== "syncShopifyProducts") {
+    return { message: "No action was performed." };
+  }
+
   const result = await syncShopifyProducts(context.pool, context.ctx.tenantId, admin);
   return {
-    message: `${result.products} Shopify product(s) and ${result.variants} variant(s) synced into Operations Kit. ${result.markedMissing} stale product record(s) marked missing.`,
+    message: `${result.productsFetched} Shopify product(s) fetched, ${result.productsUpserted} product record(s) upserted, ${result.variantsFetched} variant(s) fetched, ${result.variantsUpserted} variant record(s) upserted, and ${result.itemsCreatedOrLinked} Operations item link(s) created or refreshed. ${result.markedMissing} stale product item(s) marked missing.`,
   };
 };
 
