@@ -126,6 +126,16 @@ function formatDateTime(value?: string | null) {
   }).format(date);
 }
 
+function formatTime(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function formatAddress(address?: any) {
   if (!address) return "No shipping address";
   return [
@@ -171,6 +181,11 @@ function shippingBlockReason(order: any, shippingAddress?: any) {
 }
 
 function operationsStatusContent(status: string, tone: string, shipmentNumbers?: string | null) {
+  const label =
+    status === "Product classification required"
+      ? "Classification required"
+      : status;
+
   if (status === "Complete") {
     return (
       <s-stack direction="block" gap="small">
@@ -182,7 +197,7 @@ function operationsStatusContent(status: string, tone: string, shipmentNumbers?:
 
   return (
     <MoneylessBadge tone={tone as any}>
-      {status}
+      {label}
     </MoneylessBadge>
   );
 }
@@ -217,6 +232,25 @@ function operationsComplete(orderSummary: any) {
     orderSummary?.operational_status === "Complete" ||
     Number(orderSummary?.shipment_shipped_count ?? 0) > 0
   );
+}
+
+function compactNextActionLabel(label?: string | null) {
+  if (label === "Classify order line products") return "Classify products";
+  if (label === "Review order lines") return "Review lines";
+  return label ?? "Review lines";
+}
+
+function syncSummary(orderSummary: any, order: any) {
+  const failed =
+    String(orderSummary?.last_order_webhook_status ?? "").toLowerCase() ===
+      "failed" ||
+    Boolean(orderSummary?.last_order_webhook_error_message);
+  const syncedAt = orderSummary?.shopify_order_synced_at ?? order.updated_at;
+  return {
+    label: failed ? "Failed" : "Synced",
+    tone: failed ? ("critical" as const) : ("success" as const),
+    time: formatTime(syncedAt),
+  };
 }
 
 function lineProductLabel(line: any) {
@@ -412,9 +446,11 @@ export default function OrderDetail() {
   const operationsStatus = orderSummary?.operational_status ?? "In progress";
   const operationsStatusTone = orderSummary?.operational_status_tone ?? "info";
   const nextActionLabel = orderSummary?.next_action_label ?? "Open order";
+  const compactNextAction = compactNextActionLabel(nextActionLabel);
   const nextActionHref = orderSummary?.next_action_href ?? `/app/orders/${order.id}`;
   const nextReason = orderSummary?.next_reason ?? "Review order lines.";
   const currentOrderHref = `/app/orders/${order.id}`;
+  const orderSyncSummary = syncSummary(orderSummary, order);
 
   const relatedRows = [
     ...procurementRows.map((row) => ({
@@ -484,7 +520,6 @@ export default function OrderDetail() {
             "Email",
             "Payment",
             "Shopify fulfillment",
-            "Shipping address",
             "Address",
             "Operations",
             "Sync",
@@ -498,7 +533,6 @@ export default function OrderDetail() {
               order.customer_email ?? "No email",
               <MoneylessBadge>{order.financial_status ?? "unknown"}</MoneylessBadge>,
               shopifyFulfillmentContent(order, operationsStatus),
-              shippingAddress ? formatAddress(shippingAddress) : "No shipping address",
               shippingReason ? (
                 <MoneylessBadge tone="warning">Blocked</MoneylessBadge>
               ) : (
@@ -510,21 +544,10 @@ export default function OrderDetail() {
                 orderSummary?.shipment_numbers,
               ),
               <s-stack direction="block" gap="small">
-                <s-text>
-                  Synced {formatDateTime(orderSummary?.shopify_order_synced_at ?? order.updated_at)}
-                </s-text>
-                <s-text>
-                  Source: {orderSummary?.last_order_sync_source ?? "unknown"}
-                </s-text>
-                <s-text>
-                  Webhook: {orderSummary?.last_order_webhook_topic ?? "none"}{" "}
-                  {orderSummary?.last_order_webhook_status
-                    ? `(${orderSummary.last_order_webhook_status})`
-                    : ""}
-                </s-text>
-                {orderSummary?.last_order_webhook_error_message ? (
-                  <s-text>{orderSummary.last_order_webhook_error_message}</s-text>
-                ) : null}
+                <MoneylessBadge tone={orderSyncSummary.tone}>
+                  {orderSyncSummary.label}
+                </MoneylessBadge>
+                {orderSyncSummary.time ? <s-text>{orderSyncSummary.time}</s-text> : null}
               </s-stack>,
               <s-stack direction="block" gap="small">
                 {canUpdateShopifyFulfillment(order, orderSummary) ? (
@@ -541,15 +564,56 @@ export default function OrderDetail() {
                   </Form>
                 ) : null}
                 {nextActionHref === currentOrderHref ? (
-                  <s-text>{nextActionLabel}</s-text>
+                  <s-text>{compactNextAction}</s-text>
                 ) : (
-                  <s-link href={nextActionHref}>{nextActionLabel}</s-link>
+                  <s-link href={nextActionHref}>{compactNextAction}</s-link>
                 )}
-                <s-text>{nextReason}</s-text>
               </s-stack>,
             ],
           ]}
         />
+      </s-section>
+
+      <s-section>
+        <details className="kit-compact-disclosure">
+          <summary>Customer and shipping details</summary>
+          <DataTable
+            headings={["Customer", "Email", "Shipping address", "Address status"]}
+            rows={[
+              [
+                order.customer_name ?? "No customer",
+                order.customer_email ?? "No email",
+                shippingAddress ? formatAddress(shippingAddress) : "No shipping address",
+                shippingReason ?? "Ready",
+              ],
+            ]}
+          />
+        </details>
+      </s-section>
+
+      <s-section>
+        <details className="kit-compact-disclosure">
+          <summary>Sync details</summary>
+          <DataTable
+            headings={["Last synced", "Source", "Webhook topic", "Webhook status", "Error", "Log"]}
+            rows={[
+              [
+                formatDateTime(orderSummary?.shopify_order_synced_at ?? order.updated_at),
+                orderSummary?.last_order_sync_source ?? "unknown",
+                orderSummary?.last_order_webhook_topic ?? "none",
+                <MoneylessBadge tone={orderSyncSummary.tone}>
+                  {orderSummary?.last_order_webhook_status ?? orderSyncSummary.label}
+                </MoneylessBadge>,
+                orderSummary?.last_order_webhook_error_message ?? "No error",
+                <s-link href="/app/settings?section=audit">View sync log</s-link>,
+              ],
+            ]}
+          />
+        </details>
+      </s-section>
+
+      <s-section heading="Why this action is needed">
+        <s-paragraph>{nextReason}</s-paragraph>
       </s-section>
 
       <s-section heading="Lines">

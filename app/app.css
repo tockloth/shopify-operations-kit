@@ -125,6 +125,20 @@
   color: #616a75;
 }
 
+.kit-sync-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: #4b5563;
+  font-size: 13px;
+}
+
+.kit-sync-strip strong {
+  color: #202223;
+  font-weight: 650;
+}
+
 .kit-filterbar {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px) auto auto;

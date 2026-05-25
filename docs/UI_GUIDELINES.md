@@ -28,6 +28,17 @@ List tables are for fast work steering. They should show compact state and the n
 - Long reason text belongs on the detail page for the affected order, order line, product, PO, receipt, or shipment.
 - Technical sync and webhook details such as timestamps, topics, webhook status, resource GIDs, and errors belong on detail pages or Settings -> Audit & Health -> Sync log.
 - A list may use one short sync indicator such as `Synced` or `Missing` only when it materially changes the work queue.
+- List labels may use short forms such as `Classification required` when the detail view explains the full status.
+
+## Compact Summaries
+
+Summary tables at the top of detail pages should stay compact.
+
+- Show short state such as `Synced`, `Failed`, `Ready`, or `Blocked`.
+- Keep next actions short, for example `Classify products`, `Open procurement`, or `Review lines`.
+- Put longer reasons in the affected line/detail section or a short `Why this action is needed` section.
+- Put technical sync diagnostics in a collapsed `Sync details` disclosure or Settings -> Audit & Health -> Sync log.
+- Do not show webhook topics, processing states, resource IDs, or long explanation text in summary cells.
 
 ## Settings Structure
 

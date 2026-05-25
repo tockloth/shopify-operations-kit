@@ -127,6 +127,11 @@ function nextAction(item: any) {
   return { label: "Open product", href: `/app/items/${item.id}` };
 }
 
+function compactProductActionLabel(label: string) {
+  if (label === "Classify product") return "Classify";
+  return label;
+}
+
 function formatDateTime(value?: string | null) {
   if (!value) return "Not synced yet";
   const date = new Date(value);
@@ -193,23 +198,22 @@ export default function Items() {
             <s-paragraph>{actionData.message}</s-paragraph>
           </s-box>
         ) : null}
-        <s-box padding="base" borderWidth="base" borderRadius="base">
-          <s-stack direction="block" gap="small">
-            <s-heading>Product sync status</s-heading>
-            <s-paragraph>
-              Last product sync: {formatDateTime(syncOverview?.last_product_synced_at)}
-            </s-paragraph>
-            <s-paragraph>
-              Source: {syncOverview?.last_product_sync_source ?? "unknown"} · Status:{" "}
-              {syncOverview?.last_product_webhook_status ?? "manual/unknown"} · Last webhook:{" "}
-              {syncOverview?.last_product_webhook_topic ?? "none"}
-            </s-paragraph>
-            <s-paragraph>
-              Products: {Number(syncOverview?.product_count ?? 0).toLocaleString()} · Variants:{" "}
-              {Number(syncOverview?.variant_count ?? 0).toLocaleString()}
-            </s-paragraph>
+        <s-box padding="small" borderWidth="base" borderRadius="base">
+          <div className="kit-sync-strip">
+            <strong>Product sync</strong>
+            <span>Last: {formatDateTime(syncOverview?.last_product_synced_at)}</span>
+            <span>Source: {syncOverview?.last_product_sync_source ?? "unknown"}</span>
+            <span>Status: {syncOverview?.last_product_webhook_status ?? "manual/unknown"}</span>
+            <span>Products: {Number(syncOverview?.product_count ?? 0).toLocaleString()}</span>
+            <span>Variants: {Number(syncOverview?.variant_count ?? 0).toLocaleString()}</span>
             <s-link href="/app/settings?section=audit">View sync log</s-link>
-          </s-stack>
+          </div>
+          <details className="kit-compact-disclosure">
+            <summary>Show sync details</summary>
+            <s-paragraph>
+              Last webhook: {syncOverview?.last_product_webhook_topic ?? "none"}
+            </s-paragraph>
+          </details>
         </s-box>
         <Form method="get">
           <details className="kit-compact-disclosure" open={hasActiveFilters}>
@@ -296,7 +300,9 @@ export default function Items() {
               <MoneylessBadge tone={dataQuality(item).tone}>
                 {dataQuality(item).label}
               </MoneylessBadge>,
-              <s-link href={nextAction(item).href}>{nextAction(item).label}</s-link>,
+              <s-link href={nextAction(item).href}>
+                {compactProductActionLabel(nextAction(item).label)}
+              </s-link>,
             ],
           }))}
         />

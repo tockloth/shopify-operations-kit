@@ -53,3 +53,7 @@ List tables should use visible links or buttons for navigation. Main identifiers
 ## D013: Lists Stay Compact; Details Carry Diagnosis
 
 Operational list views are for scanning work queues. They show concise statuses and next actions. Long business reasons, webhook topics, sync timestamps, resource GIDs, and processing errors belong in detail views or Settings -> Audit & Health -> Sync log.
+
+## D014: Summary Headers Stay Compact
+
+Detail-page summary tables show compact state only. Longer business reasons move into the relevant line/detail section, while technical sync diagnostics move into collapsed disclosures or the Sync log. List labels may use shortened wording when detail pages preserve the full meaning.

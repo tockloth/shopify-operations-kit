@@ -249,6 +249,11 @@ function shippingBlockReason(order: any) {
 }
 
 function operationsStatusContent(order: any) {
+  const label =
+    order.operational_status === "Product classification required"
+      ? "Classification required"
+      : (order.operational_status ?? "Needs planning");
+
   if (order.operational_status === "Complete") {
     return (
       <s-stack direction="block" gap="small">
@@ -262,7 +267,7 @@ function operationsStatusContent(order: any) {
 
   return (
     <MoneylessBadge tone={order.operational_status_tone ?? "info"}>
-      {order.operational_status ?? "Needs planning"}
+      {label}
     </MoneylessBadge>
   );
 }
@@ -304,6 +309,12 @@ function nextActionContent(order: any) {
   }
 
   return "Open order";
+}
+
+function compactNextActionLabel(label?: string | null) {
+  if (label === "Classify order line products") return "Classify products";
+  if (label === "Review order lines") return "Review lines";
+  return label ?? "Open order";
 }
 
 export default function Orders() {
@@ -463,7 +474,7 @@ export default function Orders() {
                     nextActionContent(order)
                   ) : (
                     <s-link href={`/app/orders/${order.id}`}>
-                      {order.next_action_label ?? "Open order"}
+                      {compactNextActionLabel(order.next_action_label)}
                     </s-link>
                   ),
                 ],
