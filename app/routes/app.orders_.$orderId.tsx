@@ -113,6 +113,19 @@ function formatDate(value?: string | null) {
   return date.toLocaleDateString();
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) return "Not synced yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("en", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function formatAddress(address?: any) {
   if (!address) return "No shipping address";
   return [
@@ -211,7 +224,9 @@ type Decision = {
     | "Ready from stock"
     | "Needs procurement"
     | "Needs production"
-    | "Review master data"
+    | "Product classification required"
+    | "BOM required"
+    | "Review order line"
     | "Already in progress";
   reason: string;
   tone: "success" | "info" | "warning" | "critical";
@@ -254,8 +269,8 @@ function lineDecision(
 
   if (masterDataMissing) {
     return {
-      label: "Review master data",
-      reason: "Item has no operational make/buy role yet.",
+      label: "Product classification required",
+      reason: "Item has no operational sell/buy/make role yet.",
       tone: "critical",
       blocked: true,
       hasProcurement,
@@ -303,6 +318,17 @@ function lineDecision(
   }
 
   if (line.is_producible) {
+    if (Number(line.active_bom_count ?? 0) === 0) {
+      return {
+        label: "BOM required",
+        reason: "Stock does not cover the line, the item is producible, and no active BOM exists.",
+        tone: "critical",
+        blocked: true,
+        hasProcurement,
+        hasProduction: true,
+        hasLogistics,
+      };
+    }
     return {
       label: "Needs production",
       reason: "Stock does not cover the line and the item is producible.",
@@ -315,7 +341,7 @@ function lineDecision(
   }
 
   return {
-    label: "Review master data",
+    label: "Review order line",
     reason: "Operations Kit cannot choose stock, procurement or production.",
     tone: "critical",
     blocked: true,
@@ -457,6 +483,7 @@ export default function OrderDetail() {
             "Shipping address",
             "Address",
             "Operations",
+            "Sync",
             "Next action",
           ]}
           rows={[
@@ -478,6 +505,23 @@ export default function OrderDetail() {
                 operationsStatusTone,
                 orderSummary?.shipment_numbers,
               ),
+              <s-stack direction="block" gap="small">
+                <s-text>
+                  Synced {formatDateTime(orderSummary?.shopify_order_synced_at ?? order.updated_at)}
+                </s-text>
+                <s-text>
+                  Source: {orderSummary?.last_order_sync_source ?? "unknown"}
+                </s-text>
+                <s-text>
+                  Webhook: {orderSummary?.last_order_webhook_topic ?? "none"}{" "}
+                  {orderSummary?.last_order_webhook_status
+                    ? `(${orderSummary.last_order_webhook_status})`
+                    : ""}
+                </s-text>
+                {orderSummary?.last_order_webhook_error_message ? (
+                  <s-text>{orderSummary.last_order_webhook_error_message}</s-text>
+                ) : null}
+              </s-stack>,
               <s-stack direction="block" gap="small">
                 {canUpdateShopifyFulfillment(order, orderSummary) ? (
                   <Form method="post">

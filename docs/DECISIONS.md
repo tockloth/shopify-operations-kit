@@ -41,3 +41,11 @@ The Product read model is defined by `20260525090000_shopify_product_read_model.
 ## D010: Global Platform Events Are Deferred
 
 There is no tenantless global `system_events` table yet. Unknown-shop webhook failures are therefore tracked in `webhook_events`. A future platform slice should add global platform events for installation, webhook, and infrastructure issues that cannot safely be assigned to a tenant.
+
+## D011: UI Statuses Must Name The Blocker
+
+Operational statuses should identify the concrete blocker when the system knows it. For example, an order with synced Shopify products but unclassified Operations Kit items should show `Product classification required`, not generic `Review required`.
+
+## D012: Clickability Must Be Explicit
+
+List tables should use visible links or buttons for navigation. Main identifiers and right-side actions are clickable; ordinary cells should not look or behave like links.

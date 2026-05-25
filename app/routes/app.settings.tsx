@@ -5,6 +5,8 @@ import { SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
 import {
   loadPrivacySettings,
+  loadSyncLog,
+  loadSyncOverview,
   redactExpiredCustomerData,
   seedSampleOperatingScenario,
   updatePrivacySettings,
@@ -21,12 +23,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shopDomain: context.shopDomain,
     };
   }
+  const url = new URL(request.url);
+  const syncFilters = {
+    status: url.searchParams.get("syncStatus") ?? "all",
+    topic: url.searchParams.get("syncTopic") ?? "all",
+    entityType: url.searchParams.get("entityType") ?? "all",
+    failedOnly: url.searchParams.get("failedOnly") === "yes",
+  };
 
   return {
     configured: true,
     shopDomain: context.shopDomain,
     tenantId: context.ctx.tenantId,
     privacy: await loadPrivacySettings(context.pool, context.ctx.tenantId),
+    syncFilters,
+    syncOverview: await loadSyncOverview(context.pool, context.ctx.tenantId),
+    syncLog: await loadSyncLog(context.pool, context.ctx.tenantId, syncFilters),
   };
 };
 
@@ -111,6 +123,26 @@ function diagnosticErrors(
     .join(" | ");
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) return "Not available";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("en", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function syncStatusTone(status?: string | null) {
+  if (status === "processed") return "success" as const;
+  if (status === "failed") return "critical" as const;
+  if (status === "ignored_duplicate") return "neutral" as const;
+  return "warning" as const;
+}
+
 export default function Settings() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
@@ -119,15 +151,30 @@ export default function Settings() {
   }
   const diagnostics =
     actionData && "diagnostics" in actionData ? actionData.diagnostics : null;
+  const syncOverview = "syncOverview" in data ? (data.syncOverview as any) : null;
+  const syncFilters = "syncFilters" in data ? (data.syncFilters as any) : {};
+  const syncLog = "syncLog" in data ? ((data.syncLog ?? []) as any[]) : [];
 
   return (
     <s-page heading="Settings">
-      <s-section heading="Connection">
+      <s-section heading="Tenant & Shopify">
         <s-box padding="base" borderWidth="base" borderRadius="base">
           <s-stack direction="block" gap="small">
+            <s-heading>Shop installation</s-heading>
             <s-paragraph>Shop: {data.shopDomain}</s-paragraph>
             <s-paragraph>Tenant: {data.tenantId}</s-paragraph>
             <s-paragraph>Database: connected</s-paragraph>
+            <s-heading>Sync status</s-heading>
+            <s-paragraph>
+              Last Product sync: {formatDateTime(syncOverview?.last_product_synced_at)} ·{" "}
+              {syncOverview?.last_product_sync_source ?? "unknown"} ·{" "}
+              {syncOverview?.last_product_webhook_topic ?? "no webhook"}
+            </s-paragraph>
+            <s-paragraph>
+              Last Order sync: {formatDateTime(syncOverview?.last_order_synced_at)} ·{" "}
+              {syncOverview?.last_order_sync_source ?? "unknown"} ·{" "}
+              {syncOverview?.last_order_webhook_topic ?? "no webhook"}
+            </s-paragraph>
           </s-stack>
         </s-box>
       </s-section>
@@ -168,11 +215,11 @@ export default function Settings() {
           </s-box>
         </s-section>
       ) : null}
-      <s-section heading="Development sample data">
+      <s-section heading="Operations">
         <s-box padding="base" borderWidth="base" borderRadius="base">
           <s-stack direction="block" gap="base">
             <s-stack direction="block" gap="small">
-              <s-heading>Seed sample operating scenario</s-heading>
+              <s-heading>Product classification and sample data</s-heading>
               <s-paragraph>
                 Recreate products, suppliers and one acknowledged Purchase Order
                 for local Procurement, Receiving, QC, Putaway and Payables
@@ -188,40 +235,146 @@ export default function Settings() {
           </s-stack>
         </s-box>
       </s-section>
-      <s-section heading="Customer data protection">
+      <s-section heading="Audit & Health">
         <s-box padding="base" borderWidth="base" borderRadius="base">
-          <Form method="post">
-            <input type="hidden" name="intent" value="savePrivacy" />
-            <s-stack direction="block" gap="base">
-              <s-number-field
-                label="Retention after order"
-                name="customerDataRetentionDays"
-                min={1}
-                step={1}
-                value={String(data.privacy?.customer_data_retention_days ?? 365)}
-              ></s-number-field>
-              <s-box padding="small" borderWidth="base" borderRadius="base">
-                <s-stack direction="block" gap="small">
-                  <s-heading>Storage</s-heading>
-                  <s-paragraph>
-                    Customer name and email are encrypted before database storage.
-                  </s-paragraph>
-                </s-stack>
-              </s-box>
-            </s-stack>
-            <s-button variant="primary" type="submit">Save privacy settings</s-button>
-          </Form>
-          <Form method="post">
-            <input type="hidden" name="intent" value="redactExpired" />
-            <s-button type="submit">Redact expired customer data now</s-button>
-          </Form>
+          <s-stack direction="block" gap="base">
+            <s-heading>Sync log</s-heading>
+            <s-paragraph>
+              Webhook and sync delivery history for the current tenant. Unknown-shop
+              events are recorded in webhook events before a tenant can be assigned.
+            </s-paragraph>
+            <Form method="get">
+              <input type="hidden" name="section" value="audit" />
+              <div className="kit-filterbar">
+                <s-select label="Status" name="syncStatus" value={syncFilters.status ?? "all"}>
+                  <s-option value="all">All statuses</s-option>
+                  <s-option value="received">Received</s-option>
+                  <s-option value="processed">Processed</s-option>
+                  <s-option value="failed">Failed</s-option>
+                  <s-option value="ignored_duplicate">Ignored duplicate</s-option>
+                </s-select>
+                <s-select label="Topic" name="syncTopic" value={syncFilters.topic ?? "all"}>
+                  <s-option value="all">All topics</s-option>
+                  <s-option value="ORDERS_CREATE">Orders create</s-option>
+                  <s-option value="ORDERS_UPDATED">Orders updated</s-option>
+                  <s-option value="PRODUCTS_CREATE">Products create</s-option>
+                  <s-option value="PRODUCTS_UPDATE">Products update</s-option>
+                  <s-option value="PRODUCTS_DELETE">Products delete</s-option>
+                </s-select>
+                <s-select label="Entity type" name="entityType" value={syncFilters.entityType ?? "all"}>
+                  <s-option value="all">All entities</s-option>
+                  <s-option value="order">Orders</s-option>
+                  <s-option value="product">Products</s-option>
+                  <s-option value="other">Other</s-option>
+                </s-select>
+                <s-select
+                  label="Failed only"
+                  name="failedOnly"
+                  value={syncFilters.failedOnly ? "yes" : "no"}
+                >
+                  <s-option value="no">No</s-option>
+                  <s-option value="yes">Yes</s-option>
+                </s-select>
+              </div>
+              <s-stack direction="inline" gap="small">
+                <s-button type="submit">Apply filters</s-button>
+                <s-link href="/app/settings?section=audit">Clear filters</s-link>
+              </s-stack>
+            </Form>
+            <div className="kit-resource-table">
+              <s-table variant="auto">
+                <s-table-header-row>
+                  <s-table-header>Topic</s-table-header>
+                  <s-table-header>Status</s-table-header>
+                  <s-table-header>Received</s-table-header>
+                  <s-table-header>Processed</s-table-header>
+                  <s-table-header>Shop</s-table-header>
+                  <s-table-header>Resource</s-table-header>
+                  <s-table-header>Error</s-table-header>
+                  <s-table-header>Open</s-table-header>
+                </s-table-header-row>
+                <s-table-body>
+                  {syncLog.length === 0 ? (
+                    <s-table-row>
+                      <s-table-cell>No sync events yet.</s-table-cell>
+                      <s-table-cell></s-table-cell>
+                      <s-table-cell></s-table-cell>
+                      <s-table-cell></s-table-cell>
+                      <s-table-cell></s-table-cell>
+                      <s-table-cell></s-table-cell>
+                      <s-table-cell></s-table-cell>
+                      <s-table-cell></s-table-cell>
+                    </s-table-row>
+                  ) : null}
+                  {syncLog.map((event) => (
+                    <s-table-row key={event.id}>
+                      <s-table-cell>{event.topic}</s-table-cell>
+                      <s-table-cell>
+                        <s-badge tone={syncStatusTone(event.status)}>
+                          {event.status}
+                        </s-badge>
+                      </s-table-cell>
+                      <s-table-cell>{formatDateTime(event.received_at)}</s-table-cell>
+                      <s-table-cell>{formatDateTime(event.processed_at)}</s-table-cell>
+                      <s-table-cell>{event.shop_domain}</s-table-cell>
+                      <s-table-cell>
+                        {event.entity_label ?? event.resource_gid ?? "No resource"}
+                      </s-table-cell>
+                      <s-table-cell>{event.error_message ?? "none"}</s-table-cell>
+                      <s-table-cell>
+                        {event.entity_href ? (
+                          <s-link href={event.entity_href}>
+                            Open {event.entity_type}
+                          </s-link>
+                        ) : (
+                          "No entity link"
+                        )}
+                      </s-table-cell>
+                    </s-table-row>
+                  ))}
+                </s-table-body>
+              </s-table>
+            </div>
+          </s-stack>
         </s-box>
       </s-section>
-      <s-section heading="Shopify access diagnostics">
+      <s-section heading="Tenant & Shopify">
+        <s-box padding="base" borderWidth="base" borderRadius="base">
+          <s-stack direction="block" gap="base">
+            <s-heading>Customer data protection</s-heading>
+            <Form method="post">
+              <input type="hidden" name="intent" value="savePrivacy" />
+              <s-stack direction="block" gap="base">
+                <s-number-field
+                  label="Retention after order"
+                  name="customerDataRetentionDays"
+                  min={1}
+                  step={1}
+                  value={String(data.privacy?.customer_data_retention_days ?? 365)}
+                ></s-number-field>
+                <s-box padding="small" borderWidth="base" borderRadius="base">
+                  <s-stack direction="block" gap="small">
+                    <s-heading>Storage</s-heading>
+                    <s-paragraph>
+                      Customer name and email are encrypted before database storage.
+                    </s-paragraph>
+                  </s-stack>
+                </s-box>
+              </s-stack>
+              <s-button variant="primary" type="submit">Save privacy settings</s-button>
+            </Form>
+            <Form method="post">
+              <input type="hidden" name="intent" value="redactExpired" />
+              <s-button type="submit">Redact expired customer data now</s-button>
+            </Form>
+          </s-stack>
+        </s-box>
+      </s-section>
+      <s-section heading="Tenant & Shopify">
         <s-box padding="base" borderWidth="base" borderRadius="base">
           <s-stack direction="block" gap="base">
             <s-stack direction="block" gap="small">
-              <s-heading>Current app token probe</s-heading>
+              <s-heading>Shopify access diagnostics</s-heading>
               <s-paragraph>
                 Development/staging diagnostic for the currently installed Shopify
                 Admin API token. It shows scopes, access booleans and GraphQL

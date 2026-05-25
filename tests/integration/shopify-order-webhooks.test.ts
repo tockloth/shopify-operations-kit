@@ -149,6 +149,11 @@ describe.skipIf(!databaseUrl)("Shopify order webhook incremental sync", () => {
     expect(result.status).toBe("processed");
     const orders = await loadOperationsOrdersList(pool, tenantA);
     const order = orders.find((row: any) => row.order_name === node.name) as any;
+    expect(order?.operational_status).toBe("Product classification required");
+    expect(order?.next_action_label).toBe("Classify order line products");
+    expect(order?.next_reason).toContain("Order lines need operational product data");
+    expect(order?.last_order_sync_source).toBe("webhook");
+    expect(order?.last_order_webhook_topic).toBe("ORDERS_CREATE");
     expect(order?.customer_name).toBe("Webhook Customer");
     expect(order?.customer_email).toBe("webhook@example.com");
     expect(order?.shipping_address?.address1).toBe("100 Webhook St");

@@ -4,6 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   ensureTenantForShop,
   loadItems,
+  loadSyncLog,
+  loadSyncOverview,
 } from "../../app/lib/operations-kit.server";
 import { handleShopifyProductWebhook } from "../../app/lib/shopify-product-webhooks.server";
 import { syncShopifyProducts } from "../../app/lib/shopify-sync.server";
@@ -153,6 +155,11 @@ describe.skipIf(!databaseUrl)("Shopify product sync", () => {
     expect(item.rows[0]?.is_purchasable).toBe(true);
     expect(item.rows[0]?.supplier_lead_time_days).toBe(42);
     expect(Number(item.rows[0]?.min_inventory_quantity)).toBe(5);
+
+    const overview = (await loadSyncOverview(pool, tenantA)) as any;
+    expect(overview.product_count).toBeGreaterThanOrEqual(1);
+    expect(overview.variant_count).toBeGreaterThanOrEqual(1);
+    expect(overview.last_product_synced_at).toBeTruthy();
   });
 
   it("keeps equal SKUs isolated by tenant", async () => {
@@ -220,6 +227,12 @@ describe.skipIf(!databaseUrl)("Shopify product sync", () => {
 
     expect(created.status).toBe("processed");
     expect(updated.status).toBe("processed");
+    const syncLog = (await loadSyncLog(pool, tenantA, {
+      entityType: "product",
+    })) as any[];
+    expect(syncLog.some((event) => event.topic === "PRODUCTS_CREATE")).toBe(true);
+    expect(syncLog.some((event) => event.topic === "PRODUCTS_UPDATE")).toBe(true);
+    expect(syncLog.some((event) => event.entity_href?.startsWith("/app/items/"))).toBe(true);
     const productRow = await pool.query<{ title: string; price: string }>(
       `
         select shopify_products.title, shopify_product_variants.price

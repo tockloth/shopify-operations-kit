@@ -52,6 +52,8 @@ The current implementation processes webhook events synchronously. This is accep
 
 Protected customer data is encrypted before storage. Diagnostics and sync summaries should expose booleans and counters, not names, emails, addresses, tokens, or secrets.
 
+Sync and webhook visibility is part of the operator experience. Sync timestamps, webhook topics, processing status, and errors should be visible from the app without requiring direct database access.
+
 ## Product Sync Architecture
 
 Product sync follows the same sync shape:

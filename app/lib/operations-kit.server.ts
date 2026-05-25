@@ -24,12 +24,18 @@ export interface ItemRow {
   is_producible: boolean;
   available_quantity: string | number;
   reserved_quantity: string | number;
+  shopify_product_gid?: string | null;
+  shopify_variant_gid?: string | null;
   shopify_product_legacy_id?: string | null;
   shopify_variant_legacy_id?: string | null;
   product_status?: string | null;
   shopify_published_at?: string | null;
   shopify_online_store_url?: string | null;
   shopify_last_seen_at?: string | null;
+  shopify_product_synced_at?: string | null;
+  shopify_product_deleted_at?: string | null;
+  shopify_product_read_status?: string | null;
+  shopify_variant_count?: string | number;
   shopify_inventory_available?: string | number | null;
   min_inventory_quantity?: string | number;
   default_production_quantity?: string | number;
@@ -3073,6 +3079,23 @@ export async function loadItems(
             and bom_lines.tenant_id = boms.tenant_id
           where boms.tenant_id = $1
           group by boms.parent_item_id
+        ),
+        shopify_variant_summary as (
+          select
+            shopify_product_variants.item_id,
+            shopify_products.shopify_product_gid,
+            shopify_products.synced_at as shopify_product_synced_at,
+            shopify_products.deleted_at as shopify_product_deleted_at,
+            shopify_products.status as shopify_product_read_status,
+            count(*) over (
+              partition by shopify_product_variants.tenant_id,
+                shopify_product_variants.shopify_product_gid
+            )::int as shopify_variant_count
+          from shopify_product_variants
+          join shopify_products
+            on shopify_products.tenant_id = shopify_product_variants.tenant_id
+            and shopify_products.shopify_product_gid = shopify_product_variants.shopify_product_gid
+          where shopify_product_variants.tenant_id = $1
         )
         select items.*,
           coalesce(balances.available_quantity, 0) as available_quantity,
@@ -3081,6 +3104,10 @@ export async function loadItems(
           preferred_supplier.preferred_supplier_name,
           coalesce(bom_summary.active_bom_count, 0) as active_bom_count,
           coalesce(bom_summary.active_bom_component_count, 0) as active_bom_component_count,
+          shopify_variant_summary.shopify_product_synced_at,
+          shopify_variant_summary.shopify_product_deleted_at,
+          shopify_variant_summary.shopify_product_read_status,
+          coalesce(shopify_variant_summary.shopify_variant_count, 0) as shopify_variant_count,
           case
             when items.shopify_product_gid is not null then 'shopify'
             else 'operations'
@@ -3098,6 +3125,7 @@ export async function loadItems(
       left join balances on balances.item_id = items.id
       left join preferred_supplier on preferred_supplier.item_id = items.id
       left join bom_summary on bom_summary.parent_item_id = items.id
+      left join shopify_variant_summary on shopify_variant_summary.item_id = items.id
         where items.tenant_id = $1
           and (
             $2 = ''
@@ -3162,6 +3190,168 @@ export async function loadSuppliers(db: QueryExecutor, tenantId: string) {
         order by suppliers.is_active desc, suppliers.name
       `,
       [tenantId],
+    )
+  ).rows;
+}
+
+export async function loadSyncOverview(db: QueryExecutor, tenantId: string) {
+  const result = await db.query(
+    `
+      with product_counts as (
+        select
+          count(*)::int as product_count,
+          coalesce(sum(variant_counts.variant_count), 0)::int as variant_count,
+          max(shopify_products.synced_at) as last_product_synced_at
+        from shopify_products
+        left join (
+          select
+            tenant_id,
+            shopify_product_gid,
+            count(*)::int as variant_count
+          from shopify_product_variants
+          where tenant_id = $1
+          group by tenant_id, shopify_product_gid
+        ) variant_counts
+          on variant_counts.tenant_id = shopify_products.tenant_id
+          and variant_counts.shopify_product_gid = shopify_products.shopify_product_gid
+        where shopify_products.tenant_id = $1
+      ),
+      latest_product_webhook as (
+        select topic, status, received_at, processed_at, error_message
+        from webhook_events
+        where tenant_id = $1
+          and topic in ('PRODUCTS_CREATE', 'PRODUCTS_UPDATE', 'PRODUCTS_DELETE')
+        order by received_at desc
+        limit 1
+      ),
+      order_counts as (
+        select
+          count(*)::int as order_count,
+          max(updated_at) as last_order_synced_at
+        from operations_orders
+        where tenant_id = $1
+      ),
+      latest_order_webhook as (
+        select topic, status, received_at, processed_at, error_message
+        from webhook_events
+        where tenant_id = $1
+          and topic in ('ORDERS_CREATE', 'ORDERS_UPDATED')
+        order by received_at desc
+        limit 1
+      )
+      select
+        product_counts.product_count,
+        product_counts.variant_count,
+        product_counts.last_product_synced_at,
+        latest_product_webhook.topic as last_product_webhook_topic,
+        latest_product_webhook.status as last_product_webhook_status,
+        latest_product_webhook.received_at as last_product_webhook_received_at,
+        latest_product_webhook.processed_at as last_product_webhook_processed_at,
+        latest_product_webhook.error_message as last_product_webhook_error_message,
+        case
+          when latest_product_webhook.received_at is not null
+            and product_counts.last_product_synced_at is not null
+            and latest_product_webhook.received_at >= product_counts.last_product_synced_at - interval '5 minutes'
+          then 'webhook'
+          when product_counts.last_product_synced_at is not null then 'manual/unknown'
+          else 'unknown'
+        end as last_product_sync_source,
+        order_counts.order_count,
+        order_counts.last_order_synced_at,
+        latest_order_webhook.topic as last_order_webhook_topic,
+        latest_order_webhook.status as last_order_webhook_status,
+        latest_order_webhook.received_at as last_order_webhook_received_at,
+        latest_order_webhook.processed_at as last_order_webhook_processed_at,
+        latest_order_webhook.error_message as last_order_webhook_error_message,
+        case
+          when latest_order_webhook.received_at is not null
+            and order_counts.last_order_synced_at is not null
+            and latest_order_webhook.received_at >= order_counts.last_order_synced_at - interval '5 minutes'
+          then 'webhook'
+          when order_counts.last_order_synced_at is not null then 'manual/unknown'
+          else 'unknown'
+        end as last_order_sync_source
+      from product_counts
+      cross join order_counts
+      left join latest_product_webhook on true
+      left join latest_order_webhook on true
+    `,
+    [tenantId],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function loadSyncLog(
+  db: QueryExecutor,
+  tenantId: string,
+  filters?: {
+    status?: string;
+    topic?: string;
+    entityType?: string;
+    failedOnly?: boolean;
+  },
+) {
+  const status = filters?.failedOnly ? "failed" : (filters?.status ?? "all");
+  const topic = filters?.topic ?? "all";
+  const entityType = filters?.entityType ?? "all";
+
+  return (
+    await db.query(
+      `
+        select *
+        from (
+          select distinct on (webhook_events.id)
+            webhook_events.id,
+            webhook_events.topic,
+            webhook_events.status,
+            webhook_events.received_at,
+            webhook_events.processed_at,
+            webhook_events.shop_domain,
+            webhook_events.resource_gid,
+            webhook_events.error_message,
+            case
+              when webhook_events.topic in ('ORDERS_CREATE', 'ORDERS_UPDATED') then 'order'
+              when webhook_events.topic in ('PRODUCTS_CREATE', 'PRODUCTS_UPDATE', 'PRODUCTS_DELETE') then 'product'
+              else 'other'
+            end as entity_type,
+            coalesce(operations_orders.order_name, items.title, shopify_products.title) as entity_label,
+            case
+              when operations_orders.id is not null then concat('/app/orders/', operations_orders.id)
+              when items.id is not null then concat('/app/items/', items.id)
+              else null
+            end as entity_href
+          from webhook_events
+          left join operations_orders
+            on operations_orders.tenant_id = webhook_events.tenant_id
+            and operations_orders.shopify_order_gid = webhook_events.resource_gid
+          left join shopify_products
+            on shopify_products.tenant_id = webhook_events.tenant_id
+            and shopify_products.shopify_product_gid = webhook_events.resource_gid
+          left join shopify_product_variants
+            on shopify_product_variants.tenant_id = shopify_products.tenant_id
+            and shopify_product_variants.shopify_product_gid = shopify_products.shopify_product_gid
+          left join items
+            on items.tenant_id = shopify_product_variants.tenant_id
+            and items.id = shopify_product_variants.item_id
+          where webhook_events.tenant_id = $1
+            and ($2 = 'all' or webhook_events.status = $2)
+            and ($3 = 'all' or webhook_events.topic = $3)
+            and (
+              $4 = 'all'
+              or ($4 = 'order' and webhook_events.topic in ('ORDERS_CREATE', 'ORDERS_UPDATED'))
+              or ($4 = 'product' and webhook_events.topic in ('PRODUCTS_CREATE', 'PRODUCTS_UPDATE', 'PRODUCTS_DELETE'))
+              or ($4 = 'other' and webhook_events.topic not in (
+                'ORDERS_CREATE', 'ORDERS_UPDATED',
+                'PRODUCTS_CREATE', 'PRODUCTS_UPDATE', 'PRODUCTS_DELETE'
+              ))
+            )
+          order by webhook_events.id, webhook_events.received_at desc, items.title nulls last
+        ) sync_rows
+        order by sync_rows.received_at desc
+        limit 100
+      `,
+      [tenantId, status, topic, entityType],
     )
   ).rows;
 }
@@ -4087,6 +4277,16 @@ export async function loadOperationsOrdersList(
             max(line_decisions.latest_shipped_at) as latest_shipped_at,
             (count(*) filter (
               where line_decisions.master_data_missing
+            ))::int as classification_review_lines,
+            (count(*) filter (
+              where not line_decisions.master_data_missing
+                and not line_decisions.has_work
+                and not line_decisions.stock_ready
+                and not line_decisions.is_purchasable
+                and not line_decisions.is_producible
+            ))::int as unplanned_review_lines,
+            (count(*) filter (
+              where line_decisions.master_data_missing
                 or (
                   not line_decisions.has_work
                   and not line_decisions.stock_ready
@@ -4132,6 +4332,8 @@ export async function loadOperationsOrdersList(
           coalesce(order_summary.line_count, 0)::int as line_count,
           order_summary.skus,
           order_summary.product_summary,
+          coalesce(order_summary.classification_review_lines, 0)::int as classification_review_lines,
+          coalesce(order_summary.unplanned_review_lines, 0)::int as unplanned_review_lines,
           coalesce(order_summary.review_lines, 0)::int as review_lines,
           coalesce(order_summary.procurement_lines, 0)::int as procurement_lines,
           coalesce(order_summary.production_lines, 0)::int as production_lines,
@@ -4151,6 +4353,17 @@ export async function loadOperationsOrdersList(
           coalesce(order_summary.shipment_shipped_count, 0)::int as shipment_shipped_count,
           order_summary.latest_shipped_at,
           order_summary.shipment_numbers,
+          operations_orders.updated_at as shopify_order_synced_at,
+          latest_order_webhook.topic as last_order_webhook_topic,
+          latest_order_webhook.status as last_order_webhook_status,
+          latest_order_webhook.received_at as last_order_webhook_received_at,
+          latest_order_webhook.processed_at as last_order_webhook_processed_at,
+          latest_order_webhook.error_message as last_order_webhook_error_message,
+          case
+            when latest_order_webhook.webhook_id is not null then 'webhook'
+            when operations_orders.updated_at is not null then 'manual/unknown'
+            else 'unknown'
+          end as last_order_sync_source,
           case
             when coalesce(order_summary.line_count, 0) = 0 then 'unchecked'
             when coalesce(order_summary.shortage_quantity, 0) <= 0 then 'available'
@@ -4197,7 +4410,8 @@ export async function loadOperationsOrdersList(
             when coalesce(order_summary.po_sent_count, 0) > 0 then 'Sent to supplier'
             when coalesce(order_summary.po_created_count, 0) > 0 then 'Purchase Order created'
             when coalesce(order_summary.proposal_count, 0) > 0 then 'Purchase proposal ready'
-            when coalesce(order_summary.review_lines, 0) > 0 then 'Review required'
+            when coalesce(order_summary.classification_review_lines, 0) > 0 then 'Product classification required'
+            when coalesce(order_summary.review_lines, 0) > 0 then 'Order line review required'
             when coalesce(order_summary.procurement_lines, 0) > 0 then 'Needs planning'
             when coalesce(order_summary.production_lines, 0) > 0 then 'Production in progress'
             when coalesce(order_summary.line_count, 0) = 0 then 'Needs planning'
@@ -4300,8 +4514,10 @@ export async function loadOperationsOrdersList(
                   then 'Purchase proposal exists. This procurement context is item-level because no direct order-line link is available.'
                 else 'Purchase proposal exists. Create a Purchase Order.'
               end
+            when coalesce(order_summary.classification_review_lines, 0) > 0
+              then 'Order lines need operational product data. Classify affected products as sellable, purchasable or producible.'
             when coalesce(order_summary.review_lines, 0) > 0
-              then 'At least one order line is missing operational product data.'
+              then 'Order lines need review because Operations Kit cannot choose stock, procurement or production.'
             when coalesce(order_summary.procurement_lines, 0) > 0
               then 'Open Procurement to refresh purchasing needs for order shortages.'
             when coalesce(order_summary.production_lines, 0) > 0
@@ -4324,6 +4540,7 @@ export async function loadOperationsOrdersList(
             when coalesce(order_summary.po_sent_count, 0) > 0 then 'Open Procurement'
             when coalesce(order_summary.po_created_count, 0) > 0 then 'Open Procurement'
             when coalesce(order_summary.proposal_count, 0) > 0 then 'Open Procurement'
+            when coalesce(order_summary.classification_review_lines, 0) > 0 then 'Classify order line products'
             when coalesce(order_summary.review_lines, 0) > 0 then 'Review order lines'
             when coalesce(order_summary.procurement_lines, 0) > 0 then 'Open Procurement'
             when coalesce(order_summary.production_lines, 0) > 0 then 'Open Production'
@@ -4351,6 +4568,15 @@ export async function loadOperationsOrdersList(
           end as next_action_href
         from operations_orders
         left join order_summary on order_summary.operations_order_id = operations_orders.id
+        left join lateral (
+          select webhook_events.*
+          from webhook_events
+          where webhook_events.tenant_id = operations_orders.tenant_id
+            and webhook_events.resource_gid = operations_orders.shopify_order_gid
+            and webhook_events.topic in ('ORDERS_CREATE', 'ORDERS_UPDATED')
+          order by webhook_events.received_at desc
+          limit 1
+        ) latest_order_webhook on true
         where operations_orders.tenant_id = $1
         order by operations_orders.processed_at desc nulls last, operations_orders.created_at desc
       `,

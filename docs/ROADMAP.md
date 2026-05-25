@@ -29,6 +29,7 @@ Shopify Product sync, one-way from Shopify to Operations Kit:
 6. Review and remove unused Shopify write scopes after template/demo features are cleaned up.
 7. Add privacy/compliance webhooks required for App Store listing.
 8. Add webhook retry observability and an operator-facing event view.
+9. Continue UI consistency work for remaining tables so identifiers and action links behave the same across the app.
 
 ## Product Sync Roadmap
 

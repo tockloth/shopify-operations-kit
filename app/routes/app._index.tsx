@@ -54,6 +54,8 @@ function mapOrderStatusToColumn(status?: string | null): OrderStatusColumnKey {
     case "Logistics blocked":
     case "Shipment complete, address missing in Operations Kit":
     case "Review required":
+    case "Product classification required":
+    case "Order line review required":
     case "Production in progress":
       return "blocked_review";
     case "Needs planning":

@@ -3,7 +3,7 @@ import { Form, useActionData, useLoaderData } from "react-router";
 
 import { DataTable, MoneylessBadge, SetupBanner } from "../components/KitUi";
 import { requireOperationsKitContext } from "../lib/app-context.server";
-import { loadItems, loadSuppliers } from "../lib/operations-kit.server";
+import { loadItems, loadSuppliers, loadSyncOverview } from "../lib/operations-kit.server";
 import { syncShopifyProducts } from "../lib/shopify-sync.server";
 import { authenticate } from "../shopify.server";
 
@@ -25,6 +25,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     filters,
     items: await loadItems(context.pool, context.ctx.tenantId, filters),
     suppliers: await loadSuppliers(context.pool, context.ctx.tenantId),
+    syncOverview: await loadSyncOverview(context.pool, context.ctx.tenantId),
   };
 };
 
@@ -76,7 +77,7 @@ function roles(item: any) {
     item.is_sellable ? "sellable" : null,
     item.is_purchasable ? "purchasable" : null,
     item.is_producible ? "producible" : null,
-  ].filter(Boolean).join(" / ") || "not classified";
+  ].filter(Boolean).join(" / ") || "Needs classification";
 }
 
 function bomStatus(item: any) {
@@ -91,7 +92,7 @@ function dataQuality(item: any) {
     return { label: "Stale Shopify product", tone: "warning" as const };
   }
   if (!item.is_sellable && !item.is_purchasable && !item.is_producible) {
-    return { label: "Review classification", tone: "critical" as const };
+    return { label: "Classify product", tone: "critical" as const };
   }
   if (item.is_purchasable && !item.preferred_supplier_id) {
     return { label: "Supplier missing", tone: "warning" as const };
@@ -110,6 +111,9 @@ function dataQuality(item: any) {
 }
 
 function nextAction(item: any) {
+  if (!item.is_sellable && !item.is_purchasable && !item.is_producible) {
+    return { label: "Classify product", href: `/app/items/${item.id}` };
+  }
   if (item.is_producible && Number(item.active_bom_count ?? 0) === 0) {
     return { label: "Open BOM", href: `/app/boms?parentItemId=${item.id}` };
   }
@@ -121,6 +125,24 @@ function nextAction(item: any) {
     return { label: "Add components", href: `/app/boms?parentItemId=${item.id}` };
   }
   return { label: "Open product", href: `/app/items/${item.id}` };
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "Not synced yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("en", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function shortGid(value?: string | null) {
+  if (!value) return "No Shopify GID";
+  return value.split("/").at(-1) ?? value;
 }
 
 export default function Items() {
@@ -139,6 +161,7 @@ export default function Items() {
         supplierId: "all",
       };
   const suppliers = "suppliers" in data ? (data.suppliers ?? []) : [];
+  const syncOverview = "syncOverview" in data ? (data.syncOverview as any) : null;
   const hasActiveFilters = Boolean(
     filters.query ||
       filters.source !== "all" ||
@@ -175,6 +198,24 @@ export default function Items() {
             <s-paragraph>{actionData.message}</s-paragraph>
           </s-box>
         ) : null}
+        <s-box padding="base" borderWidth="base" borderRadius="base">
+          <s-stack direction="block" gap="small">
+            <s-heading>Product sync status</s-heading>
+            <s-paragraph>
+              Last product sync: {formatDateTime(syncOverview?.last_product_synced_at)}
+            </s-paragraph>
+            <s-paragraph>
+              Source: {syncOverview?.last_product_sync_source ?? "unknown"} · Status:{" "}
+              {syncOverview?.last_product_webhook_status ?? "manual/unknown"} · Last webhook:{" "}
+              {syncOverview?.last_product_webhook_topic ?? "none"}
+            </s-paragraph>
+            <s-paragraph>
+              Products: {Number(syncOverview?.product_count ?? 0).toLocaleString()} · Variants:{" "}
+              {Number(syncOverview?.variant_count ?? 0).toLocaleString()}
+            </s-paragraph>
+            <s-link href="/app/settings?section=audit">Open sync log</s-link>
+          </s-stack>
+        </s-box>
         <Form method="get">
           <details className="kit-compact-disclosure" open={hasActiveFilters}>
             <summary>Filters</summary>
@@ -206,7 +247,7 @@ export default function Items() {
                 <s-option value="purchasable">Purchasable</s-option>
                 <s-option value="producible">Producible</s-option>
                 <s-option value="component">Component / material</s-option>
-                <s-option value="review">Needs classification</s-option>
+              <s-option value="review">Needs classification</s-option>
               </s-select>
               <s-select label="Supplier" name="supplierId" value={filters.supplierId}>
                 <s-option value="all">All suppliers</s-option>
@@ -236,9 +277,15 @@ export default function Items() {
           ]}
           rows={(data.items ?? []).map((item) => ({
             id: item.id,
-            href: `/app/items/${item.id}`,
             cells: [
-              <strong>{item.sku} · {item.title}</strong>,
+              <s-stack direction="block" gap="small">
+                <s-link href={`/app/items/${item.id}`}>
+                  <strong>{item.sku} · {item.title}</strong>
+                </s-link>
+                {item.shopify_product_gid ? (
+                  <s-text>Shopify product {shortGid(item.shopify_product_gid)}</s-text>
+                ) : null}
+              </s-stack>,
               <MoneylessBadge tone={shopVisibility(item).tone}>
                 {shopVisibility(item).label}
               </MoneylessBadge>,
@@ -259,7 +306,18 @@ export default function Items() {
               <MoneylessBadge tone={dataQuality(item).tone}>
                 {dataQuality(item).label}
               </MoneylessBadge>,
-              <s-link href={nextAction(item).href}>{nextAction(item).label}</s-link>,
+              <s-stack direction="block" gap="small">
+                <s-link href={nextAction(item).href}>{nextAction(item).label}</s-link>
+                <s-text>
+                  Synced {formatDateTime(item.shopify_product_synced_at ?? item.shopify_last_seen_at)}
+                </s-text>
+                <s-text>
+                  {Number(item.shopify_variant_count ?? 0).toLocaleString()} variant(s)
+                  {item.shopify_product_deleted_at
+                    ? ` · deleted ${formatDateTime(item.shopify_product_deleted_at)}`
+                    : ""}
+                </s-text>
+              </s-stack>,
             ],
           }))}
         />

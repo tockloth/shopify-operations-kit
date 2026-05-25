@@ -38,6 +38,12 @@ Fields and relationships that are operationally owned by Operations Kit must rem
 - Logistics: `shipping_orders`, `shipping_order_lines`
 - Audit/system: `case_events`, `webhook_events`
 
+## Sync Visibility
+
+`webhook_events` is the first app-visible sync log. It links Shopify topics and resources to local Orders or Products when a tenant and entity can be resolved.
+
+`case_events` remains the tenant-owned operational event log for known-tenant failures and system actions. A tenantless global platform event table is still future work.
+
 ## Product Delete Semantics
 
 Shopify product deletion does not hard-delete Operations Kit history. Local Shopify read-model rows are marked with `deleted_at`, and linked sellable items are marked inactive/missing. BOM, purchase, inventory, audit, and historical order data are preserved.

@@ -48,3 +48,5 @@ This slice adds Shopify Product read sync:
 - Operational item attributes must not be overwritten by Shopify Product sync.
 - External ERP-style integrations are future work and should be generic, not one-off adapters.
 - Global platform-level `system_events` is not implemented yet. Until then, known-tenant webhook/system events use tenant-owned `case_events`; unknown-shop webhook failures are traceable through `webhook_events`.
+- Sync and webhook history is visible in Settings under Audit & Health -> Sync log.
+- Order statuses now distinguish product classification blockers from generic review states.

@@ -74,3 +74,14 @@ The current webhook path processes synchronously during the request. This keeps 
 Webhooks are not treated as the only source of truth. A future reconciliation sync should periodically detect missed webhook deliveries, stale products, and mismatched local read-model state.
 
 Global platform/system events are also future work. Today, known-tenant sync failures use `case_events`; unknown-shop failures remain visible in `webhook_events`.
+
+## Operator Visibility
+
+Operators should be able to answer:
+
+- Was this Order or Product synced manually or by webhook?
+- When was the last sync?
+- Which webhook topic was processed?
+- Did processing fail?
+
+The first app-level view for this is Settings -> Audit & Health -> Sync log.

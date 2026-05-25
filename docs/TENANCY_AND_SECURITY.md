@@ -28,6 +28,8 @@ If a webhook arrives for an unknown or inactive shop, Operations Kit stores the 
 
 Because `case_events` is tenant-owned, unknown-shop events are recorded in `webhook_events` rather than `case_events`. Once a tenant is resolved, failed fetches, missing resource IDs, and failed upserts can also be written as tenant-scoped `case_events`.
 
+The Settings sync log only shows events for the current tenant. Tenantless unknown-shop events remain database-visible until a later global platform/system-events slice adds a safe tenantless UI surface.
+
 ## Customer Data
 
 Protected customer data must be encrypted before storage. Diagnostics may expose availability booleans and counters, but must not show tokens, secrets, names, emails, or addresses.

@@ -79,3 +79,10 @@ For live staging verification:
 4. Create or update a product in the Shopify dev store.
 5. Confirm the Product webhook updates Operations Kit after deploy/config registration.
 6. Delete a test product and confirm local rows are marked deleted/missing, not hard-deleted.
+
+## UI Smoke Checks
+
+- New order with unclassified synced products shows `Product classification required`.
+- Products page shows Product sync status and links to the sync log.
+- Settings -> Audit & Health -> Sync log shows Order/Product webhook events.
+- Order and Product table identifiers are explicit links; non-clickable cells do not imply row navigation.
