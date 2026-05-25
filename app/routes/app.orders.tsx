@@ -152,19 +152,6 @@ function formatOrderDate(value?: string | null) {
   }).format(new Date(value));
 }
 
-function formatDateTime(value?: string | null) {
-  if (!value) return "Not synced yet";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return new Intl.DateTimeFormat("en", {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
 function filterOrders(orders: any[], filters: any) {
   const query = String(filters.query ?? "").toLowerCase();
   const queue = ["active", "completed", "all"].includes(filters.queue)
@@ -274,12 +261,9 @@ function operationsStatusContent(order: any) {
   }
 
   return (
-    <s-stack direction="block" gap="small">
-      <MoneylessBadge tone={order.operational_status_tone ?? "info"}>
-        {order.operational_status ?? "Needs planning"}
-      </MoneylessBadge>
-      {order.next_reason ? <s-text>{order.next_reason}</s-text> : null}
-    </s-stack>
+    <MoneylessBadge tone={order.operational_status_tone ?? "info"}>
+      {order.operational_status ?? "Needs planning"}
+    </MoneylessBadge>
   );
 }
 
@@ -454,20 +438,9 @@ export default function Orders() {
               return {
                 id: order.id,
                 cells: [
-                  <s-stack direction="block" gap="small">
-                    <s-link href={`/app/orders/${order.id}`}>
-                      <strong>{order.order_name}</strong>
-                    </s-link>
-                    <s-text>
-                      Synced {formatDateTime(order.shopify_order_synced_at ?? order.updated_at)}
-                    </s-text>
-                    <s-text>
-                      {order.last_order_sync_source ?? "unknown"}
-                      {order.last_order_webhook_topic
-                        ? ` · ${order.last_order_webhook_topic} · ${order.last_order_webhook_status}`
-                        : ""}
-                    </s-text>
-                  </s-stack>,
+                  <s-link href={`/app/orders/${order.id}`}>
+                    <strong>{order.order_name}</strong>
+                  </s-link>,
                   formatOrderDate(order.processed_at ?? order.created_at),
                   order.customer_name ?? "No customer",
                   <s-stack direction="block" gap="small">
@@ -482,10 +455,7 @@ export default function Orders() {
                   </MoneylessBadge>,
                   shopifyFulfillmentContent(order),
                   blockReason ? (
-                    <s-stack direction="block" gap="small">
-                      <MoneylessBadge tone="warning">Missing</MoneylessBadge>
-                      <s-text>{blockReason}</s-text>
-                    </s-stack>
+                    <MoneylessBadge tone="warning">Missing</MoneylessBadge>
                   ) : (
                     <MoneylessBadge tone="success">Ready</MoneylessBadge>
                   ),

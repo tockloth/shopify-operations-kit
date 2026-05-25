@@ -140,11 +140,6 @@ function formatDateTime(value?: string | null) {
   }).format(date);
 }
 
-function shortGid(value?: string | null) {
-  if (!value) return "No Shopify GID";
-  return value.split("/").at(-1) ?? value;
-}
-
 export default function Items() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
@@ -213,7 +208,7 @@ export default function Items() {
               Products: {Number(syncOverview?.product_count ?? 0).toLocaleString()} · Variants:{" "}
               {Number(syncOverview?.variant_count ?? 0).toLocaleString()}
             </s-paragraph>
-            <s-link href="/app/settings?section=audit">Open sync log</s-link>
+            <s-link href="/app/settings?section=audit">View sync log</s-link>
           </s-stack>
         </s-box>
         <Form method="get">
@@ -278,14 +273,9 @@ export default function Items() {
           rows={(data.items ?? []).map((item) => ({
             id: item.id,
             cells: [
-              <s-stack direction="block" gap="small">
-                <s-link href={`/app/items/${item.id}`}>
-                  <strong>{item.sku} · {item.title}</strong>
-                </s-link>
-                {item.shopify_product_gid ? (
-                  <s-text>Shopify product {shortGid(item.shopify_product_gid)}</s-text>
-                ) : null}
-              </s-stack>,
+              <s-link href={`/app/items/${item.id}`}>
+                <strong>{item.sku} · {item.title}</strong>
+              </s-link>,
               <MoneylessBadge tone={shopVisibility(item).tone}>
                 {shopVisibility(item).label}
               </MoneylessBadge>,
@@ -306,18 +296,7 @@ export default function Items() {
               <MoneylessBadge tone={dataQuality(item).tone}>
                 {dataQuality(item).label}
               </MoneylessBadge>,
-              <s-stack direction="block" gap="small">
-                <s-link href={nextAction(item).href}>{nextAction(item).label}</s-link>
-                <s-text>
-                  Synced {formatDateTime(item.shopify_product_synced_at ?? item.shopify_last_seen_at)}
-                </s-text>
-                <s-text>
-                  {Number(item.shopify_variant_count ?? 0).toLocaleString()} variant(s)
-                  {item.shopify_product_deleted_at
-                    ? ` · deleted ${formatDateTime(item.shopify_product_deleted_at)}`
-                    : ""}
-                </s-text>
-              </s-stack>,
+              <s-link href={nextAction(item).href}>{nextAction(item).label}</s-link>,
             ],
           }))}
         />

@@ -219,6 +219,10 @@ function operationsComplete(orderSummary: any) {
   );
 }
 
+function lineProductLabel(line: any) {
+  return `${line.sku ?? line.item_sku ?? "No SKU"} / ${line.title ?? line.item_title ?? "No title"}`;
+}
+
 type Decision = {
   label:
     | "Ready from stock"
@@ -582,13 +586,28 @@ export default function OrderDetail() {
 
             return [
               `Line ${index + 1}`,
-              `${line.sku ?? line.item_sku} / ${line.title ?? line.item_title}`,
+              line.item_id ? (
+                <s-link href={`/app/items/${line.item_id}`}>
+                  {lineProductLabel(line)}
+                </s-link>
+              ) : (
+                lineProductLabel(line)
+              ),
               `${quantity(line.quantity)} ${line.unit}`,
               `${quantity(allocatedAvailable)} available`,
                 shortage > 0 ? `${quantity(shortage)} short` : "Covered",
-                <MoneylessBadge tone={decision.tone}>
-                  {decision.label}
-                </MoneylessBadge>,
+                <s-stack direction="block" gap="small">
+                  <MoneylessBadge tone={decision.tone}>
+                    {decision.label}
+                  </MoneylessBadge>
+                  <s-text>{decision.reason}</s-text>
+                  {decision.label === "Product classification required" &&
+                  line.item_id ? (
+                    <s-link href={`/app/items/${line.item_id}`}>
+                      Classify product
+                    </s-link>
+                  ) : null}
+                </s-stack>,
                 <s-stack direction="block" gap="small">
                   <s-text>
                     {[

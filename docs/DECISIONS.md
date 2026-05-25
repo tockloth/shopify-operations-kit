@@ -49,3 +49,7 @@ Operational statuses should identify the concrete blocker when the system knows 
 ## D012: Clickability Must Be Explicit
 
 List tables should use visible links or buttons for navigation. Main identifiers and right-side actions are clickable; ordinary cells should not look or behave like links.
+
+## D013: Lists Stay Compact; Details Carry Diagnosis
+
+Operational list views are for scanning work queues. They show concise statuses and next actions. Long business reasons, webhook topics, sync timestamps, resource GIDs, and processing errors belong in detail views or Settings -> Audit & Health -> Sync log.

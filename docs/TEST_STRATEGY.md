@@ -86,3 +86,5 @@ For live staging verification:
 - Products page shows Product sync status and links to the sync log.
 - Settings -> Audit & Health -> Sync log shows Order/Product webhook events.
 - Order and Product table identifiers are explicit links; non-clickable cells do not imply row navigation.
+- Order and Product lists stay compact: no webhook topic/status, sync timestamp, resource GID, or long reason text in list rows.
+- Order detail shows sync diagnostics and line-level reasons, including Product classification guidance when item roles are missing.
